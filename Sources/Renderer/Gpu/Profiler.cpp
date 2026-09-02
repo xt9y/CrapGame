@@ -10,6 +10,9 @@ namespace Gpu
 namespace
 {
 
+constexpr std::uint64_t SAMPLE_INTERVAL = 64u;
+constexpr std::uint64_t PRINT_INTERVAL = 4096u;
+
 const char *passName (Profiler::Pass pass)
 {
     switch (pass)
@@ -188,15 +191,17 @@ void Profiler::beginFrame (std::uint64_t frame_index)
 {
     current_slot_ = -1;
 
-    if (!initialized_)
+    if (!initialized_
+            || frame_index % SAMPLE_INTERVAL != 0u)
     {
         return;
     }
 
     collect();
 
+    const std::uint64_t sample_index = frame_index / SAMPLE_INTERVAL;
     Slot& slot = slots_[
-        static_cast<std::size_t>(frame_index % SLOT_COUNT)
+        static_cast<std::size_t>(sample_index % SLOT_COUNT)
     ];
 
     if (slot.pending)
@@ -206,7 +211,7 @@ void Profiler::beginFrame (std::uint64_t frame_index)
 
     slot.frame = frame_index;
     slot.measured.fill(false);
-    current_slot_ = static_cast<int>(frame_index % SLOT_COUNT);
+    current_slot_ = static_cast<int>(sample_index % SLOT_COUNT);
 }
 
 void Profiler::begin (Pass pass)
@@ -265,11 +270,6 @@ void Profiler::endFrame ()
 
 void Profiler::printIfDue (std::uint64_t frame_index)
 {
-    /* At the original 120-frame cadence, an uncapped renderer could spend
-     * measurable CPU time writing profiler lines to the terminal. Keep GPU
-     * query collection continuous but make human-readable output sparse. */
-    constexpr std::uint64_t PRINT_INTERVAL = 4096u;
-
     if (!initialized_
             || frame_index == 0
             || frame_index % PRINT_INTERVAL != 0u)
