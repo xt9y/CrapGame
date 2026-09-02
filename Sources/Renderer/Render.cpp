@@ -304,6 +304,9 @@ void Rendering::render (const Ecs::World& world)
         return;
     }
 
+    const Math::Vec3 camera_position =
+        toVec3(camera_transform->position);
+
     applyCamera(*camera_transform, *camera);
     renderGeometry(world);
 
@@ -313,10 +316,7 @@ void Rendering::render (const Ecs::World& world)
             frame_state_
         );
 
-    tracer_.build(
-            world,
-            toVec3(camera_transform->position)
-        );
+    tracer_.build(world, camera_position);
 
     cards_.build(world);
     surface_cache_.build(world, cards_);
@@ -329,10 +329,18 @@ void Rendering::render (const Ecs::World& world)
             shadows_
         );
 
-    composeLighting(
-            world,
-            toVec3(camera_transform->position)
+    radiance_cache_.update(
+            gbuffer_,
+            view_,
+            projection_,
+            tracer_,
+            surface_cache_,
+            camera_position,
+            frame_state_.frameIndex(),
+            12u
         );
+
+    composeLighting(world, camera_position);
 
     Temporal::resolveTaa(
             gbuffer_,

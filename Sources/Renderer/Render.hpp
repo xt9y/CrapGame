@@ -4,6 +4,7 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Lumen/Cards.hpp"
+#include "Renderer/Lumen/RadianceCache.hpp"
 #include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
 #include "Renderer/Math/Math.hpp"
@@ -51,6 +52,7 @@ private:
     Lumen::Tracer tracer_;
     Lumen::CardScene cards_;
     Lumen::SurfaceCache surface_cache_;
+    Lumen::RadianceCache radiance_cache_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
