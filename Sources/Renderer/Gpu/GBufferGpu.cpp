@@ -343,8 +343,26 @@ bool GBufferGpu::uploadBatch (Batch *batch, std::string *error)
         return false;
     }
 
+    const bool same_size =
+        batch->instances.size() == batch->uploaded_instances.size();
+
+    const bool same_data =
+        same_size
+        && (batch->instances.empty()
+            || std::memcmp(
+                    batch->instances.data(),
+                    batch->uploaded_instances.data(),
+                    batch->instances.size() * sizeof(InstanceGpu)
+                ) == 0);
+
+    if (same_data)
+    {
+        return true;
+    }
+
     if (batch->instances.empty())
     {
+        batch->uploaded_instances.clear();
         return true;
     }
 
@@ -378,6 +396,7 @@ bool GBufferGpu::uploadBatch (Batch *batch, std::string *error)
             batch->instances.data()
         );
 
+    batch->uploaded_instances = batch->instances;
     return true;
 }
 
@@ -475,10 +494,8 @@ bool GBufferGpu::createAttachments (std::string *error)
     return true;
 }
 
-bool GBufferGpu::render (
+bool GBufferGpu::updateScene (
                 const Ecs::World& world,
-                const Math::Mat4& view,
-                const Math::Mat4& projection,
                 std::string *error
         )
 {
@@ -551,6 +568,26 @@ bool GBufferGpu::render (
         return false;
     }
 
+    if (error)
+    {
+        error->clear();
+    }
+
+    return true;
+}
+
+bool GBufferGpu::draw (
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                std::string *error
+        )
+{
+    if (!ready())
+    {
+        setError(error, "GPU GBuffer is not initialized or resized");
+        return false;
+    }
+
     GL30.glBindFramebuffer(GL_FRAMEBUFFER, framebuffer_);
     glViewport(0, 0, width_, height_);
 
@@ -607,6 +644,17 @@ bool GBufferGpu::render (
     }
 
     return true;
+}
+
+bool GBufferGpu::render (
+                const Ecs::World& world,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                std::string *error
+        )
+{
+    return updateScene(world, error)
+        && draw(view, projection, error);
 }
 
 void GBufferGpu::destroyAttachments ()
@@ -669,6 +717,8 @@ void GBufferGpu::shutdown ()
     planes_.instance_capacity = 0;
     cubes_.instances.clear();
     planes_.instances.clear();
+    cubes_.uploaded_instances.clear();
+    planes_.uploaded_instances.clear();
 
     destroyMesh(&cubes_.mesh);
     destroyMesh(&planes_.mesh);
