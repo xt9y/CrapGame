@@ -7,8 +7,10 @@ namespace Renderer
 namespace 
 {
 
-#define PI (3.14159265358979323846f)
-#define DEG_TO_RAD (PI / 180.0f)
+Math::Vec3 toVec3 (const Ecs::Vec3& value) 
+{
+    return {value.x, value.y, value.z};
+}
 
 } // namespace
 
@@ -35,44 +37,43 @@ void Rendering::resize (int width, int height)
 void Rendering::applyCamera (
                 const Ecs::TransformComponent& transform,
                 const Ecs::CameraComponent& camera
-        ) const 
+        ) 
 {
     const float aspect = 
         static_cast<float>(width_) / 
         static_cast<float>(height_);
 
+    const Math::Vec3 position = 
+        toVec3(transform.position);
+
+    const Math::Vec3 rotation = 
+        toVec3(transform.rotation);
+
+    const float pitch = Math::radians(rotation.x),
+                yaw   = Math::radians(rotation.y);
+
+    const Math::Vec3 forward = 
+        Math::normalize({
+            std::cos(pitch) * std::sin(yaw),
+            std::sin(pitch),
+            -std::cos(pitch) * std::cos(yaw),
+        });
+
+    projection_ = Math::perspective(
+            camera.fov_degrees,
+            aspect,
+            camera.near_plane,
+            camera.far_plane
+        );
+
+    view_ = Math::lookAt(
+            position,
+            Math::add(position, forward),
+            {0.0f, 1.0f, 0.0f}
+        );
+
     glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    gluPerspective(
-            camera.fov_degrees, aspect, 
-            camera.near_plane, camera.far_plane
-        );
-
-    const float pitch     = transform.rotation.x * DEG_TO_RAD,
-                yaw       = transform.rotation.y * DEG_TO_RAD,
-                cos_pitch = std::cos(pitch);
-
-    const Ecs::Vec3 forward = 
-    {
-        cos_pitch * std::sin(yaw),
-        std::sin(pitch),
-        -cos_pitch * std::cos(yaw),
-    };
-
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    gluLookAt(
-            transform.position.x,
-            transform.position.y,
-            transform.position.z,
-            transform.position.x + forward.x,
-            transform.position.y + forward.y,
-            transform.position.z + forward.z,
-            0.0,
-            1.0,
-            0.0
-        );
+    glLoadMatrixf(projection_.value);
 }
 
 void Rendering::drawCube () const 
@@ -106,22 +107,18 @@ void Rendering::drawRenderable (
                 const Ecs::RenderableComponent& renderable
         ) const 
 {
-    glPushMatrix();
-    glTranslatef(
-            transform.position.x, 
-            transform.position.y, 
-            transform.position.z
-        );
+    const Math::Mat4 model = 
+        Math::transform(
+                toVec3(transform.position),
+                toVec3(transform.rotation),
+                toVec3(transform.scale)
+            );
 
-    glRotatef(transform.rotation.y, 0.0f, 1.0f, 0.0f);
-    glRotatef(transform.rotation.x, 1.0f, 0.0f, 0.0f);
-    glRotatef(transform.rotation.z, 0.0f, 0.0f, 1.0f);
+    const Math::Mat4 model_view = 
+        Math::multiply(view_, model);
 
-    glScalef(
-            transform.scale.x, 
-            transform.scale.y, 
-            transform.scale.z
-        );
+    glMatrixMode(GL_MODELVIEW);
+    glLoadMatrixf(model_view.value);
 
     glColor3f(
             renderable.color.x, 
@@ -134,8 +131,6 @@ void Rendering::drawRenderable (
         case Ecs::Primitive::Cube:  drawCube(); break;
         case Ecs::Primitive::Plane: drawPlane(); break;
     }
-
-    glPopMatrix();
 }
 
 void Rendering::render (const Ecs::World& world) 

@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDER_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <rendercheck/capture.h>
@@ -25,7 +26,7 @@ private:
     void applyCamera (
                 const Ecs::TransformComponent& transform,
                 const Ecs::CameraComponent& camera
-        ) const;
+        );
 
     void drawRenderable (
                 const Ecs::TransformComponent& transform,
@@ -34,6 +35,9 @@ private:
 
     void drawCube () const;
     void drawPlane () const;
+
+    Math::Mat4 view_       = Math::identity(),
+               projection_ = Math::identity();
 
     int width_  = 1,
         height_ = 1;
