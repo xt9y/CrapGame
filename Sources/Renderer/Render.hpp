@@ -7,6 +7,7 @@
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/LumenGpu.hpp"
 #include "Renderer/Gpu/Presenter.hpp"
+#include "Renderer/Gpu/Profiler.hpp"
 #include "Renderer/Lumen/Budget.hpp"
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
@@ -108,6 +109,7 @@ private:
     Gpu::DirectLightingGpu gpu_direct_lighting_;
     Gpu::LumenGpu gpu_lumen_;
     Gpu::Presenter presenter_;
+    Gpu::Profiler gpu_profiler_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
