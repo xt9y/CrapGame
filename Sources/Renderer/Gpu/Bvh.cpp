@@ -262,5 +262,95 @@ BvhBuild buildBvh (
     return result;
 }
 
+bool refitBvh (
+            std::vector<BvhNodeGpu> *nodes,
+            const std::vector<BvhBoundsInput>& bounds
+    )
+{
+    if (!nodes || nodes->empty())
+    {
+        return bounds.empty();
+    }
+
+    for (std::size_t reverse = nodes->size(); reverse-- > 0u;)
+    {
+        BvhNodeGpu& node = (*nodes)[reverse];
+        const std::int32_t leaf_count = node.meta[3];
+
+        if (leaf_count > 0)
+        {
+            if (leaf_count > 3)
+            {
+                return false;
+            }
+
+            float minimum[3] = {
+                std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max(),
+            };
+            float maximum[3] = {
+                -std::numeric_limits<float>::max(),
+                -std::numeric_limits<float>::max(),
+                -std::numeric_limits<float>::max(),
+            };
+
+            for (std::int32_t slot = 0; slot < leaf_count; ++slot)
+            {
+                const std::int32_t primitive = node.meta[slot];
+
+                if (primitive < 0
+                        || static_cast<std::size_t>(primitive) >= bounds.size())
+                {
+                    return false;
+                }
+
+                const BvhBoundsInput& item = bounds[static_cast<std::size_t>(primitive)];
+
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    minimum[axis] = std::min(minimum[axis], item.minimum[axis]);
+                    maximum[axis] = std::max(maximum[axis], item.maximum[axis]);
+                }
+            }
+
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                node.bounds_minimum[axis] = minimum[axis];
+                node.bounds_maximum[axis] = maximum[axis];
+            }
+
+            continue;
+        }
+
+        const std::int32_t left = node.meta[0],
+                           right = node.meta[1];
+
+        if (left < 0 || right < 0
+                || static_cast<std::size_t>(left) >= nodes->size()
+                || static_cast<std::size_t>(right) >= nodes->size())
+        {
+            return false;
+        }
+
+        const BvhNodeGpu& left_node = (*nodes)[static_cast<std::size_t>(left)];
+        const BvhNodeGpu& right_node = (*nodes)[static_cast<std::size_t>(right)];
+
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            node.bounds_minimum[axis] = std::min(
+                    left_node.bounds_minimum[axis],
+                    right_node.bounds_minimum[axis]
+                );
+            node.bounds_maximum[axis] = std::max(
+                    left_node.bounds_maximum[axis],
+                    right_node.bounds_maximum[axis]
+                );
+        }
+    }
+
+    return true;
+}
+
 } // namespace Gpu
 } // namespace Renderer
