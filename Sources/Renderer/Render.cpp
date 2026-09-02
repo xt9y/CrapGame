@@ -55,6 +55,31 @@ bool Rendering::init ()
             );
         return false;
     }
+
+    if (!gpu_gbuffer_.init(&error))
+    {
+        std::fprintf(
+                stderr,
+                "GPU GBuffer initialization failed: %s\n",
+                error.c_str()
+            );
+        presenter_.shutdown();
+        return false;
+    }
+
+    if (!gpu_direct_lighting_.init(&error))
+    {
+        std::fprintf(
+                stderr,
+                "GPU direct lighting initialization failed: %s\n",
+                error.c_str()
+            );
+        gpu_gbuffer_.shutdown();
+        presenter_.shutdown();
+        return false;
+    }
+
+    gpu_pipeline_enabled_ = true;
 #endif
 
     return true;
@@ -65,15 +90,75 @@ void Rendering::resize (int width, int height)
     const int new_width = width > 0 ? width : 1,
               new_height = height > 0 ? height : 1;
 
+    const bool gpu_frame_ready =
+        test_name_.empty()
+        && gpu_pipeline_enabled_
+        && gpu_gbuffer_.ready()
+        && gpu_direct_lighting_.ready();
+
+    const bool cpu_frame_ready =
+        !test_name_.empty()
+        && !color_buffer_.empty();
+
     if (new_width == width_
             && new_height == height_
-            && !color_buffer_.empty())
+            && (gpu_frame_ready || cpu_frame_ready))
     {
         return;
     }
 
     width_ = new_width;
     height_ = new_height;
+
+    if (presenter_.ready())
+    {
+        std::string error;
+
+        if (!presenter_.resize(width_, height_, &error))
+        {
+            std::fprintf(
+                    stderr,
+                    "GPU presenter resize failed: %s\n",
+                    error.c_str()
+                );
+            gpu_pipeline_enabled_ = false;
+        }
+    }
+
+    if (test_name_.empty())
+    {
+#if !defined(__APPLE__)
+        if (gpu_pipeline_enabled_)
+        {
+            std::string error;
+
+            if (!gpu_gbuffer_.resize(width_, height_, &error)
+                    || !gpu_direct_lighting_.resize(width_, height_, &error))
+            {
+                std::fprintf(
+                        stderr,
+                        "GPU renderer resize failed: %s\n",
+                        error.c_str()
+                    );
+                gpu_pipeline_enabled_ = false;
+            }
+        }
+#endif
+
+        direct_color_.clear();
+        indirect_color_.clear();
+        indirect_resolved_.clear();
+        reflection_color_.clear();
+        frame_color_.clear();
+        resolved_color_.clear();
+        color_buffer_.clear();
+        present_buffer_.clear();
+        gi_history_.clear();
+        history_.clear();
+
+        glViewport(0, 0, width_, height_);
+        return;
+    }
 
     const std::size_t pixel_count = 
         static_cast<std::size_t>(width_) *
@@ -89,22 +174,7 @@ void Rendering::resize (int width, int height)
 
     if (presenter_.ready())
     {
-        std::string error;
-
-        if (!presenter_.resize(width_, height_, &error))
-        {
-            std::fprintf(
-                    stderr,
-                    "GPU presenter resize failed: %s\n",
-                    error.c_str()
-                );
-            presenter_.shutdown();
-            present_buffer_.resize(pixel_count * 3u);
-        }
-        else
-        {
-            present_buffer_.clear();
-        }
+        present_buffer_.clear();
     }
     else
     {
@@ -155,6 +225,60 @@ void Rendering::applyCamera (
             Math::add(position, forward),
             {0.0f, 1.0f, 0.0f}
         );
+}
+
+bool Rendering::renderGpuFrame (
+                const Ecs::World& world,
+                const Math::Vec3& camera_position
+        )
+{
+#if defined(__APPLE__)
+    (void)world;
+    (void)camera_position;
+    return false;
+#else
+    if (!gpu_pipeline_enabled_)
+    {
+        if (!gpu_error_reported_)
+        {
+            std::fprintf(
+                    stderr,
+                    "GPU frame pipeline is unavailable; refusing the old minute-per-frame interactive path\n"
+                );
+            gpu_error_reported_ = true;
+        }
+        return false;
+    }
+
+    std::string error;
+
+    if (!gpu_gbuffer_.render(world, view_, projection_, &error)
+            || !gpu_direct_lighting_.render(
+                    world,
+                    gpu_gbuffer_,
+                    camera_position,
+                    &error
+                )
+            || !presenter_.presentTexture(
+                    gpu_direct_lighting_.finalTexture(),
+                    &error
+                ))
+    {
+        if (!gpu_error_reported_)
+        {
+            std::fprintf(
+                    stderr,
+                    "GPU frame pipeline failed: %s\n",
+                    error.c_str()
+                );
+            gpu_error_reported_ = true;
+        }
+        return false;
+    }
+
+    gpu_error_reported_ = false;
+    return true;
+#endif
 }
 
 void Rendering::renderGeometry (const Ecs::World& world) 
@@ -342,7 +466,7 @@ void Rendering::present ()
 
         std::fprintf(
                 stderr,
-                "GPU presenter failed; using GL11 fallback: %s\n",
+                "GPU presenter failed; using GL11 fallback for RendererCheck: %s\n",
                 error.c_str()
             );
         presenter_.shutdown();
@@ -411,6 +535,13 @@ void Rendering::render (const Ecs::World& world)
         toVec3(camera_transform->position);
 
     applyCamera(*camera_transform, *camera);
+
+    if (test_name_.empty())
+    {
+        renderGpuFrame(world, camera_position);
+        return;
+    }
+
     renderGeometry(world);
 
     Temporal::calculateMotion(
@@ -540,7 +671,12 @@ void Rendering::render (const Ecs::World& world)
 
 void Rendering::shutdown () 
 {
+    gpu_direct_lighting_.shutdown();
+    gpu_gbuffer_.shutdown();
     presenter_.shutdown();
+    gpu_pipeline_enabled_ = false;
+    gpu_error_reported_ = false;
+
     direct_color_.clear();
     indirect_color_.clear();
     indirect_resolved_.clear();
