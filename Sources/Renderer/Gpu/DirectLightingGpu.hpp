@@ -173,7 +173,6 @@ public:
         GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
         GL42.glBindImageTexture(3, gbuffer.emissiveTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
         GL42.glBindImageTexture(4, direct_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-        GL42.glBindImageTexture(5, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
         GL43.glDispatchCompute(
                 static_cast<GLuint>((width_ + 7) / 8),
@@ -203,9 +202,9 @@ public:
 
     void shutdown ();
 
-    bool ready () const { return program_ != 0 && direct_color_ != 0 && final_color_ != 0; }
+    bool ready () const { return program_ != 0 && direct_color_ != 0; }
     GLuint directTexture () const { return direct_color_; }
-    GLuint finalTexture () const { return final_color_; }
+    GLuint finalTexture () const { return direct_color_; }
 
     /* The analytic-shadow primitive layout is intentionally shared with
      * LumenGpu. One ECS extraction/upload feeds both compute pipelines. */
@@ -338,7 +337,6 @@ private:
     GLuint light_buffer_ = 0;
     GLuint primitive_buffer_ = 0;
     GLuint direct_color_ = 0;
-    GLuint final_color_ = 0;
 
     GLint camera_location_ = -1;
     GLint light_count_location_ = -1;
