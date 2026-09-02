@@ -32,7 +32,8 @@ bool buildScene (
 void updateScene (
                 Ecs::World *world,
                 SceneState *state,
-                std::uint64_t frame
+                std::uint64_t frame,
+                double delta_seconds
         );
 
 } // namespace Test
