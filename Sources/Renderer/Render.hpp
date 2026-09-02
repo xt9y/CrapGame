@@ -72,7 +72,8 @@ private:
 
     bool renderGpuFrame (
                 const Ecs::World& world,
-                const Math::Vec3& camera_position
+                const Math::Vec3& camera_position,
+                const Lumen::ChangeSet& changes
         );
 
     void renderGeometry (const Ecs::World& world);
