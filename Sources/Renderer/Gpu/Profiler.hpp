@@ -58,6 +58,7 @@ private:
 
     std::array<Slot, SLOT_COUNT> slots_ = {};
     std::array<double, PASS_COUNT> milliseconds_ = {};
+    std::array<std::uint32_t, PASS_COUNT> sample_counts_ = {};
 
     int current_slot_ = -1;
     bool initialized_ = false;
