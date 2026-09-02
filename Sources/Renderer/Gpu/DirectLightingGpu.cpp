@@ -493,8 +493,7 @@ bool DirectLightingGpu::resize (int width, int height, std::string *error)
 
     if (new_width == width_
             && new_height == height_
-            && direct_color_ != 0
-            && final_color_ != 0)
+            && direct_color_ != 0)
     {
         return true;
     }
@@ -504,12 +503,11 @@ bool DirectLightingGpu::resize (int width, int height, std::string *error)
     destroyTextures();
 
     direct_color_ = createTexture(width_, height_);
-    final_color_ = createTexture(width_, height_);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (direct_color_ == 0 || final_color_ == 0)
+    if (direct_color_ == 0)
     {
-        setError(error, "failed to allocate GPU direct lighting textures");
+        setError(error, "failed to allocate GPU direct lighting texture");
         destroyTextures();
         return false;
     }
@@ -595,7 +593,6 @@ bool DirectLightingGpu::render (
 void DirectLightingGpu::destroyTextures ()
 {
     deleteTexture(&direct_color_);
-    deleteTexture(&final_color_);
 }
 
 void DirectLightingGpu::shutdown ()
