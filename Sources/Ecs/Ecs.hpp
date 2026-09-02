@@ -161,6 +161,8 @@ private:
     std::vector<std::optional<LightComponent>> lights_;
 
     std::uint64_t change_revision_ = 1u;
+    mutable std::uint64_t active_camera_revision_ = 0u;
+    mutable Entity active_camera_cache_ = INVALID_ENTITY;
 };
 
 } // namespace Ecs
