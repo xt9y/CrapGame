@@ -38,6 +38,7 @@ private:
                 const Math::Vec3& camera_position
         );
 
+    void writeColorBuffer (const std::vector<Math::Vec3>& color);
     void present ();
 
     GBuffer::Buffer gbuffer_;
@@ -48,7 +49,8 @@ private:
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
 
-    std::vector<Math::Vec3> frame_color_;
+    std::vector<Math::Vec3> frame_color_,
+                            resolved_color_;
 
     std::vector<std::uint8_t> color_buffer_,
                               present_buffer_;

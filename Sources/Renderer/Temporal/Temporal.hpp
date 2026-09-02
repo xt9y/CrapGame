@@ -92,6 +92,13 @@ void calculateMotion (
                 const FrameState& frame_state
         );
 
+void resolveTaa (
+                const GBuffer::Buffer& gbuffer,
+                const HistoryBuffer& history,
+                const std::vector<Math::Vec3>& current,
+                std::vector<Math::Vec3> *output
+        );
+
 } // namespace Temporal
 } // namespace Renderer
 

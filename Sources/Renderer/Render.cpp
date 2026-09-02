@@ -53,6 +53,7 @@ void Rendering::resize (int width, int height)
         static_cast<std::size_t>(height_);
 
     frame_color_.resize(pixel_count);
+    resolved_color_.resize(pixel_count);
     color_buffer_.resize(pixel_count * 3u);
     present_buffer_.resize(pixel_count * 3u);
 
@@ -220,13 +221,29 @@ void Rendering::composeLighting (
                 static_cast<std::size_t>(width_) +
                 static_cast<std::size_t>(x);
 
-            const std::size_t offset = pixel_index * 3u;
-
             frame_color_[pixel_index] = color;
-            color_buffer_[offset + 0u] = toByte(color.x);
-            color_buffer_[offset + 1u] = toByte(color.y);
-            color_buffer_[offset + 2u] = toByte(color.z);
         }
+    }
+}
+
+void Rendering::writeColorBuffer (const std::vector<Math::Vec3>& color) 
+{
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(width_) *
+        static_cast<std::size_t>(height_);
+
+    if (color.size() != pixel_count) 
+    {
+        return;
+    }
+
+    for (std::size_t index = 0; index < pixel_count; ++index) 
+    {
+        const std::size_t offset = index * 3u;
+
+        color_buffer_[offset + 0u] = toByte(color[index].x);
+        color_buffer_[offset + 1u] = toByte(color[index].y);
+        color_buffer_[offset + 2u] = toByte(color[index].z);
     }
 }
 
@@ -302,15 +319,24 @@ void Rendering::render (const Ecs::World& world)
             toVec3(camera_transform->position)
         );
 
+    Temporal::resolveTaa(
+            gbuffer_,
+            history_,
+            frame_color_,
+            &resolved_color_
+        );
+
+    writeColorBuffer(resolved_color_);
     present();
 
-    history_.store(gbuffer_, frame_color_);
+    history_.store(gbuffer_, resolved_color_);
     frame_state_.capture(world, view_, projection_);
 }
 
 void Rendering::shutdown () 
 {
     frame_color_.clear();
+    resolved_color_.clear();
     color_buffer_.clear();
     present_buffer_.clear();
     history_.clear();

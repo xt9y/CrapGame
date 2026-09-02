@@ -365,5 +365,139 @@ std::size_t HistoryBuffer::index (int x, int y) const
            static_cast<std::size_t>(x);
 }
 
+void resolveTaa (
+                const GBuffer::Buffer& gbuffer,
+                const HistoryBuffer& history,
+                const std::vector<Math::Vec3>& current,
+                std::vector<Math::Vec3> *output
+        ) 
+{
+    if (!output) 
+    {
+        return;
+    }
+
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(gbuffer.width()) *
+        static_cast<std::size_t>(gbuffer.height());
+
+    output->resize(pixel_count);
+
+    if (current.size() != pixel_count) 
+    {
+        std::fill(
+                output->begin(),
+                output->end(),
+                Math::Vec3{0.0f, 0.0f, 0.0f}
+            );
+        return;
+    }
+
+    for (int y = 0; y < gbuffer.height(); ++y) 
+    {
+        for (int x = 0; x < gbuffer.width(); ++x) 
+        {
+            const std::size_t pixel_index =
+                static_cast<std::size_t>(y) *
+                static_cast<std::size_t>(gbuffer.width()) +
+                static_cast<std::size_t>(x);
+
+            const Math::Vec3 current_color =
+                current[pixel_index];
+
+            Math::Vec3 history_color = {};
+
+            if (!history.sample(
+                    x,
+                    y,
+                    gbuffer.pixel(x, y),
+                    &history_color
+                )) 
+            {
+                (*output)[pixel_index] = current_color;
+                continue;
+            }
+
+            Math::Vec3 minimum = current_color,
+                       maximum = current_color;
+
+            for (int offset_y = -1; offset_y <= 1; ++offset_y) 
+            {
+                for (int offset_x = -1; offset_x <= 1; ++offset_x) 
+                {
+                    const int sample_x =
+                        std::max(
+                                0,
+                                std::min(
+                                        gbuffer.width() - 1,
+                                        x + offset_x
+                                    )
+                            );
+
+                    const int sample_y =
+                        std::max(
+                                0,
+                                std::min(
+                                        gbuffer.height() - 1,
+                                        y + offset_y
+                                    )
+                            );
+
+                    const Math::Vec3 sample =
+                        current[
+                            static_cast<std::size_t>(sample_y) *
+                            static_cast<std::size_t>(gbuffer.width()) +
+                            static_cast<std::size_t>(sample_x)
+                        ];
+
+                    minimum.x = std::min(minimum.x, sample.x);
+                    minimum.y = std::min(minimum.y, sample.y);
+                    minimum.z = std::min(minimum.z, sample.z);
+
+                    maximum.x = std::max(maximum.x, sample.x);
+                    maximum.y = std::max(maximum.y, sample.y);
+                    maximum.z = std::max(maximum.z, sample.z);
+                }
+            }
+
+            history_color = {
+                std::max(minimum.x, std::min(maximum.x, history_color.x)),
+                std::max(minimum.y, std::min(maximum.y, history_color.y)),
+                std::max(minimum.z, std::min(maximum.z, history_color.z)),
+            };
+
+            const Math::Vec2 motion =
+                gbuffer.pixel(x, y).motion;
+
+            const float motion_length =
+                std::sqrt(
+                        motion.x * motion.x +
+                        motion.y * motion.y
+                    );
+
+            const float history_weight =
+                std::max(
+                        0.20f,
+                        std::min(
+                                0.90f,
+                                0.90f - motion_length * 4.0f
+                            )
+                    );
+
+            (*output)[pixel_index] =
+                Math::add(
+                        Math::multiply(
+                                current_color,
+                                1.0f - history_weight
+                            ),
+                        Math::multiply(
+                                history_color,
+                                history_weight
+                            )
+                    );
+        }
+    }
+}
+
 } // namespace Temporal
 } // namespace Renderer
