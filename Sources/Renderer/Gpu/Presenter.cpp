@@ -37,13 +37,18 @@ in vec2 v_uv;
 out vec4 output_color;
 
 uniform sampler2D u_color;
+uniform int u_flip_y;
 
 void main()
 {
-    output_color = texture(
-        u_color,
-        vec2(v_uv.x, 1.0 - v_uv.y)
-    );
+    vec2 uv = v_uv;
+
+    if (u_flip_y != 0)
+    {
+        uv.y = 1.0 - uv.y;
+    }
+
+    output_color = texture(u_color, uv);
 }
 )GLSL";
 
@@ -83,6 +88,10 @@ bool Presenter::init (std::string *error)
     texture_location_ = GL20.glGetUniformLocation(
             program_,
             "u_color"
+        );
+    flip_y_location_ = GL20.glGetUniformLocation(
+            program_,
+            "u_flip_y"
         );
 
     texture_ = glGenTextures();
@@ -161,21 +170,18 @@ bool Presenter::resize (
     return true;
 }
 
-bool Presenter::present (
-                const std::vector<std::uint8_t>& rgb,
+bool Presenter::drawTexture (
+                GLuint texture,
+                bool flip_y,
                 std::string *error
         )
 {
-    const std::size_t expected =
-        static_cast<std::size_t>(width_) *
-        static_cast<std::size_t>(height_) * 3u;
-
     if (!ready()
             || width_ <= 0
             || height_ <= 0
-            || rgb.size() != expected)
+            || texture == 0)
     {
-        setError(error, "invalid presenter frame");
+        setError(error, "invalid presenter texture frame");
         return false;
     }
 
@@ -186,25 +192,18 @@ bool Presenter::present (
     glDisable(GL_BLEND);
 
     GLModern.glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture_);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexSubImage2D(
-            GL_TEXTURE_2D,
-            0,
-            0,
-            0,
-            width_,
-            height_,
-            GL_RGB,
-            GL_UNSIGNED_BYTE,
-            rgb.data()
-        );
+    glBindTexture(GL_TEXTURE_2D, texture);
 
     GL20.glUseProgram(program_);
 
     if (texture_location_ >= 0)
     {
         GL20.glUniform1i(texture_location_, 0);
+    }
+
+    if (flip_y_location_ >= 0)
+    {
+        GL20.glUniform1i(flip_y_location_, flip_y ? 1 : 0);
     }
 
     GL30.glBindVertexArray(vao_);
@@ -224,6 +223,51 @@ bool Presenter::present (
     return true;
 }
 
+bool Presenter::present (
+                const std::vector<std::uint8_t>& rgb,
+                std::string *error
+        )
+{
+    const std::size_t expected =
+        static_cast<std::size_t>(width_) *
+        static_cast<std::size_t>(height_) * 3u;
+
+    if (!ready()
+            || width_ <= 0
+            || height_ <= 0
+            || rgb.size() != expected)
+    {
+        setError(error, "invalid presenter frame");
+        return false;
+    }
+
+    GLModern.glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(
+            GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            width_,
+            height_,
+            GL_RGB,
+            GL_UNSIGNED_BYTE,
+            rgb.data()
+        );
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    return drawTexture(texture_, true, error);
+}
+
+bool Presenter::presentTexture (
+                GLuint texture,
+                std::string *error
+        )
+{
+    return drawTexture(texture, false, error);
+}
+
 void Presenter::shutdown ()
 {
     if (vao_ != 0)
@@ -241,6 +285,7 @@ void Presenter::shutdown ()
     destroyProgram(&program_);
 
     texture_location_ = -1;
+    flip_y_location_ = -1;
     width_ = 0;
     height_ = 0;
 }
