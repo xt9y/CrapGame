@@ -3,6 +3,8 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
+#include "Renderer/Gpu/DirectLightingGpu.hpp"
+#include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Presenter.hpp"
 #include "Renderer/Lumen/Budget.hpp"
 #include "Renderer/Lumen/Cards.hpp"
@@ -66,6 +68,11 @@ private:
                 const Ecs::CameraComponent& camera
         );
 
+    bool renderGpuFrame (
+                const Ecs::World& world,
+                const Math::Vec3& camera_position
+        );
+
     void renderGeometry (const Ecs::World& world);
 
     void composeLighting (
@@ -95,6 +102,9 @@ private:
     Lumen::ChangeTracker change_tracker_;
     Lumen::ReflectionSystem reflection_system_;
     Lumen::ScreenProbeGather screen_probe_gather_;
+
+    Gpu::GBufferGpu gpu_gbuffer_;
+    Gpu::DirectLightingGpu gpu_direct_lighting_;
     Gpu::Presenter presenter_;
 
     Math::Mat4 view_       = Math::identity(),
@@ -112,6 +122,8 @@ private:
 
     RenderMode render_mode_ = RenderMode::Final;
     std::string test_name_;
+    bool gpu_pipeline_enabled_ = false;
+    bool gpu_error_reported_ = false;
 
     int width_  = 1,
         height_ = 1;
