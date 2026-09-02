@@ -1,0 +1,256 @@
+#include "Presenter.hpp"
+
+#include "Gpu.hpp"
+
+#include <lwcgl/glmodern.h>
+
+#include <cstddef>
+
+namespace Renderer
+{
+namespace Gpu
+{
+namespace
+{
+
+const char *PRESENT_VERTEX_SHADER = R"GLSL(
+#version 430 core
+
+out vec2 v_uv;
+
+void main()
+{
+    vec2 uv = vec2(
+        float((gl_VertexID << 1) & 2),
+        float(gl_VertexID & 2)
+    );
+
+    v_uv = uv;
+    gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+)GLSL";
+
+const char *PRESENT_FRAGMENT_SHADER = R"GLSL(
+#version 430 core
+
+in vec2 v_uv;
+out vec4 output_color;
+
+uniform sampler2D u_color;
+
+void main()
+{
+    output_color = texture(
+        u_color,
+        vec2(v_uv.x, 1.0 - v_uv.y)
+    );
+}
+)GLSL";
+
+void setError (std::string *error, const char *message)
+{
+    if (error)
+    {
+        *error = message ? message : "unknown GPU presenter error";
+    }
+}
+
+} // namespace
+
+bool Presenter::init (std::string *error)
+{
+    if (ready())
+    {
+        return true;
+    }
+
+    if (!Gpu::available(error))
+    {
+        return false;
+    }
+
+    program_ = createGraphicsProgram(
+            PRESENT_VERTEX_SHADER,
+            PRESENT_FRAGMENT_SHADER,
+            error
+        );
+
+    if (program_ == 0)
+    {
+        return false;
+    }
+
+    texture_location_ = GL20.glGetUniformLocation(
+            program_,
+            "u_color"
+        );
+
+    texture_ = glGenTextures();
+
+    if (texture_ == 0)
+    {
+        setError(error, "failed to allocate presenter texture");
+        shutdown();
+        return false;
+    }
+
+    GL30.glGenVertexArrays(1, &vao_);
+
+    if (vao_ == 0)
+    {
+        setError(error, "failed to allocate presenter VAO");
+        shutdown();
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    return true;
+}
+
+bool Presenter::resize (
+                int width,
+                int height,
+                std::string *error
+        )
+{
+    const int new_width = width > 0 ? width : 1,
+              new_height = height > 0 ? height : 1;
+
+    if (new_width == width_
+            && new_height == height_)
+    {
+        return true;
+    }
+
+    if (!ready() && !init(error))
+    {
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGB,
+            new_width,
+            new_height,
+            0,
+            GL_RGB,
+            GL_UNSIGNED_BYTE,
+            nullptr
+        );
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    const GLenum gl_error = glGetError();
+
+    if (gl_error != GL_NO_ERROR)
+    {
+        setError(error, "failed to allocate presenter texture storage");
+        return false;
+    }
+
+    width_ = new_width;
+    height_ = new_height;
+    return true;
+}
+
+bool Presenter::present (
+                const std::vector<std::uint8_t>& rgb,
+                std::string *error
+        )
+{
+    const std::size_t expected =
+        static_cast<std::size_t>(width_) *
+        static_cast<std::size_t>(height_) * 3u;
+
+    if (!ready()
+            || width_ <= 0
+            || height_ <= 0
+            || rgb.size() != expected)
+    {
+        setError(error, "invalid presenter frame");
+        return false;
+    }
+
+    GL30.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, width_, height_);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+
+    GLModern.glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(
+            GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            width_,
+            height_,
+            GL_RGB,
+            GL_UNSIGNED_BYTE,
+            rgb.data()
+        );
+
+    GL20.glUseProgram(program_);
+
+    if (texture_location_ >= 0)
+    {
+        GL20.glUniform1i(texture_location_, 0);
+    }
+
+    GL30.glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    GL30.glBindVertexArray(0);
+    GL20.glUseProgram(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    const GLenum gl_error = glGetError();
+
+    if (gl_error != GL_NO_ERROR)
+    {
+        setError(error, "GPU presentation failed");
+        return false;
+    }
+
+    return true;
+}
+
+void Presenter::shutdown ()
+{
+    if (vao_ != 0)
+    {
+        GL30.glDeleteVertexArrays(1, &vao_);
+        vao_ = 0;
+    }
+
+    if (texture_ != 0)
+    {
+        glDeleteTextures(texture_);
+        texture_ = 0;
+    }
+
+    destroyProgram(&program_);
+
+    texture_location_ = -1;
+    width_ = 0;
+    height_ = 0;
+}
+
+bool Presenter::ready () const
+{
+    return program_ != 0
+        && texture_ != 0
+        && vao_ != 0;
+}
+
+} // namespace Gpu
+} // namespace Renderer
