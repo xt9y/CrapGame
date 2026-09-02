@@ -27,6 +27,17 @@ float shortRangeVisibility (
                 float maximum_distance
         );
 
+/*
+ * Cheap high-resolution contact term.  It samples nearby reconstructed world
+ * positions instead of launching unified screen/SDF rays for every pixel.
+ */
+float shortRangeScreenVisibility (
+                const GBuffer::Buffer& gbuffer,
+                int x,
+                int y,
+                float maximum_distance
+        );
+
 } // namespace Lumen
 } // namespace Renderer
 
