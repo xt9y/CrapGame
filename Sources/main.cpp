@@ -1,5 +1,5 @@
-#include "RENDER/render.hpp"
-#include "ECS/ecs.hpp"
+#include "Renderer/Render.hpp"
+#include "Ecs/Ecs.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -7,9 +7,10 @@
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 870
 
-static inline void ERROR (const char* operation) 
+static inline void ERROR (const char *operation) 
 {
-    const char* message = lwcglGetLastError();
+    const char *message = lwcglGetLastError();
+
     std::fprintf(
             stderr, "%s failed: %s\n", 
             operation, message 
@@ -17,11 +18,11 @@ static inline void ERROR (const char* operation)
         );
 }
 
-static ecs::Entity create_scene (ecs::World& world) 
+static Ecs::Entity createScene (Ecs::World& world) 
 {
-    const ecs::Entity cube   = world.createEntity();
-    const ecs::Entity camera = world.createEntity();
-    const ecs::Entity ground = world.createEntity();
+    const Ecs::Entity cube   = world.createEntity(),
+                      camera = world.createEntity(),
+                      ground = world.createEntity();
 
     { // Camera
         world.addTransform(camera, {
@@ -30,7 +31,9 @@ static ecs::Entity create_scene (ecs::World& world)
             {1.0f, 1.0f, 1.0f},
         });
 
-        world.addCamera(camera, {60.0f, 0.1f, 100.0f, true});
+        world.addCamera(camera, {
+            60.0f, 0.1f, 100.0f, true
+        });
     }
 
     { // Cube
@@ -41,7 +44,7 @@ static ecs::Entity create_scene (ecs::World& world)
         });
 
         world.addRenderable(cube, {
-            ecs::Primitive::Cube,
+            Ecs::Primitive::Cube,
             {1.0f, 1.0f, 1.0f},
         });
     }
@@ -54,7 +57,7 @@ static ecs::Entity create_scene (ecs::World& world)
         });
 
         world.addRenderable(ground, {
-            ecs::Primitive::Plane,
+            Ecs::Primitive::Plane,
             {0.28f, 0.30f, 0.34f},
         });
     }
@@ -78,26 +81,26 @@ int main ()
     Keyboard.create();
     Mouse.create();
 
-    ecs::World world;
+    Ecs::World world;
 
-    const ecs::Entity cube = 
-            create_scene(world);
+    const Ecs::Entity cube = 
+        createScene(world);
 
-    render::Renderer renderer;
+    Renderer::Rendering renderer;
     renderer.init();
 
     while (!Display.isCloseRequested() 
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
     {
         renderer.resize(
-                Display.getWidth(), Display.getHeight()
+                Display.getWidth(), 
+                Display.getHeight()
             );
 
         renderer.render(world);
-        
         glFinish();
 
-        if (capture_frame(frame) != 0) 
+        if (captureFrame(frame) != 0) 
         {
             std::fprintf(
                     stderr, 
@@ -110,7 +113,10 @@ int main ()
 
         Display.update();
 
-        if (ecs::TransformComponent* cube_transform = world.getTransform(cube)) 
+        Ecs::TransformComponent *cube_transform = 
+            world.getTransform(cube);
+
+        if (cube_transform) 
         {
             cube_transform->rotation.y += 0.65f;
             

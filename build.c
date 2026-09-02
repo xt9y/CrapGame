@@ -1,6 +1,6 @@
 #include <cbuild.h>
 
-static void configure_platform (C_Target *target) 
+static void configurePlatform (C_Target *target) 
 {
 #ifdef __APPLE__
     c_define(target, "GL_SILENCE_DEPRECATION");
@@ -29,7 +29,7 @@ static void configure_platform (C_Target *target)
 #endif
 }
 
-static void configure_app (C_Target *target) 
+static void configureApp (C_Target *target) 
 {
     c_warnings_strict(target);
 
@@ -38,19 +38,20 @@ static void configure_app (C_Target *target)
 
     c_link_system(target, "lwcgl");
 
-    configure_platform(target);
+    configurePlatform(target);
 }
 
 void build (C_Build *b) 
 {
     C_Target *app = c_executable(b, "crapgame");
+
     c_sources(app, "Sources/*.cpp");
-    c_sources(app, "Sources/ECS/*.cpp");
-    c_sources(app, "Sources/RENDER/*.cpp");
+    c_sources(app, "Sources/Ecs/*.cpp");
+    c_sources(app, "Sources/Renderer/*.cpp");
 
     c_flag(app, "-std=c++17");
 
-    configure_app(app);
+    configureApp(app);
 
     // c uses $(CC) for linking, so an explicit stdlib link is needed for C++.
     c_link_system(app, "stdc++");
