@@ -45,9 +45,14 @@ static Ecs::Entity createScene (Ecs::World& world)
 
         world.addMesh(cube, {Ecs::MeshType::Cube});
 
-        world.addRenderable(cube, {
-            Ecs::Primitive::Cube,
+        world.addRenderable(cube, {true});
+
+        world.addMaterial(cube, {
             {1.0f, 1.0f, 1.0f},
+            {0.0f, 0.0f, 0.0f},
+            0.0f,
+            0.35f,
+            0.0f,
         });
     }
 
@@ -60,9 +65,14 @@ static Ecs::Entity createScene (Ecs::World& world)
 
         world.addMesh(ground, {Ecs::MeshType::Plane});
 
-        world.addRenderable(ground, {
-            Ecs::Primitive::Plane,
+        world.addRenderable(ground, {true});
+
+        world.addMaterial(ground, {
             {0.28f, 0.30f, 0.34f},
+            {0.0f, 0.0f, 0.0f},
+            0.0f,
+            0.80f,
+            0.0f,
         });
     }
 

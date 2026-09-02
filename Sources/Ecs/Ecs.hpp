@@ -34,12 +34,6 @@ struct CameraComponent
     bool active;
 };
 
-enum class Primitive 
-{
-    Cube,
-    Plane,
-};
-
 enum class MeshType 
 {
     Cube,
@@ -53,9 +47,17 @@ struct MeshComponent
 
 struct RenderableComponent 
 {
-    Primitive primitive;
-    
-    Vec3 color;
+    bool visible;
+};
+
+struct MaterialComponent 
+{
+    Vec3 albedo,
+         emissive;
+
+    float metallic,
+          roughness,
+          emissive_strength;
 };
 
 struct LightComponent 
@@ -89,6 +91,11 @@ public:
                 const MeshComponent& component
         );
 
+    MaterialComponent& addMaterial (
+                Entity entity,
+                const MaterialComponent& component
+        );
+
     LightComponent& addLight (
                 Entity entity,
                 const LightComponent& component
@@ -105,6 +112,9 @@ public:
 
     MeshComponent *getMesh (Entity entity);
     const MeshComponent *getMesh (Entity entity) const;
+
+    MaterialComponent *getMaterial (Entity entity);
+    const MaterialComponent *getMaterial (Entity entity) const;
     
     LightComponent *getLight (Entity entity);
     const LightComponent *getLight (Entity entity) const;
@@ -120,6 +130,7 @@ private:
     std::vector<std::optional<CameraComponent>> cameras_;
     std::vector<std::optional<RenderableComponent>> renderables_;
     std::vector<std::optional<MeshComponent>> meshes_;
+    std::vector<std::optional<MaterialComponent>> materials_;
     std::vector<std::optional<LightComponent>> lights_;
 };
 

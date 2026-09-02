@@ -32,7 +32,7 @@ private:
     void drawRenderable (
                 const Ecs::TransformComponent& transform,
                 const Ecs::MeshComponent& mesh,
-                const Ecs::RenderableComponent& renderable
+                const Ecs::MaterialComponent& material
         ) const;
 
     void drawMesh (const Mesh::MeshData& mesh) const;

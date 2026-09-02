@@ -98,7 +98,7 @@ void Rendering::drawMesh (const Mesh::MeshData& mesh) const
 void Rendering::drawRenderable (
                 const Ecs::TransformComponent& transform,
                 const Ecs::MeshComponent& mesh,
-                const Ecs::RenderableComponent& renderable
+                const Ecs::MaterialComponent& material
         ) const 
 {
     const Math::Mat4 model = 
@@ -115,9 +115,9 @@ void Rendering::drawRenderable (
     glLoadMatrixf(model_view.value);
 
     glColor3f(
-            renderable.color.x, 
-            renderable.color.y, 
-            renderable.color.z
+            material.albedo.x, 
+            material.albedo.y, 
+            material.albedo.z
         );
 
     drawMesh(Mesh::meshForType(mesh.mesh));
@@ -160,14 +160,19 @@ void Rendering::render (const Ecs::World& world)
         const Ecs::RenderableComponent *renderable = 
             world.getRenderable(entity);
 
+        const Ecs::MaterialComponent *material = 
+            world.getMaterial(entity);
+
         if (!transform 
                 || !mesh 
-                || !renderable) 
+                || !renderable 
+                || !renderable->visible 
+                || !material) 
         {
             continue;
         }
 
-        drawRenderable(*transform, *mesh, *renderable);
+        drawRenderable(*transform, *mesh, *material);
     }
 }
 
