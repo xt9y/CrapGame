@@ -256,6 +256,13 @@ const LightComponent *World::getLight (Entity entity) const
 
 Entity World::activeCamera () const 
 {
+    if (active_camera_revision_ == change_revision_)
+    {
+        return active_camera_cache_;
+    }
+
+    active_camera_cache_ = INVALID_ENTITY;
+
     for (const Entity entity : entities_) 
     {
         const CameraComponent *camera = 
@@ -265,11 +272,13 @@ Entity World::activeCamera () const
                 && camera->active 
                 && getTransform(entity)) 
         {
-            return entity;
+            active_camera_cache_ = entity;
+            break;
         }
     }
 
-    return INVALID_ENTITY;
+    active_camera_revision_ = change_revision_;
+    return active_camera_cache_;
 }
 
 const std::vector<Entity>& World::entities () const 
