@@ -7,6 +7,7 @@
 #include "Renderer/Shadows/Shadows.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -14,6 +15,19 @@ namespace Renderer
 {
 namespace 
 {
+
+constexpr std::uint64_t LUMEN_UPDATE_HZ = 240u;
+constexpr std::uint64_t LUMEN_UPDATE_NS = 1000000000ull / LUMEN_UPDATE_HZ;
+
+std::uint64_t monotonicNanoseconds ()
+{
+    using Clock = std::chrono::steady_clock;
+    return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    Clock::now().time_since_epoch()
+                ).count()
+        );
+}
 
 Math::Vec3 toVec3 (const Ecs::Vec3& value) 
 {
@@ -97,6 +111,8 @@ bool Rendering::init ()
             );
     }
 
+    gpu_lumen_next_update_ns_ = 0;
+    gpu_lumen_sample_index_ = 0;
     gpu_pipeline_enabled_ = true;
     return true;
 #endif
@@ -157,8 +173,10 @@ void Rendering::resize (int width, int height)
 #endif
 
         /* New attachments have no valid scene data. Force the next GPU frame
-         * to repopulate geometry/direct textures even when the ECS is static. */
+         * to repopulate geometry/direct textures and restart Lumen history. */
         change_tracker_.clear();
+        gpu_lumen_next_update_ns_ = 0;
+        gpu_lumen_sample_index_ = 0;
 
         direct_color_.clear();
         indirect_color_.clear();
@@ -273,6 +291,12 @@ bool Rendering::renderGpuFrame (
         geometry_dirty
         || changes.lighting_changed;
 
+    const std::uint64_t now_ns = monotonicNanoseconds();
+    const bool lumen_due =
+        direct_dirty
+        || gpu_lumen_next_update_ns_ == 0
+        || now_ns >= gpu_lumen_next_update_ns_;
+
     std::string error;
     gpu_profiler_.beginFrame(gpu_frame_index_);
 
@@ -322,28 +346,55 @@ bool Rendering::renderGpuFrame (
         }
     }
 
-    gpu_profiler_.begin(Gpu::Profiler::Pass::Lumen);
-    const bool lumen_ok = gpu_lumen_.render(
-            world,
-            gpu_gbuffer_,
-            gpu_direct_lighting_,
-            view_,
-            projection_,
-            camera_position,
-            gpu_frame_index_,
-            &error
-        );
-    gpu_profiler_.end(Gpu::Profiler::Pass::Lumen);
-
-    if (!lumen_ok)
+    if (lumen_due)
     {
-        gpu_profiler_.endFrame();
-        if (!gpu_error_reported_)
+        gpu_profiler_.begin(Gpu::Profiler::Pass::LumenTrace);
+        const bool trace_ok = gpu_lumen_.traceShared(
+                gpu_gbuffer_,
+                gpu_direct_lighting_,
+                view_,
+                projection_,
+                camera_position,
+                gpu_lumen_sample_index_,
+                &error
+            );
+        gpu_profiler_.end(Gpu::Profiler::Pass::LumenTrace);
+
+        if (!trace_ok)
         {
-            std::fprintf(stderr, "GPU Lumen frame failed: %s\n", error.c_str());
-            gpu_error_reported_ = true;
+            gpu_profiler_.endFrame();
+            if (!gpu_error_reported_)
+            {
+                std::fprintf(stderr, "GPU Lumen trace failed: %s\n", error.c_str());
+                gpu_error_reported_ = true;
+            }
+            return false;
         }
-        return false;
+
+        ++gpu_lumen_sample_index_;
+
+        gpu_profiler_.begin(Gpu::Profiler::Pass::LumenComposite);
+        const bool composite_ok = gpu_lumen_.composite(
+                gpu_gbuffer_,
+                gpu_direct_lighting_,
+                &error
+            );
+        gpu_profiler_.end(Gpu::Profiler::Pass::LumenComposite);
+
+        if (!composite_ok)
+        {
+            gpu_profiler_.endFrame();
+            if (!gpu_error_reported_)
+            {
+                std::fprintf(stderr, "GPU Lumen composite failed: %s\n", error.c_str());
+                gpu_error_reported_ = true;
+            }
+            return false;
+        }
+
+        /* Do not build a backlog after a stall. One fresh update is enough;
+         * the next sample is scheduled from real time, not render-frame count. */
+        gpu_lumen_next_update_ns_ = now_ns + LUMEN_UPDATE_NS;
     }
 
     gpu_profiler_.begin(Gpu::Profiler::Pass::Present);
@@ -746,6 +797,8 @@ void Rendering::shutdown ()
     gpu_pipeline_enabled_ = false;
     gpu_error_reported_ = false;
     gpu_frame_index_ = 0;
+    gpu_lumen_sample_index_ = 0;
+    gpu_lumen_next_update_ns_ = 0;
 
     direct_color_.clear();
     indirect_color_.clear();
