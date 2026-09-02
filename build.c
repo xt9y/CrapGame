@@ -33,6 +33,7 @@ static void configure_app (C_Target *target)
 {
     c_warnings_strict(target);
 
+    c_include(target, "Sources");
     c_include(target, "/usr/local/include");
 
     c_link_system(target, "lwcgl");
@@ -44,6 +45,8 @@ void build (C_Build *b)
 {
     C_Target *app = c_executable(b, "crapgame");
     c_sources(app, "Sources/*.cpp");
+    c_sources(app, "Sources/ECS/*.cpp");
+    c_sources(app, "Sources/RENDER/*.cpp");
 
     c_flag(app, "-std=c++17");
 
