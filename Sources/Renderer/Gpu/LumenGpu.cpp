@@ -24,6 +24,10 @@ layout(rgba16f, binding = 3) readonly uniform image2D gEmissive;
 layout(rgba16f, binding = 4) readonly uniform image2D gDirect;
 layout(rgba16f, binding = 5) writeonly uniform image2D oIndirect;
 layout(rgba16f, binding = 6) writeonly uniform image2D oReflection;
+layout(rgba16f, binding = 7) readonly uniform image2D gPreviousIndirect;
+layout(rgba16f, binding = 8) readonly uniform image2D gPreviousReflection;
+layout(rgba16f, binding = 9) readonly uniform image2D gPreviousPosition;
+layout(rgba16f, binding = 10) writeonly uniform image2D oPositionHistory;
 
 struct PrimitiveData
 {
@@ -43,6 +47,7 @@ uniform mat4 uViewProjection;
 uniform vec3 uCameraPosition;
 uniform int uPrimitiveCount;
 uniform int uFrameIndex;
+uniform int uHistoryValid;
 
 const float EPSILON = 0.00001;
 const float TRACE_BIAS = 0.012;
@@ -355,6 +360,7 @@ void main ()
     {
         imageStore(oIndirect, tracePixel, vec4(0.0));
         imageStore(oReflection, tracePixel, vec4(0.0));
+        imageStore(oPositionHistory, tracePixel, vec4(0.0));
         return;
     }
 
@@ -424,8 +430,24 @@ void main ()
         }
     }
 
+    if (uHistoryValid != 0)
+    {
+        vec4 previousPosition = imageLoad(gPreviousPosition, tracePixel);
+
+        if (previousPosition.w > 0.0
+                && distance(previousPosition.xyz, position) < 0.18)
+        {
+            vec3 previousIndirect = imageLoad(gPreviousIndirect, tracePixel).xyz;
+            vec3 previousReflection = imageLoad(gPreviousReflection, tracePixel).xyz;
+
+            indirect = mix(indirect, previousIndirect, 0.84);
+            reflection = mix(reflection, previousReflection, 0.72);
+        }
+    }
+
     imageStore(oIndirect, tracePixel, vec4(max(indirect, vec3(0.0)), 1.0));
     imageStore(oReflection, tracePixel, vec4(max(reflection, vec3(0.0)), 1.0));
+    imageStore(oPositionHistory, tracePixel, vec4(position, 1.0));
 }
 )GLSL";
 
@@ -606,11 +628,16 @@ bool LumenGpu::init (std::string *error)
             trace_program_,
             "uFrameIndex"
         );
+    trace_history_valid_location_ = GL20.glGetUniformLocation(
+            trace_program_,
+            "uHistoryValid"
+        );
 
     if (trace_view_projection_location_ < 0
             || trace_camera_location_ < 0
             || trace_primitive_count_location_ < 0
-            || trace_frame_location_ < 0)
+            || trace_frame_location_ < 0
+            || trace_history_valid_location_ < 0)
     {
         setError(error, "GPU Lumen trace uniforms are unavailable");
         shutdown();
@@ -643,8 +670,12 @@ bool LumenGpu::resize (int width, int height, std::string *error)
 
     if (new_width == width_
             && new_height == height_
-            && indirect_color_ != 0
-            && reflection_color_ != 0
+            && indirect_history_[0] != 0
+            && indirect_history_[1] != 0
+            && reflection_history_[0] != 0
+            && reflection_history_[1] != 0
+            && position_history_[0] != 0
+            && position_history_[1] != 0
             && final_color_ != 0)
     {
         return true;
@@ -657,19 +688,31 @@ bool LumenGpu::resize (int width, int height, std::string *error)
 
     destroyTextures();
 
-    indirect_color_ = createTexture(trace_width_, trace_height_, GL_LINEAR);
-    reflection_color_ = createTexture(trace_width_, trace_height_, GL_LINEAR);
+    for (int index = 0; index < 2; ++index)
+    {
+        indirect_history_[index] = createTexture(trace_width_, trace_height_, GL_LINEAR);
+        reflection_history_[index] = createTexture(trace_width_, trace_height_, GL_LINEAR);
+        position_history_[index] = createTexture(trace_width_, trace_height_, GL_NEAREST);
+    }
+
     final_color_ = createTexture(width_, height_, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (indirect_color_ == 0
-            || reflection_color_ == 0
+    if (indirect_history_[0] == 0
+            || indirect_history_[1] == 0
+            || reflection_history_[0] == 0
+            || reflection_history_[1] == 0
+            || position_history_[0] == 0
+            || position_history_[1] == 0
             || final_color_ == 0)
     {
-        setError(error, "failed to allocate GPU Lumen textures");
+        setError(error, "failed to allocate GPU Lumen temporal textures");
         destroyTextures();
         return false;
     }
+
+    history_index_ = 0;
+    history_valid_ = false;
 
     if (error)
     {
@@ -808,6 +851,8 @@ bool LumenGpu::render (
     }
 
     const Math::Mat4 view_projection = Math::multiply(projection, view);
+    const int read_index = history_index_;
+    const int write_index = 1 - history_index_;
 
     GL20.glUseProgram(trace_program_);
     GL20.glUniformMatrix4fv(
@@ -830,6 +875,10 @@ bool LumenGpu::render (
             trace_frame_location_,
             static_cast<GLint>(frame_index & 0x7fffffffu)
         );
+    GL20.glUniform1i(
+            trace_history_valid_location_,
+            history_valid_ ? 1 : 0
+        );
 
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, primitive_buffer_);
 
@@ -838,8 +887,12 @@ bool LumenGpu::render (
     GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
     GL42.glBindImageTexture(3, gbuffer.emissiveTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
     GL42.glBindImageTexture(4, direct.directTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(5, indirect_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(6, reflection_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(5, indirect_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(6, reflection_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(7, indirect_history_[read_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(8, reflection_history_[read_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(9, position_history_[read_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(10, position_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
     GL43.glDispatchCompute(
             static_cast<GLuint>((trace_width_ + 7) / 8),
@@ -854,8 +907,8 @@ bool LumenGpu::render (
     GL42.glBindImageTexture(1, gbuffer.normalRoughnessTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
     GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
     GL42.glBindImageTexture(3, direct.directTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(4, indirect_color_, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(5, reflection_color_, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(4, indirect_history_[write_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(5, reflection_history_[write_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
     GL42.glBindImageTexture(6, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
     GL43.glDispatchCompute(
@@ -867,6 +920,9 @@ bool LumenGpu::render (
     GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
     GL20.glUseProgram(0);
 
+    history_index_ = write_index;
+    history_valid_ = true;
+
     if (error)
     {
         error->clear();
@@ -877,9 +933,16 @@ bool LumenGpu::render (
 
 void LumenGpu::destroyTextures ()
 {
-    deleteTexture(&indirect_color_);
-    deleteTexture(&reflection_color_);
+    for (int index = 0; index < 2; ++index)
+    {
+        deleteTexture(&indirect_history_[index]);
+        deleteTexture(&reflection_history_[index]);
+        deleteTexture(&position_history_[index]);
+    }
+
     deleteTexture(&final_color_);
+    history_index_ = 0;
+    history_valid_ = false;
 }
 
 void LumenGpu::shutdown ()
@@ -902,6 +965,7 @@ void LumenGpu::shutdown ()
     trace_camera_location_ = -1;
     trace_primitive_count_location_ = -1;
     trace_frame_location_ = -1;
+    trace_history_valid_location_ = -1;
 
     width_ = 0;
     height_ = 0;
@@ -914,8 +978,12 @@ bool LumenGpu::ready () const
     return trace_program_ != 0
         && composite_program_ != 0
         && primitive_buffer_ != 0
-        && indirect_color_ != 0
-        && reflection_color_ != 0
+        && indirect_history_[0] != 0
+        && indirect_history_[1] != 0
+        && reflection_history_[0] != 0
+        && reflection_history_[1] != 0
+        && position_history_[0] != 0
+        && position_history_[1] != 0
         && final_color_ != 0;
 }
 
