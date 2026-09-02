@@ -1,6 +1,7 @@
 #include "Profiler.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 
 namespace Renderer
@@ -11,7 +12,18 @@ namespace
 {
 
 constexpr std::uint64_t SAMPLE_INTERVAL = 64u;
-constexpr std::uint64_t PRINT_INTERVAL = 4096u;
+constexpr std::uint64_t PRINT_CHECK_INTERVAL = 1024u;
+constexpr std::uint64_t PRINT_INTERVAL_NS = 2000000000ull;
+
+std::uint64_t monotonicNanoseconds ()
+{
+    using Clock = std::chrono::steady_clock;
+    return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    Clock::now().time_since_epoch()
+                ).count()
+        );
+}
 
 const char *passName (Profiler::Pass pass)
 {
@@ -271,13 +283,24 @@ void Profiler::endFrame ()
 
 void Profiler::printIfDue (std::uint64_t frame_index)
 {
+    static std::uint64_t last_print_ns = 0;
+
     if (!initialized_
             || frame_index == 0
-            || frame_index % PRINT_INTERVAL != 0u)
+            || frame_index % PRINT_CHECK_INTERVAL != 0u)
     {
         return;
     }
 
+    const std::uint64_t now_ns = monotonicNanoseconds();
+
+    if (last_print_ns != 0
+            && now_ns - last_print_ns < PRINT_INTERVAL_NS)
+    {
+        return;
+    }
+
+    last_print_ns = now_ns;
     collect();
 
     std::fprintf(stderr, "GPU frame");
