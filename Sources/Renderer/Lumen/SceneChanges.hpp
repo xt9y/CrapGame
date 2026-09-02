@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 
+#include <cstdint>
 #include <vector>
 
 namespace Renderer 
@@ -52,6 +53,7 @@ private:
      * API. A vector therefore avoids per-frame unordered_map/set hashing and
      * allocation in this render-hot change detector. */
     std::vector<Snapshot> previous_;
+    std::uint64_t previous_world_revision_ = 0;
     bool initialized_ = false;
 };
 
