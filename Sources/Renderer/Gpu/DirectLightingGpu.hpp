@@ -93,8 +93,6 @@ public:
             primitive.scale[0] = transform->scale.x;
             primitive.scale[1] = transform->scale.y;
             primitive.scale[2] = transform->scale.z;
-            /* scale.w is a ray-hit visibility flag. Real scene primitives
-             * can become visible shadow/GI/reflection hits. */
             primitive.scale[3] = 1.0f;
             primitive.albedo_metallic[0] = material->albedo.x;
             primitive.albedo_metallic[1] = material->albedo.y;
@@ -131,7 +129,10 @@ public:
             bench_reported_ = true;
         }
 
-        if (!ensureBvhShader(use_bvh_, error))
+        /* Stress benchmarks always use the V2 shader. Forced-linear keeps
+         * uBvhNodeCount at zero, so linear vs BVH differs only in traversal
+         * structure and shares the benchmark-only hit visibility semantics. */
+        if (!ensureBvhShader(use_bvh_ || config.stress_primitives > 0u, error))
         {
             return false;
         }
@@ -240,6 +241,7 @@ public:
     GLuint primitiveBuffer () const { return primitive_buffer_; }
     std::size_t primitiveCount () const { return primitives_.size(); }
     bool bvhReady () const { return use_bvh_ && bvh_program_active_ && !bvh_nodes_.empty() && bvh_node_buffer_ != 0; }
+    bool benchmarkActive () const { return bench_config_initialized_ && bench_config_.stress_primitives > 0u; }
     GLuint bvhNodeBuffer () const { return bvh_node_buffer_; }
     std::size_t bvhNodeCount () const { return bvh_nodes_.size(); }
 
@@ -304,9 +306,6 @@ private:
             primitive.scale[0] = transform.scale.x;
             primitive.scale[1] = transform.scale.y;
             primitive.scale[2] = transform.scale.z;
-            /* Benchmark-only primitives remain in the same primitive/BVH
-             * traversal and still execute exact intersection math, but a hit
-             * is not allowed to affect the rendered image. */
             primitive.scale[3] = 0.0f;
             primitive.albedo_metallic[0] = 0.35f + static_cast<float>(index % 5u) * 0.07f;
             primitive.albedo_metallic[1] = 0.42f;
