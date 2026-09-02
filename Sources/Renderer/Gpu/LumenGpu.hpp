@@ -2,8 +2,10 @@
 #define CRAPGAME_RENDERER_GPU_LUMENGPU_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/Gpu/BvhShaders.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -25,8 +27,6 @@ public:
     bool init (std::string *error = nullptr);
     bool resize (int width, int height, std::string *error = nullptr);
 
-    /* Legacy reference entrypoint. Kept while the GPU migration remains easy
-     * to bisect; interactive rendering uses traceShared/composite below. */
     bool render (
                 const Ecs::World& world,
                 const GBufferGpu& gbuffer,
@@ -38,8 +38,6 @@ public:
                 std::string *error = nullptr
         );
 
-    /* Trace against DirectLightingGpu's already-populated primitive SSBO.
-     * This removes Lumen's duplicate ECS walk and glBufferSubData upload. */
     bool traceShared (
                 const GBufferGpu& gbuffer,
                 const DirectLightingGpu& direct,
@@ -61,6 +59,29 @@ public:
             return false;
         }
 
+        const bool use_bvh = direct.bvhReady();
+        if (use_bvh && !ensureBvhTraceProgram(error))
+        {
+            return false;
+        }
+
+        const GLuint active_program = use_bvh ? bvh_trace_program_ : trace_program_;
+        const GLint view_projection_location = use_bvh
+            ? bvh_trace_view_projection_location_
+            : trace_view_projection_location_;
+        const GLint camera_location = use_bvh
+            ? bvh_trace_camera_location_
+            : trace_camera_location_;
+        const GLint primitive_count_location = use_bvh
+            ? bvh_trace_primitive_count_location_
+            : trace_primitive_count_location_;
+        const GLint frame_location = use_bvh
+            ? bvh_trace_frame_location_
+            : trace_frame_location_;
+        const GLint history_valid_location = use_bvh
+            ? bvh_trace_history_valid_location_
+            : trace_history_valid_location_;
+
         const Math::Mat4 view_projection = Math::multiply(projection, view);
         const int read_index = history_index_;
         const int write_index = 1 - history_index_;
@@ -73,29 +94,29 @@ public:
         bindTextureUnitInline(5, reflection_history_[read_index]);
         bindTextureUnitInline(6, position_history_[read_index]);
 
-        GL20.glUseProgram(trace_program_);
+        GL20.glUseProgram(active_program);
         GL20.glUniformMatrix4fv(
-                trace_view_projection_location_,
+                view_projection_location,
                 1,
                 GL_FALSE,
                 view_projection.value
             );
         GL20.glUniform3f(
-                trace_camera_location_,
+                camera_location,
                 camera_position.x,
                 camera_position.y,
                 camera_position.z
             );
         GL20.glUniform1i(
-                trace_primitive_count_location_,
+                primitive_count_location,
                 static_cast<GLint>(direct.primitiveCount())
             );
         GL20.glUniform1i(
-                trace_frame_location_,
+                frame_location,
                 static_cast<GLint>(frame_index & 0x7fffffffu)
             );
         GL20.glUniform1i(
-                trace_history_valid_location_,
+                history_valid_location,
                 history_valid_ ? 1 : 0
             );
 
@@ -104,6 +125,25 @@ public:
                 7,
                 direct.primitiveBuffer()
             );
+
+        if (use_bvh)
+        {
+            GL20.glUniform1i(
+                    bvh_trace_node_count_location_,
+                    static_cast<GLint>(direct.bvhNodeCount())
+                );
+            GL30.glBindBufferBase(
+                    GL_SHADER_STORAGE_BUFFER,
+                    8,
+                    direct.bvhNodeBuffer()
+                );
+            GL30.glBindBufferBase(
+                    GL_SHADER_STORAGE_BUFFER,
+                    9,
+                    direct.bvhIndexBuffer()
+                );
+        }
+
         GL42.glBindImageTexture(
                 0,
                 indirect_history_[write_index],
@@ -156,8 +196,6 @@ public:
         return true;
     }
 
-    /* Full-resolution AO/tone-map composite is independent from stochastic
-     * tracing, so it can run only when direct lighting or Lumen history changed. */
     bool composite (
                 const GBufferGpu& gbuffer,
                 const DirectLightingGpu& direct,
@@ -214,12 +252,70 @@ public:
 
     void shutdown ();
 
+    void releaseAcceleration ()
+    {
+        destroyProgram(&bvh_trace_program_);
+        bvh_trace_view_projection_location_ = -1;
+        bvh_trace_camera_location_ = -1;
+        bvh_trace_primitive_count_location_ = -1;
+        bvh_trace_node_count_location_ = -1;
+        bvh_trace_frame_location_ = -1;
+        bvh_trace_history_valid_location_ = -1;
+    }
+
     bool ready () const;
     GLuint finalTexture () const { return final_color_; }
     GLuint indirectTexture () const { return indirect_history_[history_index_]; }
     GLuint reflectionTexture () const { return reflection_history_[history_index_]; }
 
 private:
+    bool ensureBvhTraceProgram (std::string *error)
+    {
+        if (bvh_trace_program_ != 0)
+        {
+            return true;
+        }
+
+        bvh_trace_program_ = createComputeProgram(LUMEN_TRACE_BVH_COMPUTE, error);
+        if (bvh_trace_program_ == 0)
+        {
+            return false;
+        }
+
+        bvh_trace_view_projection_location_ = GL20.glGetUniformLocation(
+                bvh_trace_program_, "uViewProjection"
+            );
+        bvh_trace_camera_location_ = GL20.glGetUniformLocation(
+                bvh_trace_program_, "uCameraPosition"
+            );
+        bvh_trace_primitive_count_location_ = GL20.glGetUniformLocation(
+                bvh_trace_program_, "uPrimitiveCount"
+            );
+        bvh_trace_node_count_location_ = GL20.glGetUniformLocation(
+                bvh_trace_program_, "uBvhNodeCount"
+            );
+        bvh_trace_frame_location_ = GL20.glGetUniformLocation(
+                bvh_trace_program_, "uFrameIndex"
+            );
+        bvh_trace_history_valid_location_ = GL20.glGetUniformLocation(
+                bvh_trace_program_, "uHistoryValid"
+            );
+
+        if (bvh_trace_view_projection_location_ < 0
+                || bvh_trace_camera_location_ < 0
+                || bvh_trace_primitive_count_location_ < 0
+                || bvh_trace_node_count_location_ < 0
+                || bvh_trace_frame_location_ < 0
+                || bvh_trace_history_valid_location_ < 0)
+        {
+            setInlineError(error, "GPU BVH Lumen uniforms are unavailable");
+            destroyProgram(&bvh_trace_program_);
+            return false;
+        }
+
+        return true;
+    }
+
     static void bindTextureUnitInline (GLuint unit, GLuint texture)
     {
         GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
@@ -257,6 +353,7 @@ private:
     void destroyTextures ();
 
     GLuint trace_program_ = 0;
+    GLuint bvh_trace_program_ = 0;
     GLuint composite_program_ = 0;
     GLuint primitive_buffer_ = 0;
 
@@ -270,6 +367,12 @@ private:
     GLint trace_primitive_count_location_ = -1;
     GLint trace_frame_location_ = -1;
     GLint trace_history_valid_location_ = -1;
+    GLint bvh_trace_view_projection_location_ = -1;
+    GLint bvh_trace_camera_location_ = -1;
+    GLint bvh_trace_primitive_count_location_ = -1;
+    GLint bvh_trace_node_count_location_ = -1;
+    GLint bvh_trace_frame_location_ = -1;
+    GLint bvh_trace_history_valid_location_ = -1;
 
     std::size_t primitive_capacity_ = 0;
     std::vector<PrimitiveGpu> primitives_;
