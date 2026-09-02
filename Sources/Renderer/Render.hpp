@@ -5,6 +5,7 @@
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/LumenGpu.hpp"
 #include "Renderer/Gpu/Presenter.hpp"
 #include "Renderer/Lumen/Budget.hpp"
 #include "Renderer/Lumen/Cards.hpp"
@@ -105,6 +106,7 @@ private:
 
     Gpu::GBufferGpu gpu_gbuffer_;
     Gpu::DirectLightingGpu gpu_direct_lighting_;
+    Gpu::LumenGpu gpu_lumen_;
     Gpu::Presenter presenter_;
 
     Math::Mat4 view_       = Math::identity(),
@@ -124,6 +126,7 @@ private:
     std::string test_name_;
     bool gpu_pipeline_enabled_ = false;
     bool gpu_error_reported_ = false;
+    std::uint64_t gpu_frame_index_ = 0;
 
     int width_  = 1,
         height_ = 1;
