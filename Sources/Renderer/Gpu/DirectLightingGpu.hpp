@@ -93,6 +93,8 @@ public:
             primitive.scale[0] = transform->scale.x;
             primitive.scale[1] = transform->scale.y;
             primitive.scale[2] = transform->scale.z;
+            /* scale.w is a ray-hit visibility flag. Real scene primitives
+             * can become visible shadow/GI/reflection hits. */
             primitive.scale[3] = 1.0f;
             primitive.albedo_metallic[0] = material->albedo.x;
             primitive.albedo_metallic[1] = material->albedo.y;
@@ -302,7 +304,10 @@ private:
             primitive.scale[0] = transform.scale.x;
             primitive.scale[1] = transform.scale.y;
             primitive.scale[2] = transform.scale.z;
-            primitive.scale[3] = 1.0f;
+            /* Benchmark-only primitives remain in the same primitive/BVH
+             * traversal and still execute exact intersection math, but a hit
+             * is not allowed to affect the rendered image. */
+            primitive.scale[3] = 0.0f;
             primitive.albedo_metallic[0] = 0.35f + static_cast<float>(index % 5u) * 0.07f;
             primitive.albedo_metallic[1] = 0.42f;
             primitive.albedo_metallic[2] = 0.55f;
