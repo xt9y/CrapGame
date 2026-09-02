@@ -130,6 +130,8 @@ private:
     bool gpu_pipeline_enabled_ = false;
     bool gpu_error_reported_ = false;
     std::uint64_t gpu_frame_index_ = 0;
+    std::uint64_t gpu_lumen_sample_index_ = 0;
+    std::uint64_t gpu_lumen_next_update_ns_ = 0;
 
     int width_  = 1,
         height_ = 1;
