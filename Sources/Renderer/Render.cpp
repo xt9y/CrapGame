@@ -1,6 +1,7 @@
 #include "Render.hpp"
 
 #include "Renderer/Lighting/Lighting.hpp"
+#include "Renderer/Lumen/Radiosity.hpp"
 #include "Renderer/Lumen/SceneLighting.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
@@ -355,6 +356,12 @@ void Rendering::render (const Ecs::World& world)
             &surface_cache_,
             world,
             shadows_
+        );
+
+    Lumen::updateRadiosity(
+            &surface_cache_,
+            radiance_cache_,
+            0.35f
         );
 
     radiance_cache_.update(

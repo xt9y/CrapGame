@@ -14,6 +14,50 @@ Math::Vec3 toVec3 (const Ecs::Vec3& value)
     return {value.x, value.y, value.z};
 }
 
+Math::Vec3 previousIndirect (
+                const std::vector<SurfaceSample>& previous,
+                const Card& card
+        ) 
+{
+    Math::Vec3 result = {0.0f, 0.0f, 0.0f};
+    float best_score = std::numeric_limits<float>::max();
+
+    for (const SurfaceSample& sample : previous) 
+    {
+        if (sample.card.entity != card.entity) 
+        {
+            continue;
+        }
+
+        const float facing = Math::dot(
+                sample.card.normal,
+                card.normal
+            );
+
+        if (facing < 0.75f) 
+        {
+            continue;
+        }
+
+        const float distance = Math::lengthSquared(
+                Math::subtract(
+                        sample.card.position,
+                        card.position
+                    )
+            );
+
+        const float score = distance + (1.0f - facing) * 0.5f;
+
+        if (score < best_score) 
+        {
+            best_score = score;
+            result = sample.indirect_lighting;
+        }
+    }
+
+    return result;
+}
+
 } // namespace
 
 void SurfaceCache::build (
@@ -21,6 +65,8 @@ void SurfaceCache::build (
                 const CardScene& cards
         ) 
 {
+    const std::vector<SurfaceSample> previous = samples_;
+
     samples_.clear();
     samples_.reserve(cards.cards().size());
 
@@ -43,7 +89,7 @@ void SurfaceCache::build (
                 material->emissive.z * material->emissive_strength,
             },
             {0.0f, 0.0f, 0.0f},
-            {0.0f, 0.0f, 0.0f},
+            previousIndirect(previous, card),
             material->metallic,
             material->roughness,
         });
