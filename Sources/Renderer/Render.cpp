@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace Renderer 
 {
@@ -42,13 +43,37 @@ bool Rendering::init ()
 
     glClearColor(0.055f, 0.070f, 0.105f, 1.0f);
 
+#if !defined(__APPLE__)
+    std::string error;
+
+    if (!presenter_.init(&error))
+    {
+        std::fprintf(
+                stderr,
+                "GPU presenter initialization failed: %s\n",
+                error.c_str()
+            );
+        return false;
+    }
+#endif
+
     return true;
 }
 
 void Rendering::resize (int width, int height) 
 {
-    width_  = width > 0 ? width : 1;
-    height_ = height > 0 ? height : 1;
+    const int new_width = width > 0 ? width : 1,
+              new_height = height > 0 ? height : 1;
+
+    if (new_width == width_
+            && new_height == height_
+            && !color_buffer_.empty())
+    {
+        return;
+    }
+
+    width_ = new_width;
+    height_ = new_height;
 
     const std::size_t pixel_count = 
         static_cast<std::size_t>(width_) *
@@ -61,7 +86,30 @@ void Rendering::resize (int width, int height)
     frame_color_.resize(pixel_count);
     resolved_color_.resize(pixel_count);
     color_buffer_.resize(pixel_count * 3u);
-    present_buffer_.resize(pixel_count * 3u);
+
+    if (presenter_.ready())
+    {
+        std::string error;
+
+        if (!presenter_.resize(width_, height_, &error))
+        {
+            std::fprintf(
+                    stderr,
+                    "GPU presenter resize failed: %s\n",
+                    error.c_str()
+                );
+            presenter_.shutdown();
+            present_buffer_.resize(pixel_count * 3u);
+        }
+        else
+        {
+            present_buffer_.clear();
+        }
+    }
+    else
+    {
+        present_buffer_.resize(pixel_count * 3u);
+    }
 
     gbuffer_.resize(width_, height_);
     history_.resize(width_, height_);
@@ -283,6 +331,28 @@ void Rendering::writeColorBuffer (const std::vector<Math::Vec3>& color)
 
 void Rendering::present () 
 {
+    if (presenter_.ready())
+    {
+        std::string error;
+
+        if (presenter_.present(color_buffer_, &error))
+        {
+            return;
+        }
+
+        std::fprintf(
+                stderr,
+                "GPU presenter failed; using GL11 fallback: %s\n",
+                error.c_str()
+            );
+        presenter_.shutdown();
+
+        const std::size_t pixel_count =
+            static_cast<std::size_t>(width_) *
+            static_cast<std::size_t>(height_);
+        present_buffer_.resize(pixel_count * 3u);
+    }
+
     const std::size_t row_bytes = 
         static_cast<std::size_t>(width_) * 3u;
 
@@ -307,7 +377,7 @@ void Rendering::present ()
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glRasterPos2f(-1.0f, -1.0f);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glDrawPixels(
             width_, height_,
             GL_RGB, GL_UNSIGNED_BYTE,
@@ -470,6 +540,7 @@ void Rendering::render (const Ecs::World& world)
 
 void Rendering::shutdown () 
 {
+    presenter_.shutdown();
     direct_color_.clear();
     indirect_color_.clear();
     indirect_resolved_.clear();
