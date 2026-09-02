@@ -462,13 +462,6 @@ bool GBufferGpu::createAttachments (std::string *error)
             GL_FRAMEBUFFER,
             GL_COLOR_ATTACHMENT3,
             GL_TEXTURE_2D,
-            albedo_metallic_,
-            0
-        );
-    GL30.glFramebufferTexture2D(
-            GL_FRAMEBUFFER,
-            GL_COLOR_ATTACHMENT3,
-            GL_TEXTURE_2D,
             emissive_,
             0
         );
