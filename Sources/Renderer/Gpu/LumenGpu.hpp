@@ -40,8 +40,8 @@ public:
 
     bool ready () const;
     GLuint finalTexture () const { return final_color_; }
-    GLuint indirectTexture () const { return indirect_color_; }
-    GLuint reflectionTexture () const { return reflection_color_; }
+    GLuint indirectTexture () const { return indirect_history_[history_index_]; }
+    GLuint reflectionTexture () const { return reflection_history_[history_index_]; }
 
 private:
     struct PrimitiveGpu
@@ -60,17 +60,22 @@ private:
     GLuint composite_program_ = 0;
     GLuint primitive_buffer_ = 0;
 
-    GLuint indirect_color_ = 0;
-    GLuint reflection_color_ = 0;
+    GLuint indirect_history_[2] = {0, 0};
+    GLuint reflection_history_[2] = {0, 0};
+    GLuint position_history_[2] = {0, 0};
     GLuint final_color_ = 0;
 
     GLint trace_view_projection_location_ = -1;
     GLint trace_camera_location_ = -1;
     GLint trace_primitive_count_location_ = -1;
     GLint trace_frame_location_ = -1;
+    GLint trace_history_valid_location_ = -1;
 
     std::size_t primitive_capacity_ = 0;
     std::vector<PrimitiveGpu> primitives_;
+
+    int history_index_ = 0;
+    bool history_valid_ = false;
 
     int width_ = 0;
     int height_ = 0;
