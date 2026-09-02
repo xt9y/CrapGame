@@ -131,8 +131,9 @@ int main ()
 
     if (!renderercheck_mode)
     {
-        /* Maximum-throughput mode is the default. CRAPGAME_FPS can add an
-         * explicit software cap when a stable test cadence is desired. */
+        /* Rendering and simulation are intentionally independent. Rendering
+         * runs as fast as possible by default, while world updates are fixed
+         * at 60 Hz below. */
         Display.setVSyncEnabled(LWCGL_FALSE);
 
         if (fps_cap > 0)
@@ -143,6 +144,8 @@ int main ()
         {
             std::fprintf(stderr, "Frame pacing: uncapped, VSync off\n");
         }
+
+        std::fprintf(stderr, "Simulation: fixed 60 Hz, render-rate independent\n");
     }
 
     Keyboard.create();
@@ -204,12 +207,50 @@ int main ()
     renderer.resize(renderer_width, renderer_height);
 
     using Clock = std::chrono::steady_clock;
+    constexpr double SIMULATION_STEP_SECONDS = 1.0 / 60.0;
+    constexpr double MAX_SIMULATION_DELTA_SECONDS = 0.25;
+
     auto stats_start = Clock::now();
+    auto simulation_previous = stats_start;
+    double simulation_accumulator = 0.0;
+    std::uint64_t simulation_tick = 0;
     std::uint64_t stats_frames = 0;
 
     while (!Display.isCloseRequested() 
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
     {
+        if (!renderercheck_mode)
+        {
+            const auto simulation_now = Clock::now();
+            double real_delta = std::chrono::duration<double>(
+                    simulation_now - simulation_previous
+                ).count();
+            simulation_previous = simulation_now;
+
+            if (real_delta < 0.0)
+            {
+                real_delta = 0.0;
+            }
+            else if (real_delta > MAX_SIMULATION_DELTA_SECONDS)
+            {
+                real_delta = MAX_SIMULATION_DELTA_SECONDS;
+            }
+
+            simulation_accumulator += real_delta;
+
+            while (simulation_accumulator >= SIMULATION_STEP_SECONDS)
+            {
+                Renderer::Test::updateScene(
+                        &world,
+                        &scene_state,
+                        simulation_tick
+                    );
+
+                ++simulation_tick;
+                simulation_accumulator -= SIMULATION_STEP_SECONDS;
+            }
+        }
+
         const int display_width = Display.getWidth(),
                   display_height = Display.getHeight();
 
@@ -236,11 +277,16 @@ int main ()
 
         Display.update();
 
-        Renderer::Test::updateScene(
-                &world,
-                &scene_state,
-                frame
-            );
+        /* RendererCheck intentionally advances exactly once per captured
+         * frame so all existing deterministic references remain unchanged. */
+        if (renderercheck_mode)
+        {
+            Renderer::Test::updateScene(
+                    &world,
+                    &scene_state,
+                    frame
+                );
+        }
 
         if (renderercheck_mode 
                 && rendercheck_frame_is_last(frame)) 
