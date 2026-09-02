@@ -2,8 +2,8 @@
 #define CRAPGAME_RENDER_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Math/Math.hpp"
-#include "Renderer/Mesh/Mesh.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <rendercheck/capture.h>
@@ -29,16 +29,17 @@ private:
                 const Ecs::CameraComponent& camera
         );
 
-    void drawRenderable (
-                const Ecs::TransformComponent& transform,
-                const Ecs::MeshComponent& mesh,
-                const Ecs::MaterialComponent& material
-        ) const;
+    void renderGeometry (const Ecs::World& world);
+    void composeAlbedo ();
+    void present ();
 
-    void drawMesh (const Mesh::MeshData& mesh) const;
+    GBuffer::Buffer gbuffer_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
+
+    std::vector<std::uint8_t> color_buffer_,
+                              present_buffer_;
 
     int width_  = 1,
         height_ = 1;
