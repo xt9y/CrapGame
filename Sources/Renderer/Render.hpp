@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
+#include "Renderer/Gpu/Presenter.hpp"
 #include "Renderer/Lumen/Budget.hpp"
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
@@ -94,6 +95,7 @@ private:
     Lumen::ChangeTracker change_tracker_;
     Lumen::ReflectionSystem reflection_system_;
     Lumen::ScreenProbeGather screen_probe_gather_;
+    Gpu::Presenter presenter_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
