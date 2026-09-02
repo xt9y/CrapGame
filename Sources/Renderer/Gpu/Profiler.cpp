@@ -14,6 +14,7 @@ namespace
 constexpr std::uint64_t SAMPLE_INTERVAL = 64u;
 constexpr std::uint64_t PRINT_CHECK_INTERVAL = 1024u;
 constexpr std::uint64_t PRINT_INTERVAL_NS = 2000000000ull;
+constexpr std::uint32_t WARMUP_SAMPLES = 8u;
 
 std::uint64_t monotonicNanoseconds ()
 {
@@ -77,6 +78,7 @@ bool Profiler::init ()
     }
 
     milliseconds_.fill(0.0);
+    sample_counts_.fill(0u);
     initialized_ = true;
     return true;
 }
@@ -105,6 +107,7 @@ void Profiler::shutdown ()
     }
 
     milliseconds_.fill(0.0);
+    sample_counts_.fill(0u);
     current_slot_ = -1;
     initialized_ = false;
 }
@@ -181,6 +184,18 @@ void Profiler::collect ()
 
             const double sample_ms =
                 static_cast<double>(end - begin) / 1000000.0;
+
+            ++sample_counts_[pass];
+
+            /* Shader first-use/JIT and resource residency can make the first
+             * few timestamp samples tens or hundreds of times slower than
+             * steady state. Do not poison the long-lived EWMA with those
+             * initialization costs; startup is measured separately by CPU
+             * timing, while this profiler reports render throughput. */
+            if (sample_counts_[pass] <= WARMUP_SAMPLES)
+            {
+                continue;
+            }
 
             if (milliseconds_[pass] <= 0.0)
             {
