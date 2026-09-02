@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <utility>
 
 namespace Renderer
 {
@@ -137,8 +138,15 @@ struct Builder
         {
             node.meta[0] = -1;
             node.meta[1] = -1;
-            node.meta[2] = static_cast<std::int32_t>(first);
+            node.meta[2] = -1;
             node.meta[3] = static_cast<std::int32_t>(count);
+
+            for (std::size_t offset = 0; offset < count; ++offset)
+            {
+                node.meta[offset] = static_cast<std::int32_t>(
+                        bounds[order[first + offset]].primitive_index
+                    );
+            }
             return node_index;
         }
 
@@ -173,11 +181,10 @@ struct Builder
         const std::uint32_t left = buildNode(first, left_count);
         const std::uint32_t right = buildNode(middle, count - left_count);
 
-        /* Recursion may reallocate nodes, so reacquire the parent reference. */
         BvhNodeGpu& completed = nodes[node_index];
         completed.meta[0] = static_cast<std::int32_t>(left);
         completed.meta[1] = static_cast<std::int32_t>(right);
-        completed.meta[2] = 0;
+        completed.meta[2] = -1;
         completed.meta[3] = 0;
         return node_index;
     }
@@ -244,7 +251,7 @@ BvhBuild buildBvh (
         bounds,
         std::vector<std::uint32_t>(bounds.size()),
         {},
-        std::max<std::size_t>(1u, leaf_size),
+        std::min<std::size_t>(3u, std::max<std::size_t>(1u, leaf_size)),
     };
 
     std::iota(builder.order.begin(), builder.order.end(), 0u);
@@ -252,13 +259,6 @@ BvhBuild buildBvh (
     builder.buildNode(0u, bounds.size());
 
     result.nodes = std::move(builder.nodes);
-    result.primitive_indices.resize(builder.order.size());
-
-    for (std::size_t index = 0; index < builder.order.size(); ++index)
-    {
-        result.primitive_indices[index] = bounds[builder.order[index]].primitive_index;
-    }
-
     return result;
 }
 
