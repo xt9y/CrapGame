@@ -1,59 +1,13 @@
 #include "ScreenProbe.hpp"
 
+#include "Renderer/Lumen/Sampling.hpp"
+
 #include <algorithm>
-#include <cmath>
 
 namespace Renderer 
 {
 namespace Lumen 
 {
-namespace 
-{
-
-constexpr float GOLDEN = 2.39996322972865332f;
-
-Math::Vec3 hemisphereDirection (
-                const Math::Vec3& normal,
-                int index,
-                int count,
-                std::uint64_t frame_index
-        ) 
-{
-    const float u = (static_cast<float>(index) + 0.5f) /
-                    static_cast<float>(std::max(1, count));
-
-    const float radius = std::sqrt(u),
-                angle = GOLDEN *
-                        static_cast<float>(index + static_cast<int>(frame_index % 17u)),
-                local_x = std::cos(angle) * radius,
-                local_z = std::sin(angle) * radius,
-                local_y = std::sqrt(std::max(0.0f, 1.0f - u));
-
-    const Math::Vec3 n = Math::normalize(normal);
-
-    const Math::Vec3 reference =
-        std::fabs(n.y) < 0.95f
-        ? Math::Vec3{0.0f, 1.0f, 0.0f}
-        : Math::Vec3{1.0f, 0.0f, 0.0f};
-
-    const Math::Vec3 tangent =
-        Math::normalize(Math::cross(reference, n));
-
-    const Math::Vec3 bitangent =
-        Math::normalize(Math::cross(n, tangent));
-
-    return Math::normalize(
-            Math::add(
-                    Math::add(
-                            Math::multiply(tangent, local_x),
-                            Math::multiply(n, local_y)
-                        ),
-                    Math::multiply(bitangent, local_z)
-                )
-        );
-}
-
-} // namespace
 
 void ScreenProbeGather::gather (
                 const GBuffer::Buffer& gbuffer,
@@ -114,7 +68,7 @@ void ScreenProbeGather::gather (
 
             for (int ray = 0; ray < rays_per_probe; ++ray) 
             {
-                const Math::Vec3 direction = hemisphereDirection(
+                const Math::Vec3 direction = sampleHemisphere(
                         pixel.normal,
                         ray,
                         rays_per_probe,
