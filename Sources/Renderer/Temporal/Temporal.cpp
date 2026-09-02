@@ -1,5 +1,8 @@
 #include "Temporal.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 namespace Renderer 
 {
 namespace Temporal 
@@ -209,6 +212,157 @@ void calculateMotion (
             };
         }
     }
+}
+
+void HistoryBuffer::resize (int width, int height) 
+{
+    width_  = width > 0 ? width : 1;
+    height_ = height > 0 ? height : 1;
+
+    pixels_.resize(
+            static_cast<std::size_t>(width_) *
+            static_cast<std::size_t>(height_)
+        );
+
+    clear();
+}
+
+void HistoryBuffer::clear () 
+{
+    const HistoryPixel empty = {
+        {0.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        1.0f,
+        Ecs::INVALID_ENTITY,
+        false,
+    };
+
+    std::fill(pixels_.begin(), pixels_.end(), empty);
+    has_history_ = false;
+}
+
+bool HistoryBuffer::sample (
+                int x,
+                int y,
+                const GBuffer::Pixel& current,
+                Math::Vec3 *color
+        ) const 
+{
+    if (!has_history_ 
+            || !current.valid) 
+    {
+        return false;
+    }
+
+    const float current_u =
+        (static_cast<float>(x) + 0.5f) /
+        static_cast<float>(width_);
+
+    const float current_v =
+        (static_cast<float>(y) + 0.5f) /
+        static_cast<float>(height_);
+
+    const float previous_u = current_u - current.motion.x,
+                previous_v = current_v - current.motion.y;
+
+    const int previous_x =
+        static_cast<int>(
+                std::floor(
+                        previous_u * static_cast<float>(width_)
+                    )
+            );
+
+    const int previous_y =
+        static_cast<int>(
+                std::floor(
+                        previous_v * static_cast<float>(height_)
+                    )
+            );
+
+    if (previous_x < 0 
+            || previous_x >= width_
+            || previous_y < 0 
+            || previous_y >= height_) 
+    {
+        return false;
+    }
+
+    const HistoryPixel& previous =
+        pixels_[index(previous_x, previous_y)];
+
+    if (!previous.valid 
+            || previous.entity != current.entity) 
+    {
+        return false;
+    }
+
+    if (std::fabs(previous.depth - current.depth) > 0.02f) 
+    {
+        return false;
+    }
+
+    const float normal_similarity =
+        Math::dot(
+                Math::normalize(previous.normal),
+                Math::normalize(current.normal)
+            );
+
+    if (normal_similarity < 0.85f) 
+    {
+        return false;
+    }
+
+    if (color) 
+    {
+        *color = previous.color;
+    }
+
+    return true;
+}
+
+void HistoryBuffer::store (
+                const GBuffer::Buffer& gbuffer,
+                const std::vector<Math::Vec3>& color
+        ) 
+{
+    if (gbuffer.width() != width_ 
+            || gbuffer.height() != height_
+            || color.size() != pixels_.size()) 
+    {
+        return;
+    }
+
+    for (int y = 0; y < height_; ++y) 
+    {
+        for (int x = 0; x < width_; ++x) 
+        {
+            const GBuffer::Pixel& source =
+                gbuffer.pixel(x, y);
+
+            HistoryPixel& destination =
+                pixels_[index(x, y)];
+
+            destination.color = color[index(x, y)];
+            destination.normal = source.normal;
+            destination.depth = source.depth;
+            destination.entity = source.entity;
+            destination.valid = source.valid;
+        }
+    }
+
+    has_history_ = true;
+}
+
+bool HistoryBuffer::hasHistory () const 
+{
+    return has_history_;
+}
+
+std::size_t HistoryBuffer::index (int x, int y) const 
+{
+    return static_cast<std::size_t>(y) *
+           static_cast<std::size_t>(width_) +
+           static_cast<std::size_t>(x);
 }
 
 } // namespace Temporal

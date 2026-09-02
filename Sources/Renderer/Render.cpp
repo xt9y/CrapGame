@@ -49,12 +49,15 @@ void Rendering::resize (int width, int height)
     height_ = height > 0 ? height : 1;
 
     const std::size_t pixel_count = 
-        static_cast<std::size_t>(width_) * 
+        static_cast<std::size_t>(width_) *
         static_cast<std::size_t>(height_);
 
+    frame_color_.resize(pixel_count);
     color_buffer_.resize(pixel_count * 3u);
     present_buffer_.resize(pixel_count * 3u);
+
     gbuffer_.resize(width_, height_);
+    history_.resize(width_, height_);
 
     glViewport(0, 0, width_, height_);
 }
@@ -65,7 +68,7 @@ void Rendering::applyCamera (
         ) 
 {
     const float aspect = 
-        static_cast<float>(width_) / 
+        static_cast<float>(width_) /
         static_cast<float>(height_);
 
     const Math::Vec3 position = 
@@ -212,11 +215,14 @@ void Rendering::composeLighting (
                 color = Lighting::toneMap(color);
             }
 
-            const std::size_t offset = 
-                (static_cast<std::size_t>(y) * 
-                 static_cast<std::size_t>(width_) + 
-                 static_cast<std::size_t>(x)) * 3u;
+            const std::size_t pixel_index =
+                static_cast<std::size_t>(y) *
+                static_cast<std::size_t>(width_) +
+                static_cast<std::size_t>(x);
 
+            const std::size_t offset = pixel_index * 3u;
+
+            frame_color_[pixel_index] = color;
             color_buffer_[offset + 0u] = toByte(color.x);
             color_buffer_[offset + 1u] = toByte(color.y);
             color_buffer_[offset + 2u] = toByte(color.z);
@@ -282,24 +288,32 @@ void Rendering::render (const Ecs::World& world)
 
     applyCamera(*camera_transform, *camera);
     renderGeometry(world);
+
     Temporal::calculateMotion(
             &gbuffer_,
             world,
             frame_state_
         );
+
     shadows_.build(world);
+
     composeLighting(
             world,
             toVec3(camera_transform->position)
         );
+
     present();
+
+    history_.store(gbuffer_, frame_color_);
     frame_state_.capture(world, view_, projection_);
 }
 
 void Rendering::shutdown () 
 {
+    frame_color_.clear();
     color_buffer_.clear();
     present_buffer_.clear();
+    history_.clear();
 }
 
 } // namespace Renderer

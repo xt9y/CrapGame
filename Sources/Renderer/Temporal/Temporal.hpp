@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace Renderer 
 {
@@ -41,6 +42,47 @@ private:
                previous_projection_ = Math::identity();
 
     std::uint64_t frame_index_ = 0;
+    bool has_history_ = false;
+};
+
+struct HistoryPixel 
+{
+    Math::Vec3 color,
+               normal;
+
+    float depth;
+    Ecs::Entity entity;
+    bool valid;
+};
+
+class HistoryBuffer 
+{
+
+public:
+    void resize (int width, int height);
+    void clear ();
+
+    bool sample (
+                int x,
+                int y,
+                const GBuffer::Pixel& current,
+                Math::Vec3 *color
+        ) const;
+
+    void store (
+                const GBuffer::Buffer& gbuffer,
+                const std::vector<Math::Vec3>& color
+        );
+
+    bool hasHistory () const;
+
+private:
+    std::size_t index (int x, int y) const;
+
+    int width_  = 1,
+        height_ = 1;
+
+    std::vector<HistoryPixel> pixels_;
     bool has_history_ = false;
 };
 

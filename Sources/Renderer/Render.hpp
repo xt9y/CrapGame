@@ -43,9 +43,12 @@ private:
     GBuffer::Buffer gbuffer_;
     Shadows::Scene shadows_;
     Temporal::FrameState frame_state_;
+    Temporal::HistoryBuffer history_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
+
+    std::vector<Math::Vec3> frame_color_;
 
     std::vector<std::uint8_t> color_buffer_,
                               present_buffer_;
