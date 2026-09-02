@@ -50,6 +50,7 @@ void build (C_Build *b)
     c_sources(app, "Sources/Renderer/*.cpp");
     c_sources(app, "Sources/Renderer/Math/*.cpp");
     c_sources(app, "Sources/Renderer/Mesh/*.cpp");
+    c_sources(app, "Sources/Renderer/Shader/*.cpp");
 
     c_flag(app, "-std=c++17");
 
