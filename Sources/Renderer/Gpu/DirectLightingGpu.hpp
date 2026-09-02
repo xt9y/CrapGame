@@ -38,13 +38,6 @@ public:
             return false;
         }
 
-        /* Compile/validate the BVH shader on the first normal frame even when
-         * this scene is small enough to stay on the linear traversal path. */
-        if (!ensureBvhResources(error))
-        {
-            return false;
-        }
-
         lights_.clear();
         primitives_.clear();
         primitive_bounds_.clear();
@@ -113,14 +106,25 @@ public:
             primitive_bounds_.push_back(primitiveBounds(*transform, mesh->mesh, primitive_index));
         }
 
+        const bool use_bvh = primitives_.size() > BVH_THRESHOLD;
+        if (!ensureBvhShader(use_bvh, error))
+        {
+            return false;
+        }
+
         if (!uploadChangedRecords(light_buffer_, &light_capacity_, lights_, &uploaded_lights_, error)
                 || !uploadChangedRecords(primitive_buffer_, &primitive_capacity_, primitives_, &uploaded_primitives_, error))
         {
             return false;
         }
 
-        if (primitives_.size() > BVH_THRESHOLD)
+        if (use_bvh)
         {
+            if (!ensureBvhBuffers(error))
+            {
+                return false;
+            }
+
             BvhBuild build = buildBvh(primitive_bounds_, BVH_LEAF_SIZE);
             bvh_nodes_ = std::move(build.nodes);
             bvh_indices_ = std::move(build.primitive_indices);
@@ -150,21 +154,19 @@ public:
         }
 
         const bool use_bvh = bvhReady();
-        const GLuint active_program = use_bvh ? bvh_program_ : program_;
-        const GLint camera_location = use_bvh ? bvh_camera_location_ : camera_location_;
-        const GLint light_count_location = use_bvh ? bvh_light_count_location_ : light_count_location_;
-        const GLint primitive_count_location = use_bvh ? bvh_primitive_count_location_ : primitive_count_location_;
+        GL20.glUseProgram(program_);
+        GL20.glUniform3f(camera_location_, camera_position.x, camera_position.y, camera_position.z);
+        GL20.glUniform1i(light_count_location_, static_cast<GLint>(lights_.size()));
+        GL20.glUniform1i(primitive_count_location_, static_cast<GLint>(primitives_.size()));
 
-        GL20.glUseProgram(active_program);
-        GL20.glUniform3f(camera_location, camera_position.x, camera_position.y, camera_position.z);
-        GL20.glUniform1i(light_count_location, static_cast<GLint>(lights_.size()));
-        GL20.glUniform1i(primitive_count_location, static_cast<GLint>(primitives_.size()));
-
-        if (use_bvh)
+        if (bvh_program_active_)
         {
-            GL20.glUniform1i(bvh_node_count_location_, static_cast<GLint>(bvh_nodes_.size()));
-            GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, bvh_node_buffer_);
-            GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, bvh_index_buffer_);
+            GL20.glUniform1i(bvh_node_count_location_, use_bvh ? static_cast<GLint>(bvh_nodes_.size()) : 0);
+            if (use_bvh)
+            {
+                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, bvh_node_buffer_);
+                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, bvh_index_buffer_);
+            }
         }
 
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, light_buffer_);
@@ -191,13 +193,11 @@ public:
         if (bvh_index_buffer_ != 0) GL15.glDeleteBuffers(1, &bvh_index_buffer_);
         bvh_node_buffer_ = 0;
         bvh_index_buffer_ = 0;
-        destroyProgram(&bvh_program_);
         bvh_node_capacity_ = bvh_index_capacity_ = 0;
         bvh_nodes_.clear();
         bvh_indices_.clear();
         uploaded_bvh_nodes_.clear();
         uploaded_bvh_indices_.clear();
-        bvh_camera_location_ = bvh_light_count_location_ = bvh_primitive_count_location_ = bvh_node_count_location_ = -1;
     }
 
     bool ready () const { return program_ != 0 && direct_color_ != 0; }
@@ -205,7 +205,7 @@ public:
     GLuint finalTexture () const { return direct_color_; }
     GLuint primitiveBuffer () const { return primitive_buffer_; }
     std::size_t primitiveCount () const { return primitives_.size(); }
-    bool bvhReady () const { return primitives_.size() > BVH_THRESHOLD && bvh_program_ != 0 && !bvh_nodes_.empty(); }
+    bool bvhReady () const { return primitives_.size() > BVH_THRESHOLD && bvh_program_active_ && !bvh_nodes_.empty(); }
     GLuint bvhNodeBuffer () const { return bvh_node_buffer_; }
     GLuint bvhIndexBuffer () const { return bvh_index_buffer_; }
     std::size_t bvhNodeCount () const { return bvh_nodes_.size(); }
@@ -217,24 +217,52 @@ private:
     struct LightGpu { float position_type[4]; float direction_range[4]; float color_intensity[4]; float cone_shadow[4]; };
     struct PrimitiveGpu { float position_type[4]; float rotation[4]; float scale[4]; float albedo_metallic[4]; float emissive_roughness[4]; };
 
-    bool ensureBvhResources (std::string *error)
+    bool queryBvhLocations (GLuint program, GLint *camera, GLint *lights, GLint *primitives, GLint *nodes) const
     {
-        if (bvh_program_ == 0)
+        *camera = GL20.glGetUniformLocation(program, "uCameraPosition");
+        *lights = GL20.glGetUniformLocation(program, "uLightCount");
+        *primitives = GL20.glGetUniformLocation(program, "uPrimitiveCount");
+        *nodes = GL20.glGetUniformLocation(program, "uBvhNodeCount");
+        return *camera >= 0 && *lights >= 0 && *primitives >= 0 && *nodes >= 0;
+    }
+
+    bool ensureBvhShader (bool activate, std::string *error)
+    {
+        if (bvh_program_active_) return true;
+        if (bvh_shader_validated_ && !activate) return true;
+
+        GLuint candidate = createComputeProgram(DIRECT_LIGHTING_BVH_COMPUTE, error);
+        if (candidate == 0) return false;
+
+        GLint camera = -1, lights = -1, primitives = -1, nodes = -1;
+        if (!queryBvhLocations(candidate, &camera, &lights, &primitives, &nodes))
         {
-            bvh_program_ = createComputeProgram(DIRECT_LIGHTING_BVH_COMPUTE, error);
-            if (bvh_program_ == 0) return false;
-            bvh_camera_location_ = GL20.glGetUniformLocation(bvh_program_, "uCameraPosition");
-            bvh_light_count_location_ = GL20.glGetUniformLocation(bvh_program_, "uLightCount");
-            bvh_primitive_count_location_ = GL20.glGetUniformLocation(bvh_program_, "uPrimitiveCount");
-            bvh_node_count_location_ = GL20.glGetUniformLocation(bvh_program_, "uBvhNodeCount");
-            if (bvh_camera_location_ < 0 || bvh_light_count_location_ < 0 || bvh_primitive_count_location_ < 0 || bvh_node_count_location_ < 0)
-            {
-                setInlineError(error, "GPU BVH direct-light uniforms are unavailable");
-                destroyProgram(&bvh_program_);
-                return false;
-            }
+            destroyProgram(&candidate);
+            setInlineError(error, "GPU BVH direct-light uniforms are unavailable");
+            return false;
         }
 
+        bvh_shader_validated_ = true;
+        if (!activate)
+        {
+            destroyProgram(&candidate);
+            if (error) error->clear();
+            return true;
+        }
+
+        destroyProgram(&program_);
+        program_ = candidate;
+        camera_location_ = camera;
+        light_count_location_ = lights;
+        primitive_count_location_ = primitives;
+        bvh_node_count_location_ = nodes;
+        bvh_program_active_ = true;
+        if (error) error->clear();
+        return true;
+    }
+
+    bool ensureBvhBuffers (std::string *error)
+    {
         if (bvh_node_buffer_ == 0) GL15.glGenBuffers(1, &bvh_node_buffer_);
         if (bvh_index_buffer_ == 0) GL15.glGenBuffers(1, &bvh_index_buffer_);
         if (bvh_node_buffer_ == 0 || bvh_index_buffer_ == 0)
@@ -287,16 +315,17 @@ private:
     bool uploadBuffer (GLuint buffer, std::size_t *capacity, const void *data, std::size_t size, std::string *error);
     void destroyTextures ();
 
-    GLuint program_ = 0, bvh_program_ = 0;
+    GLuint program_ = 0;
     GLuint light_buffer_ = 0, primitive_buffer_ = 0, bvh_node_buffer_ = 0, bvh_index_buffer_ = 0, direct_color_ = 0;
-    GLint camera_location_ = -1, light_count_location_ = -1, primitive_count_location_ = -1;
-    GLint bvh_camera_location_ = -1, bvh_light_count_location_ = -1, bvh_primitive_count_location_ = -1, bvh_node_count_location_ = -1;
+    GLint camera_location_ = -1, light_count_location_ = -1, primitive_count_location_ = -1, bvh_node_count_location_ = -1;
     std::size_t light_capacity_ = 0, primitive_capacity_ = 0, bvh_node_capacity_ = 0, bvh_index_capacity_ = 0;
     std::vector<LightGpu> lights_, uploaded_lights_;
     std::vector<PrimitiveGpu> primitives_, uploaded_primitives_;
     std::vector<BvhBoundsInput> primitive_bounds_;
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
     std::vector<std::uint32_t> bvh_indices_, uploaded_bvh_indices_;
+    bool bvh_shader_validated_ = false;
+    bool bvh_program_active_ = false;
     int width_ = 0, height_ = 0;
 };
 
