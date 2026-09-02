@@ -156,6 +156,10 @@ void Rendering::resize (int width, int height)
         }
 #endif
 
+        /* New attachments have no valid scene data. Force the next GPU frame
+         * to repopulate geometry/direct textures even when the ECS is static. */
+        change_tracker_.clear();
+
         direct_color_.clear();
         indirect_color_.clear();
         indirect_resolved_.clear();
@@ -237,12 +241,14 @@ void Rendering::applyCamera (
 
 bool Rendering::renderGpuFrame (
                 const Ecs::World& world,
-                const Math::Vec3& camera_position
+                const Math::Vec3& camera_position,
+                const Lumen::ChangeSet& changes
         )
 {
 #if defined(__APPLE__)
     (void)world;
     (void)camera_position;
+    (void)changes;
     return false;
 #else
     if (!gpu_pipeline_enabled_)
@@ -258,47 +264,62 @@ bool Rendering::renderGpuFrame (
         return false;
     }
 
+    const bool geometry_dirty =
+        changes.geometry_changed
+        || changes.material_changed
+        || changes.camera_changed;
+
+    const bool direct_dirty =
+        geometry_dirty
+        || changes.lighting_changed;
+
     std::string error;
     gpu_profiler_.beginFrame(gpu_frame_index_);
 
-    gpu_profiler_.begin(Gpu::Profiler::Pass::Geometry);
-    const bool geometry_ok = gpu_gbuffer_.render(
-            world,
-            view_,
-            projection_,
-            &error
-        );
-    gpu_profiler_.end(Gpu::Profiler::Pass::Geometry);
-
-    if (!geometry_ok)
+    if (geometry_dirty)
     {
-        gpu_profiler_.endFrame();
-        if (!gpu_error_reported_)
+        gpu_profiler_.begin(Gpu::Profiler::Pass::Geometry);
+        const bool geometry_ok = gpu_gbuffer_.render(
+                world,
+                view_,
+                projection_,
+                &error
+            );
+        gpu_profiler_.end(Gpu::Profiler::Pass::Geometry);
+
+        if (!geometry_ok)
         {
-            std::fprintf(stderr, "GPU GBuffer frame failed: %s\n", error.c_str());
-            gpu_error_reported_ = true;
+            gpu_profiler_.endFrame();
+            if (!gpu_error_reported_)
+            {
+                std::fprintf(stderr, "GPU GBuffer frame failed: %s\n", error.c_str());
+                gpu_error_reported_ = true;
+            }
+            return false;
         }
-        return false;
     }
 
-    gpu_profiler_.begin(Gpu::Profiler::Pass::DirectLighting);
-    const bool direct_ok = gpu_direct_lighting_.render(
-            world,
-            gpu_gbuffer_,
-            camera_position,
-            &error
-        );
-    gpu_profiler_.end(Gpu::Profiler::Pass::DirectLighting);
-
-    if (!direct_ok)
+    if (direct_dirty)
     {
-        gpu_profiler_.endFrame();
-        if (!gpu_error_reported_)
+        gpu_profiler_.begin(Gpu::Profiler::Pass::DirectLighting);
+        const bool direct_ok = gpu_direct_lighting_.render(
+                world,
+                gpu_gbuffer_,
+                camera_position,
+                &error
+            );
+        gpu_profiler_.end(Gpu::Profiler::Pass::DirectLighting);
+
+        if (!direct_ok)
         {
-            std::fprintf(stderr, "GPU direct-light frame failed: %s\n", error.c_str());
-            gpu_error_reported_ = true;
+            gpu_profiler_.endFrame();
+            if (!gpu_error_reported_)
+            {
+                std::fprintf(stderr, "GPU direct-light frame failed: %s\n", error.c_str());
+                gpu_error_reported_ = true;
+            }
+            return false;
         }
-        return false;
     }
 
     gpu_profiler_.begin(Gpu::Profiler::Pass::Lumen);
@@ -584,7 +605,8 @@ void Rendering::render (const Ecs::World& world)
 
     if (test_name_.empty())
     {
-        renderGpuFrame(world, camera_position);
+        const Lumen::ChangeSet changes = change_tracker_.update(world);
+        renderGpuFrame(world, camera_position, changes);
         return;
     }
 
