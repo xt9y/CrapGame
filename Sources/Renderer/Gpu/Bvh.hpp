@@ -20,7 +20,10 @@ struct BvhBoundsInput
     std::uint32_t primitive_index = 0;
 };
 
-/* std430-compatible: vec4 + vec4 + ivec4 = 48 bytes. */
+/* std430-compatible: vec4 + vec4 + ivec4 = 48 bytes.
+ * Internal node: meta = {left, right, -1, 0}.
+ * Leaf node: meta[0..count-1] are primitive indices and meta[3] is count.
+ * Leaf size is therefore capped at three primitives. */
 struct BvhNodeGpu
 {
     float bounds_minimum[4] = {};
@@ -36,7 +39,6 @@ static_assert(
 struct BvhBuild
 {
     std::vector<BvhNodeGpu> nodes;
-    std::vector<std::uint32_t> primitive_indices;
 };
 
 BvhBoundsInput primitiveBounds (
@@ -47,7 +49,7 @@ BvhBoundsInput primitiveBounds (
 
 BvhBuild buildBvh (
             const std::vector<BvhBoundsInput>& bounds,
-            std::size_t leaf_size = 4u
+            std::size_t leaf_size = 3u
     );
 
 } // namespace Gpu
