@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_DIRECTLIGHTINGGPU_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Math/Math.hpp"
 
@@ -10,7 +11,6 @@
 
 #include <cmath>
 #include <cstddef>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -115,34 +115,22 @@ public:
             primitives_.push_back(primitive);
         }
 
-        if (light_capacity_ == 0 || !sameVectorBytes(lights_, uploaded_lights_))
+        if (!uploadChangedRecords(
+                light_buffer_,
+                &light_capacity_,
+                lights_,
+                &uploaded_lights_,
+                error
+            )
+            || !uploadChangedRecords(
+                primitive_buffer_,
+                &primitive_capacity_,
+                primitives_,
+                &uploaded_primitives_,
+                error
+            ))
         {
-            if (!uploadBuffer(
-                    light_buffer_,
-                    &light_capacity_,
-                    lights_.data(),
-                    lights_.size() * sizeof(LightGpu),
-                    error
-                ))
-            {
-                return false;
-            }
-            uploaded_lights_ = lights_;
-        }
-
-        if (primitive_capacity_ == 0 || !sameVectorBytes(primitives_, uploaded_primitives_))
-        {
-            if (!uploadBuffer(
-                    primitive_buffer_,
-                    &primitive_capacity_,
-                    primitives_.data(),
-                    primitives_.size() * sizeof(PrimitiveGpu),
-                    error
-                ))
-            {
-                return false;
-            }
-            uploaded_primitives_ = primitives_;
+            return false;
         }
 
         if (error)
@@ -243,18 +231,72 @@ private:
     };
 
     template <typename T>
-    static bool sameVectorBytes (
-                const std::vector<T>& a,
-                const std::vector<T>& b
+    bool uploadChangedRecords (
+                GLuint buffer,
+                std::size_t *capacity,
+                const std::vector<T>& current,
+                std::vector<T> *uploaded,
+                std::string *error
         )
     {
-        return a.size() == b.size()
-            && (a.empty()
-                || std::memcmp(
-                        a.data(),
-                        b.data(),
-                        a.size() * sizeof(T)
-                    ) == 0);
+        if (!capacity || !uploaded)
+        {
+            setInlineError(error, "invalid GPU dirty-range destination");
+            return false;
+        }
+
+        if (current.empty())
+        {
+            if (*capacity == 0
+                    && !uploadBuffer(buffer, capacity, nullptr, 0, error))
+            {
+                return false;
+            }
+
+            uploaded->clear();
+            return true;
+        }
+
+        const std::size_t required = current.size() * sizeof(T);
+        const bool full_upload =
+            *capacity == 0
+            || required > *capacity
+            || current.size() != uploaded->size();
+
+        if (full_upload)
+        {
+            if (!uploadBuffer(
+                    buffer,
+                    capacity,
+                    current.data(),
+                    required,
+                    error
+                ))
+            {
+                return false;
+            }
+
+            *uploaded = current;
+            return true;
+        }
+
+        GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer);
+        forEachDirtyRange(
+                current,
+                *uploaded,
+                [&] (std::size_t first, std::size_t count)
+                {
+                    GL15.glBufferSubData(
+                            GL_SHADER_STORAGE_BUFFER,
+                            static_cast<LWCGLintptr>(first * sizeof(T)),
+                            static_cast<LWCGLsizeiptr>(count * sizeof(T)),
+                            current.data() + first
+                        );
+                }
+            );
+
+        *uploaded = current;
+        return true;
     }
 
     static Math::Vec3 toVec3Inline (const Ecs::Vec3& value)
