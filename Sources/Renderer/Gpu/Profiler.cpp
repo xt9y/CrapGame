@@ -19,7 +19,8 @@ const char *passName (Profiler::Pass pass)
     {
         case Profiler::Pass::Geometry:       return "geometry";
         case Profiler::Pass::DirectLighting: return "direct";
-        case Profiler::Pass::Lumen:          return "lumen";
+        case Profiler::Pass::LumenTrace:     return "lumen-trace";
+        case Profiler::Pass::LumenComposite: return "lumen-compose";
         case Profiler::Pass::Present:        return "present";
         case Profiler::Pass::Count:          break;
     }
