@@ -139,8 +139,18 @@ public:
     Entity activeCamera () const;
     const std::vector<Entity>& entities () const;
 
+    /* Monotonic conservative mutation revision. Mutable component access
+     * advances this value; const renderer reads do not. This gives render-hot
+     * change tracking an O(1) unchanged-world fast path. */
+    std::uint64_t changeRevision () const { return change_revision_; }
+
+    /* Use when code retains a mutable component reference across frames and
+     * mutates it without going through a non-const getter. */
+    void markChanged () { ++change_revision_; }
+
 private:
     void ensureCapacity (Entity entity);
+    void touch () { ++change_revision_; }
 
     std::vector<Entity> entities_;
     std::vector<std::optional<TransformComponent>> transforms_;
@@ -149,6 +159,8 @@ private:
     std::vector<std::optional<MeshComponent>> meshes_;
     std::vector<std::optional<MaterialComponent>> materials_;
     std::vector<std::optional<LightComponent>> lights_;
+
+    std::uint64_t change_revision_ = 1u;
 };
 
 } // namespace Ecs
