@@ -22,6 +22,19 @@ public:
     bool init (std::string *error = nullptr);
     bool resize (int width, int height, std::string *error = nullptr);
 
+    /* Rebuild/upload instance data only when scene transforms/materials change. */
+    bool updateScene (
+                const Ecs::World& world,
+                std::string *error = nullptr
+        );
+
+    /* Re-rasterize resident instances for a new camera without ECS marshaling. */
+    bool draw (
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                std::string *error = nullptr
+        );
+
     bool render (
                 const Ecs::World& world,
                 const Math::Mat4& view,
@@ -64,6 +77,7 @@ private:
         GLuint instance_buffer = 0;
         std::size_t instance_capacity = 0;
         std::vector<InstanceGpu> instances;
+        std::vector<InstanceGpu> uploaded_instances;
     };
 
     bool createMesh (Ecs::MeshType type, MeshGpu *mesh, std::string *error);
