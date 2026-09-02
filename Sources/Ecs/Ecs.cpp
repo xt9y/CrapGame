@@ -46,6 +46,7 @@ Entity World::createEntity ()
 
     entities_.push_back(entity);
     ensureCapacity(entity);
+    touch();
     return entity;
 }
 
@@ -56,6 +57,7 @@ TransformComponent& World::addTransform (
 {
     ensureCapacity(entity);
     transforms_[entity] = component;
+    touch();
     return *transforms_[entity];
 }
 
@@ -66,6 +68,7 @@ CameraComponent& World::addCamera (
 {
     ensureCapacity(entity);
     cameras_[entity] = component;
+    touch();
     return *cameras_[entity];
 }
 
@@ -76,6 +79,7 @@ RenderableComponent& World::addRenderable (
 {
     ensureCapacity(entity);
     renderables_[entity] = component;
+    touch();
     return *renderables_[entity];
 }
 
@@ -86,6 +90,7 @@ MeshComponent& World::addMesh (
 {
     ensureCapacity(entity);
     meshes_[entity] = component;
+    touch();
     return *meshes_[entity];
 }
 
@@ -96,6 +101,7 @@ MaterialComponent& World::addMaterial (
 {
     ensureCapacity(entity);
     materials_[entity] = component;
+    touch();
     return *materials_[entity];
 }
 
@@ -106,6 +112,7 @@ LightComponent& World::addLight (
 {
     ensureCapacity(entity);
     lights_[entity] = component;
+    touch();
     return *lights_[entity];
 }
 
@@ -117,6 +124,7 @@ TransformComponent *World::getTransform (Entity entity)
         return nullptr;
     }
 
+    touch();
     return &*transforms_[entity];
 }
 
@@ -139,6 +147,7 @@ CameraComponent *World::getCamera (Entity entity)
         return nullptr;
     }
 
+    touch();
     return &*cameras_[entity];
 }
 
@@ -161,6 +170,7 @@ RenderableComponent *World::getRenderable (Entity entity)
         return nullptr;
     }
 
+    touch();
     return &*renderables_[entity];
 }
 
@@ -183,6 +193,7 @@ MeshComponent *World::getMesh (Entity entity)
         return nullptr;
     }
 
+    touch();
     return &*meshes_[entity];
 }
 
@@ -205,6 +216,7 @@ MaterialComponent *World::getMaterial (Entity entity)
         return nullptr;
     }
 
+    touch();
     return &*materials_[entity];
 }
 
@@ -227,6 +239,7 @@ LightComponent *World::getLight (Entity entity)
         return nullptr;
     }
 
+    touch();
     return &*lights_[entity];
 }
 
