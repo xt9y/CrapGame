@@ -123,16 +123,8 @@ int main ()
 
     Renderer::Rendering renderer;
 
-    if (!renderer.init())
-    {
-        ERROR("renderer.init");
-
-        Mouse.destroy();
-        Keyboard.destroy();
-        Display.destroy();
-        return 2;
-    }
-
+    /* Select the output path before init so RendererCheck stays on the
+     * deterministic CPU reference while normal gameplay initializes GL43. */
     if (!renderer.setTestName(test_name))
     {
         std::fprintf(
@@ -143,11 +135,20 @@ int main ()
                 : "(null)"
             );
 
-        renderer.shutdown();
         Mouse.destroy();
         Keyboard.destroy();
         Display.destroy();
         return 3;
+    }
+
+    if (!renderer.init())
+    {
+        ERROR("renderer.init");
+
+        Mouse.destroy();
+        Keyboard.destroy();
+        Display.destroy();
+        return 2;
     }
 
     int renderer_width = Display.getWidth(),
