@@ -3,7 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 
-#include <unordered_map>
+#include <vector>
 
 namespace Renderer 
 {
@@ -48,7 +48,10 @@ private:
                 Ecs::Entity entity
         ) const;
 
-    std::unordered_map<Ecs::Entity, Snapshot> previous_;
+    /* World entity IDs are contiguous and monotonic; World has no removal
+     * API. A vector therefore avoids per-frame unordered_map/set hashing and
+     * allocation in this render-hot change detector. */
+    std::vector<Snapshot> previous_;
     bool initialized_ = false;
 };
 
