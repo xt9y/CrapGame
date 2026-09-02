@@ -1,6 +1,7 @@
 #include "ScreenProbe.hpp"
 
 #include "Renderer/Lumen/Sampling.hpp"
+#include "Renderer/Lumen/ShortRangeAo.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +11,7 @@ namespace Renderer
 {
 namespace Lumen 
 {
-namespace
+namespace 
 {
 
 struct ProbeSample 
@@ -27,6 +28,17 @@ struct ProbeSample
     bool valid = false;
 };
 
+std::size_t probeIndex (
+                int x,
+                int y,
+                int width
+        ) 
+{
+    return static_cast<std::size_t>(y) *
+           static_cast<std::size_t>(width) +
+           static_cast<std::size_t>(x);
+}
+
 bool findProbePixel (
                 const GBuffer::Buffer& gbuffer,
                 int tile_x,
@@ -36,7 +48,7 @@ bool findProbePixel (
                 int *sample_y
         ) 
 {
-    if (!sample_x 
+    if (!sample_x
             || !sample_y) 
     {
         return false;
@@ -77,9 +89,8 @@ bool findProbePixel (
             const int difference_x = x - center_x,
                       difference_y = y - center_y;
 
-            const int distance =
-                difference_x * difference_x +
-                difference_y * difference_y;
+            const int distance = difference_x * difference_x +
+                                 difference_y * difference_y;
 
             if (distance >= best_distance) 
             {
@@ -96,15 +107,71 @@ bool findProbePixel (
     return found;
 }
 
-std::size_t probeIndex (
-                int x,
-                int y,
-                int width
+Math::Vec3 gatherProbe (
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Tracer& tracer,
+                const SurfaceCache& surface_cache,
+                const RadianceCache& radiance_cache,
+                const GBuffer::Pixel& pixel,
+                std::uint64_t frame_index,
+                int ray_count
         ) 
 {
-    return static_cast<std::size_t>(y) *
-           static_cast<std::size_t>(width) +
-           static_cast<std::size_t>(x);
+    const Math::Vec3 origin = Math::add(
+            pixel.world_position,
+            Math::multiply(pixel.normal, 0.04f)
+        );
+
+    Math::Vec3 incoming = {0.0f, 0.0f, 0.0f};
+
+    for (int ray = 0; ray < ray_count; ++ray) 
+    {
+        const Math::Vec3 direction = sampleHemisphere(
+                pixel.normal,
+                ray,
+                ray_count,
+                frame_index
+            );
+
+        const UnifiedTraceHit hit = tracer.trace(
+                gbuffer,
+                view,
+                projection,
+                origin,
+                direction,
+                24.0f
+            );
+
+        Math::Vec3 radiance = radiance_cache.sample(
+                Math::add(
+                        origin,
+                        Math::multiply(direction, 4.0f)
+                    )
+            );
+
+        if (hit.hit) 
+        {
+            radiance = surface_cache.radiance(
+                    hit.entity,
+                    hit.position,
+                    hit.normal
+                );
+        }
+
+        incoming = Math::add(incoming, radiance);
+    }
+
+    incoming = Math::multiply(
+            incoming,
+            1.0f / static_cast<float>(ray_count)
+        );
+
+    return Math::multiply(
+            Math::multiply(pixel.albedo, incoming),
+            0.35f
+        );
 }
 
 } // namespace
@@ -131,12 +198,10 @@ void ScreenProbeGather::gather (
               rays_per_probe = std::max(1, ray_count);
 
     const int probe_width =
-        (gbuffer.width() + probe_spacing - 1) /
-        probe_spacing;
+        (gbuffer.width() + probe_spacing - 1) / probe_spacing;
 
     const int probe_height =
-        (gbuffer.height() + probe_spacing - 1) /
-        probe_spacing;
+        (gbuffer.height() + probe_spacing - 1) / probe_spacing;
 
     const std::size_t pixel_count =
         static_cast<std::size_t>(gbuffer.width()) *
@@ -174,65 +239,21 @@ void ScreenProbeGather::gather (
             const GBuffer::Pixel& pixel =
                 gbuffer.pixel(sample_x, sample_y);
 
-            const Math::Vec3 origin =
-                Math::add(
-                        pixel.world_position,
-                        Math::multiply(pixel.normal, 0.04f)
-                    );
-
-            Math::Vec3 incoming = {0.0f, 0.0f, 0.0f};
-
-            for (int ray = 0; ray < rays_per_probe; ++ray) 
-            {
-                const Math::Vec3 direction = sampleHemisphere(
-                        pixel.normal,
-                        ray,
-                        rays_per_probe,
-                        frame_index
-                    );
-
-                const UnifiedTraceHit hit = tracer.trace(
-                        gbuffer,
-                        view,
-                        projection,
-                        origin,
-                        direction,
-                        24.0f
-                    );
-
-                Math::Vec3 radiance =
-                    radiance_cache.sample(
-                            Math::add(
-                                    origin,
-                                    Math::multiply(direction, 4.0f)
-                                )
-                        );
-
-                if (hit.hit) 
-                {
-                    radiance = surface_cache.radiance(
-                            hit.entity,
-                            hit.position,
-                            hit.normal
-                        );
-                }
-
-                incoming = Math::add(incoming, radiance);
-            }
-
-            incoming = Math::multiply(
-                    incoming,
-                    1.0f / static_cast<float>(rays_per_probe)
-                );
-
             ProbeSample& probe =
                 probes[probeIndex(probe_x, probe_y, probe_width)];
 
             probe.position = pixel.world_position;
             probe.normal = pixel.normal;
-            probe.indirect = Math::multiply(
-                    Math::multiply(pixel.albedo, incoming),
-                    0.35f
+            probe.indirect = gatherProbe(
+                    gbuffer,
+                    view,
+                    projection,
+                    tracer,
+                    surface_cache,
+                    radiance_cache,
+                    pixel,
+                    frame_index,
+                    rays_per_probe
                 );
             probe.entity = pixel.entity;
             probe.x = sample_x;
@@ -258,23 +279,21 @@ void ScreenProbeGather::gather (
                 continue;
             }
 
-            const int center_probe_x =
-                std::max(
-                        0,
-                        std::min(
-                                probe_width - 1,
-                                x / probe_spacing
-                            )
-                    );
+            const int center_probe_x = std::max(
+                    0,
+                    std::min(
+                            probe_width - 1,
+                            x / probe_spacing
+                        )
+                );
 
-            const int center_probe_y =
-                std::max(
-                        0,
-                        std::min(
-                                probe_height - 1,
-                                y / probe_spacing
-                            )
-                    );
+            const int center_probe_y = std::max(
+                    0,
+                    std::min(
+                            probe_height - 1,
+                            y / probe_spacing
+                        )
+                );
 
             Math::Vec3 indirect = {0.0f, 0.0f, 0.0f};
             float total_weight = 0.0f;
@@ -283,13 +302,10 @@ void ScreenProbeGather::gather (
             {
                 for (int offset_x = -1; offset_x <= 1; ++offset_x) 
                 {
-                    const int probe_x =
-                        center_probe_x + offset_x;
+                    const int probe_x = center_probe_x + offset_x,
+                              probe_y = center_probe_y + offset_y;
 
-                    const int probe_y =
-                        center_probe_y + offset_y;
-
-                    if (probe_x < 0 
+                    if (probe_x < 0
                             || probe_x >= probe_width
                             || probe_y < 0
                             || probe_y >= probe_height) 
@@ -297,26 +313,20 @@ void ScreenProbeGather::gather (
                         continue;
                     }
 
-                    const ProbeSample& probe =
-                        probes[
-                            probeIndex(
-                                    probe_x,
-                                    probe_y,
-                                    probe_width
-                                )
-                        ];
+                    const ProbeSample& probe = probes[
+                        probeIndex(probe_x, probe_y, probe_width)
+                    ];
 
-                    if (!probe.valid 
+                    if (!probe.valid
                             || probe.entity != pixel.entity) 
                     {
                         continue;
                     }
 
-                    const float normal_similarity =
-                        Math::dot(
-                                pixel.normal,
-                                probe.normal
-                            );
+                    const float normal_similarity = Math::dot(
+                            pixel.normal,
+                            probe.normal
+                        );
 
                     if (normal_similarity < 0.65f) 
                     {
@@ -331,23 +341,20 @@ void ScreenProbeGather::gather (
                         static_cast<float>(y - probe.y) /
                         static_cast<float>(probe_spacing);
 
-                    const float screen_distance =
-                        screen_x * screen_x +
-                        screen_y * screen_y;
+                    const float screen_distance = screen_x * screen_x +
+                                                  screen_y * screen_y;
 
-                    const float world_distance =
-                        Math::lengthSquared(
-                                Math::subtract(
-                                        pixel.world_position,
-                                        probe.position
-                                    )
-                            );
+                    const float world_distance = Math::lengthSquared(
+                            Math::subtract(
+                                    pixel.world_position,
+                                    probe.position
+                                )
+                        );
 
                     const float normal_weight =
                         std::pow(normal_similarity, 8.0f);
 
-                    const float weight =
-                        normal_weight /
+                    const float weight = normal_weight /
                         (
                             0.20f +
                             screen_distance +
@@ -356,10 +363,7 @@ void ScreenProbeGather::gather (
 
                     indirect = Math::add(
                             indirect,
-                            Math::multiply(
-                                    probe.indirect,
-                                    weight
-                                )
+                            Math::multiply(probe.indirect, weight)
                         );
 
                     total_weight += weight;
@@ -433,24 +437,22 @@ void ScreenProbeGather::gather (
                         continue;
                     }
 
-                    const float normal_similarity =
-                        Math::dot(
-                                pixel.normal,
-                                sample.normal
-                            );
+                    const float normal_similarity = Math::dot(
+                            pixel.normal,
+                            sample.normal
+                        );
 
                     if (normal_similarity < 0.80f) 
                     {
                         continue;
                     }
 
-                    const float world_distance =
-                        Math::lengthSquared(
-                                Math::subtract(
-                                        pixel.world_position,
-                                        sample.world_position
-                                    )
-                            );
+                    const float world_distance = Math::lengthSquared(
+                            Math::subtract(
+                                    pixel.world_position,
+                                    sample.world_position
+                                )
+                        );
 
                     const float weight =
                         std::pow(normal_similarity, 12.0f) /
@@ -477,13 +479,32 @@ void ScreenProbeGather::gather (
                 continue;
             }
 
+            const Math::Vec3 indirect = Math::multiply(
+                    filtered,
+                    1.0f / total_weight
+                );
+
+            const float visibility = shortRangeVisibility(
+                    gbuffer,
+                    view,
+                    projection,
+                    tracer,
+                    pixel,
+                    frame_index,
+                    4,
+                    0.80f
+                );
+
+            const float contact_weight =
+                0.35f + visibility * 0.65f;
+
             (*output)[
                 static_cast<std::size_t>(y) *
                 static_cast<std::size_t>(gbuffer.width()) +
                 static_cast<std::size_t>(x)
             ] = Math::multiply(
-                    filtered,
-                    1.0f / total_weight
+                    indirect,
+                    contact_weight
                 );
         }
     }

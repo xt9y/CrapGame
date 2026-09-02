@@ -1,0 +1,33 @@
+#ifndef CRAPGAME_RENDERER_LUMEN_SHORTRANGEAO_HPP
+#define CRAPGAME_RENDERER_LUMEN_SHORTRANGEAO_HPP
+
+#include "Renderer/GBuffer/GBuffer.hpp"
+#include "Renderer/Lumen/Tracer.hpp"
+
+#include <cstdint>
+
+namespace Renderer 
+{
+namespace Lumen 
+{
+
+float shortRangeWeight (
+                float distance,
+                float maximum_distance
+        );
+
+float shortRangeVisibility (
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Tracer& tracer,
+                const GBuffer::Pixel& pixel,
+                std::uint64_t frame_index,
+                int ray_count,
+                float maximum_distance
+        );
+
+} // namespace Lumen
+} // namespace Renderer
+
+#endif
