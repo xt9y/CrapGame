@@ -3,7 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Gpu/Bvh.hpp"
-#include "Renderer/Gpu/BvhShaders.hpp"
+#include "Renderer/Gpu/BvhShadersV2.hpp"
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
@@ -120,17 +120,15 @@ public:
 
         if (use_bvh)
         {
-            if (!ensureBvhBuffers(error))
+            if (!ensureBvhBuffer(error))
             {
                 return false;
             }
 
             BvhBuild build = buildBvh(primitive_bounds_, BVH_LEAF_SIZE);
             bvh_nodes_ = std::move(build.nodes);
-            bvh_indices_ = std::move(build.primitive_indices);
 
-            if (!uploadChangedRecords(bvh_node_buffer_, &bvh_node_capacity_, bvh_nodes_, &uploaded_bvh_nodes_, error)
-                    || !uploadChangedRecords(bvh_index_buffer_, &bvh_index_capacity_, bvh_indices_, &uploaded_bvh_indices_, error))
+            if (!uploadChangedRecords(bvh_node_buffer_, &bvh_node_capacity_, bvh_nodes_, &uploaded_bvh_nodes_, error))
             {
                 return false;
             }
@@ -138,7 +136,6 @@ public:
         else
         {
             bvh_nodes_.clear();
-            bvh_indices_.clear();
         }
 
         if (error) error->clear();
@@ -164,8 +161,7 @@ public:
             GL20.glUniform1i(bvh_node_count_location_, use_bvh ? static_cast<GLint>(bvh_nodes_.size()) : 0);
             if (use_bvh)
             {
-                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, bvh_node_buffer_);
-                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, bvh_index_buffer_);
+                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, bvh_node_buffer_);
             }
         }
 
@@ -190,14 +186,10 @@ public:
     void releaseAcceleration ()
     {
         if (bvh_node_buffer_ != 0) GL15.glDeleteBuffers(1, &bvh_node_buffer_);
-        if (bvh_index_buffer_ != 0) GL15.glDeleteBuffers(1, &bvh_index_buffer_);
         bvh_node_buffer_ = 0;
-        bvh_index_buffer_ = 0;
-        bvh_node_capacity_ = bvh_index_capacity_ = 0;
+        bvh_node_capacity_ = 0;
         bvh_nodes_.clear();
-        bvh_indices_.clear();
         uploaded_bvh_nodes_.clear();
-        uploaded_bvh_indices_.clear();
     }
 
     bool ready () const { return program_ != 0 && direct_color_ != 0; }
@@ -205,14 +197,13 @@ public:
     GLuint finalTexture () const { return direct_color_; }
     GLuint primitiveBuffer () const { return primitive_buffer_; }
     std::size_t primitiveCount () const { return primitives_.size(); }
-    bool bvhReady () const { return primitives_.size() > BVH_THRESHOLD && bvh_program_active_ && !bvh_nodes_.empty(); }
+    bool bvhReady () const { return primitives_.size() > BVH_THRESHOLD && bvh_program_active_ && !bvh_nodes_.empty() && bvh_node_buffer_ != 0; }
     GLuint bvhNodeBuffer () const { return bvh_node_buffer_; }
-    GLuint bvhIndexBuffer () const { return bvh_index_buffer_; }
     std::size_t bvhNodeCount () const { return bvh_nodes_.size(); }
 
 private:
     static constexpr std::size_t BVH_THRESHOLD = 8u;
-    static constexpr std::size_t BVH_LEAF_SIZE = 4u;
+    static constexpr std::size_t BVH_LEAF_SIZE = 3u;
 
     struct LightGpu { float position_type[4]; float direction_range[4]; float color_intensity[4]; float cone_shadow[4]; };
     struct PrimitiveGpu { float position_type[4]; float rotation[4]; float scale[4]; float albedo_metallic[4]; float emissive_roughness[4]; };
@@ -231,7 +222,7 @@ private:
         if (bvh_program_active_) return true;
         if (bvh_shader_validated_ && !activate) return true;
 
-        GLuint candidate = createComputeProgram(DIRECT_LIGHTING_BVH_COMPUTE, error);
+        GLuint candidate = createComputeProgram(DIRECT_LIGHTING_BVH_V2_COMPUTE, error);
         if (candidate == 0) return false;
 
         GLint camera = -1, lights = -1, primitives = -1, nodes = -1;
@@ -261,13 +252,12 @@ private:
         return true;
     }
 
-    bool ensureBvhBuffers (std::string *error)
+    bool ensureBvhBuffer (std::string *error)
     {
         if (bvh_node_buffer_ == 0) GL15.glGenBuffers(1, &bvh_node_buffer_);
-        if (bvh_index_buffer_ == 0) GL15.glGenBuffers(1, &bvh_index_buffer_);
-        if (bvh_node_buffer_ == 0 || bvh_index_buffer_ == 0)
+        if (bvh_node_buffer_ == 0)
         {
-            setInlineError(error, "failed to allocate shared GPU BVH buffers");
+            setInlineError(error, "failed to allocate shared GPU BVH buffer");
             return false;
         }
         return true;
@@ -316,14 +306,13 @@ private:
     void destroyTextures ();
 
     GLuint program_ = 0;
-    GLuint light_buffer_ = 0, primitive_buffer_ = 0, bvh_node_buffer_ = 0, bvh_index_buffer_ = 0, direct_color_ = 0;
+    GLuint light_buffer_ = 0, primitive_buffer_ = 0, bvh_node_buffer_ = 0, direct_color_ = 0;
     GLint camera_location_ = -1, light_count_location_ = -1, primitive_count_location_ = -1, bvh_node_count_location_ = -1;
-    std::size_t light_capacity_ = 0, primitive_capacity_ = 0, bvh_node_capacity_ = 0, bvh_index_capacity_ = 0;
+    std::size_t light_capacity_ = 0, primitive_capacity_ = 0, bvh_node_capacity_ = 0;
     std::vector<LightGpu> lights_, uploaded_lights_;
     std::vector<PrimitiveGpu> primitives_, uploaded_primitives_;
     std::vector<BvhBoundsInput> primitive_bounds_;
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
-    std::vector<std::uint32_t> bvh_indices_, uploaded_bvh_indices_;
     bool bvh_shader_validated_ = false;
     bool bvh_program_active_ = false;
     int width_ = 0, height_ = 0;
