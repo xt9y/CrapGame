@@ -30,7 +30,12 @@ private:
         );
 
     void renderGeometry (const Ecs::World& world);
-    void composeAlbedo ();
+
+    void composeLighting (
+                const Ecs::World& world,
+                const Math::Vec3& camera_position
+        );
+
     void present ();
 
     GBuffer::Buffer gbuffer_;

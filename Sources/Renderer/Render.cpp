@@ -1,5 +1,6 @@
 #include "Render.hpp"
 
+#include "Renderer/Lighting/Lighting.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 
 #include <algorithm>
@@ -21,6 +22,12 @@ std::uint8_t toByte (float value)
             Math::saturate(value) * 255.0f + 0.5f
         );
 }
+
+struct ActiveLight 
+{
+    const Ecs::TransformComponent *transform;
+    const Ecs::LightComponent *light;
+};
 
 } // namespace
 
@@ -128,11 +135,33 @@ void Rendering::renderGeometry (const Ecs::World& world)
     }
 }
 
-void Rendering::composeAlbedo () 
+void Rendering::composeLighting (
+                const Ecs::World& world,
+                const Math::Vec3& camera_position
+        ) 
 {
     const Math::Vec3 clear_color = {
         0.055f, 0.070f, 0.105f
     };
+
+    std::vector<ActiveLight> lights;
+
+    for (const Ecs::Entity entity : world.entities()) 
+    {
+        const Ecs::TransformComponent *transform = 
+            world.getTransform(entity);
+
+        const Ecs::LightComponent *light = 
+            world.getLight(entity);
+
+        if (!transform 
+                || !light) 
+        {
+            continue;
+        }
+
+        lights.push_back({transform, light});
+    }
 
     for (int y = 0; y < height_; ++y) 
     {
@@ -141,8 +170,34 @@ void Rendering::composeAlbedo ()
             const GBuffer::Pixel& pixel = 
                 gbuffer_.pixel(x, y);
 
-            const Math::Vec3 color = 
-                pixel.valid ? pixel.albedo : clear_color;
+            Math::Vec3 color = clear_color;
+
+            if (pixel.valid) 
+            {
+                color = pixel.emissive;
+
+                for (const ActiveLight& active_light : lights) 
+                {
+                    const Lighting::LightSample light_sample = 
+                        Lighting::sampleLight(
+                                *active_light.light,
+                                *active_light.transform,
+                                pixel.world_position
+                            );
+
+                    color = Math::add(
+                            color,
+                            Lighting::evaluateDirect(
+                                    pixel,
+                                    camera_position,
+                                    light_sample,
+                                    1.0f
+                                )
+                        );
+                }
+
+                color = Lighting::toneMap(color);
+            }
 
             const std::size_t offset = 
                 (static_cast<std::size_t>(y) * 
@@ -214,7 +269,10 @@ void Rendering::render (const Ecs::World& world)
 
     applyCamera(*camera_transform, *camera);
     renderGeometry(world);
-    composeAlbedo();
+    composeLighting(
+            world,
+            toVec3(camera_transform->position)
+        );
     present();
 }
 
