@@ -43,7 +43,7 @@ void ReflectionSystem::render (
                 const Math::Vec3& camera_position,
                 std::uint64_t frame_index,
                 std::vector<Math::Vec3> *output
-        ) const 
+        ) 
 {
     if (!output) 
     {
@@ -56,7 +56,10 @@ void ReflectionSystem::render (
         static_cast<std::size_t>(gbuffer.width()) *
         static_cast<std::size_t>(gbuffer.height());
 
-    output->assign(pixel_count, {0.0f, 0.0f, 0.0f});
+    std::vector<Math::Vec3> raw(
+            pixel_count,
+            {0.0f, 0.0f, 0.0f}
+        );
 
     for (int y = 0; y < gbuffer.height(); ++y) 
     {
@@ -158,7 +161,7 @@ void ReflectionSystem::render (
                     view_direction
                 );
 
-            (*output)[
+            raw[
                 static_cast<std::size_t>(y) *
                 static_cast<std::size_t>(gbuffer.width()) +
                 static_cast<std::size_t>(x)
@@ -168,6 +171,23 @@ void ReflectionSystem::render (
                 );
         }
     }
+
+    if (width_ != gbuffer.width()
+            || height_ != gbuffer.height()) 
+    {
+        width_ = gbuffer.width();
+        height_ = gbuffer.height();
+        history_.resize(width_, height_);
+    }
+
+    Temporal::resolveTaa(
+            gbuffer,
+            history_,
+            raw,
+            output
+        );
+
+    history_.store(gbuffer, *output);
 }
 
 } // namespace Lumen

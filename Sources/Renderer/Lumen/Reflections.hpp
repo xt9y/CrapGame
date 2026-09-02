@@ -5,6 +5,7 @@
 #include "Renderer/Lumen/RadianceCache.hpp"
 #include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
+#include "Renderer/Temporal/Temporal.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -28,7 +29,13 @@ public:
                 const Math::Vec3& camera_position,
                 std::uint64_t frame_index,
                 std::vector<Math::Vec3> *output
-        ) const;
+        );
+
+private:
+    Temporal::HistoryBuffer history_;
+
+    int width_  = 0,
+        height_ = 0;
 };
 
 } // namespace Lumen
