@@ -74,7 +74,30 @@ int main ()
     lwcglSetContextProfile(LWCGL_CONTEXT_COMPATIBILITY_PROFILE);
 #endif
 
-    Display.create();
+    if (Display.create() != 0)
+    {
+        ERROR("Display.create");
+        return 2;
+    }
+
+#if !defined(__APPLE__)
+    if (!lwcglModernGLAvailable())
+    {
+        std::fprintf(
+                stderr,
+                "CrapGame requires OpenGL 4.3 for the GPU renderer "
+                "(got %d.%d; missing %s)\n",
+                lwcglModernGLMajorVersion(),
+                lwcglModernGLMinorVersion(),
+                lwcglModernGLMissingFunction()
+                    ? lwcglModernGLMissingFunction()
+                    : "required GL43 capability"
+            );
+        Display.destroy();
+        return 2;
+    }
+#endif
+
     Keyboard.create();
     Mouse.create();
 
