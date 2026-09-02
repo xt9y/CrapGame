@@ -20,7 +20,8 @@ public:
     {
         Geometry = 0,
         DirectLighting,
-        Lumen,
+        LumenTrace,
+        LumenComposite,
         Present,
         Count,
     };
