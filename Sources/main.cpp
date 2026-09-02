@@ -10,14 +10,20 @@
 static inline void ERROR (const char* operation) 
 {
     const char* message = lwcglGetLastError();
-    std::fprintf(stderr, "%s failed: %s\n", operation, message ? message : "unknown lwcgl error");
+    std::fprintf(
+            stderr, "%s failed: %s\n", 
+            operation, message 
+            ? message : "unknown lwcgl error"
+        );
 }
 
 static ecs::Entity create_scene (ecs::World& world) 
 {
-    {
-        const ecs::Entity camera = world.createEntity();
+    const ecs::Entity cube   = world.createEntity();
+    const ecs::Entity camera = world.createEntity();
+    const ecs::Entity ground = world.createEntity();
 
+    { // Camera
         world.addTransform(camera, {
             {0.0f, 3.0f, 8.0f},
             {-12.0f, 0.0f, 0.0f},
@@ -26,10 +32,8 @@ static ecs::Entity create_scene (ecs::World& world)
 
         world.addCamera(camera, {60.0f, 0.1f, 100.0f, true});
     }
-    
-    const ecs::Entity cube = world.createEntity();
 
-    {
+    { // Cube
         world.addTransform(cube, {
             {0.0f, 1.45f, 0.0f},
             {-35.2643897f, 0.0f, 45.0f},
@@ -42,9 +46,7 @@ static ecs::Entity create_scene (ecs::World& world)
         });
     }
 
-    {
-        const ecs::Entity ground = world.createEntity();
-
+    { // Ground
         world.addTransform(ground, {
             {0.0f, 0.0f, 0.0f},
             {0.0f, 0.0f, 0.0f},
@@ -79,7 +81,7 @@ int main ()
     ecs::World world;
 
     const ecs::Entity cube = 
-        create_scene(world);
+            create_scene(world);
 
     render::Renderer renderer;
     renderer.init();
@@ -88,8 +90,8 @@ int main ()
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
     {
         renderer.resize(
-            Display.getWidth(), Display.getHeight()
-        );
+                Display.getWidth(), Display.getHeight()
+            );
 
         renderer.render(world);
         
@@ -98,9 +100,9 @@ int main ()
         if (capture_frame(frame) != 0) 
         {
             std::fprintf(
-                stderr, 
-                "RendererCheck framebuffer capture failed\n"
-            );
+                    stderr, 
+                    "RendererCheck framebuffer capture failed\n"
+                );
             
             exit_code = 2;
             break;
@@ -111,11 +113,23 @@ int main ()
         if (ecs::TransformComponent* cube_transform = world.getTransform(cube)) 
         {
             cube_transform->rotation.y += 0.65f;
-            if (cube_transform->rotation.y >= 360.0f) cube_transform->rotation.y -= 360.0f;
+            
+            if (cube_transform->rotation.y >= 360.0f) 
+            {
+                cube_transform->rotation.y -= 360.0f;
+            }
         }
 
-        if (renderercheck_mode && rendercheck_frame_is_last(frame)) break;
-        if (!renderercheck_mode) Display.sync(60);
+        if (renderercheck_mode 
+                && rendercheck_frame_is_last(frame)) 
+        {
+            break;
+        }
+        
+        if (!renderercheck_mode) 
+        {
+            Display.sync(60); 
+        }
 
         ++frame;
     }

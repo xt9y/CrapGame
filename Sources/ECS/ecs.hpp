@@ -5,41 +5,56 @@
 #include <optional>
 #include <vector>
 
-namespace ecs {
+namespace ecs 
+{
 
 using Entity = std::uint32_t;
 constexpr Entity INVALID_ENTITY = UINT32_MAX;
 
-struct Vec3 {
-    float x;
-    float y;
-    float z;
+struct Vec3 
+{
+    float x,
+          y,
+          z;
 };
 
-struct TransformComponent {
-    Vec3 position;
-    Vec3 rotation;
-    Vec3 scale;
+struct TransformComponent 
+{
+    Vec3 position,
+         rotation,
+         scale;
 };
 
-struct CameraComponent {
-    float fov_degrees;
-    float near_plane;
-    float far_plane;
+struct CameraComponent 
+{
+    float fov_degrees,
+          near_plane,
+          far_plane;
+    
     bool active;
 };
 
-enum class Primitive {
+enum class Primitive 
+{
     Cube,
     Plane,
 };
 
-struct RenderableComponent {
+struct RenderableComponent 
+{
     Primitive primitive;
+    
     Vec3 color;
 };
 
-class World {
+LightComponent 
+{
+    Vec3 color;
+}
+
+class World 
+{
+
 public:
     Entity createEntity();
 
@@ -49,10 +64,15 @@ public:
 
     TransformComponent* getTransform(Entity entity);
     const TransformComponent* getTransform(Entity entity) const;
+    
     CameraComponent* getCamera(Entity entity);
     const CameraComponent* getCamera(Entity entity) const;
+    
     RenderableComponent* getRenderable(Entity entity);
     const RenderableComponent* getRenderable(Entity entity) const;
+    
+    LightComponent* getLight(Entity entity);
+    const LightComponent getLight(Entity entity) const;
 
     Entity activeCamera() const;
     const std::vector<Entity>& entities() const;
