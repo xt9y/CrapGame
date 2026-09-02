@@ -7,39 +7,48 @@
 namespace render {
 namespace {
 
-constexpr float PI = 3.14159265358979323846f;
-constexpr float DEG_TO_RAD = PI / 180.0f;
+#define PI (3.14159265358979323846f)
+#define DEG_TO_RAD (PI / 180.0f);
 
 } // namespace
 
-bool Renderer::init() {
+bool Renderer::init () 
+{
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
+
     glClearColor(0.055f, 0.070f, 0.105f, 1.0f);
+
     return true;
 }
 
-void Renderer::resize(int width, int height) {
-    width_ = width > 0 ? width : 1;
+void Renderer::resize (int width, int height) 
+{
+    width_  = width > 0 ? width : 1;
     height_ = height > 0 ? height : 1;
+
     glViewport(0, 0, width_, height_);
 }
 
-void Renderer::applyCamera(const ecs::TransformComponent& transform,
-                           const ecs::CameraComponent& camera) const {
-    const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
+void Renderer::applyCamera (const ecs::TransformComponent& transform,
+                            const ecs::CameraComponent& camera) const 
+{
+    const float aspect = 
+        static_cast<float>(width_) / 
+        static_cast<float>(height_);
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     gluPerspective(camera.fov_degrees, aspect, camera.near_plane, camera.far_plane);
 
-    const float pitch = transform.rotation.x * DEG_TO_RAD;
-    const float yaw = transform.rotation.y * DEG_TO_RAD;
-    const float cos_pitch = std::cos(pitch);
+    const float pitch       = transform.rotation.x * DEG_TO_RAD;
+    const float yaw         = transform.rotation.y * DEG_TO_RAD;
+    const float cos_pitch   = std::cos(pitch);
 
-    const ecs::Vec3 forward = {
+    const ecs::Vec3 forward = 
+    {
         cos_pitch * std::sin(yaw),
         std::sin(pitch),
         -cos_pitch * std::cos(yaw),
@@ -47,6 +56,7 @@ void Renderer::applyCamera(const ecs::TransformComponent& transform,
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+
     gluLookAt(
         transform.position.x,
         transform.position.y,
@@ -60,7 +70,8 @@ void Renderer::applyCamera(const ecs::TransformComponent& transform,
     );
 }
 
-void Renderer::drawCube() const {
+void Renderer::drawCube () const 
+{
     constexpr float h = 0.75f;
 
     glBegin(GL_QUADS);
@@ -75,7 +86,8 @@ void Renderer::drawCube() const {
     glEnd();
 }
 
-void Renderer::drawPlane() const {
+void Renderer::drawPlane () const 
+{
     glBegin(GL_QUADS);
     glVertex3f(-0.5f, 0.0f, -0.5f);
     glVertex3f(-0.5f, 0.0f,  0.5f);
@@ -84,8 +96,9 @@ void Renderer::drawPlane() const {
     glEnd();
 }
 
-void Renderer::drawRenderable(const ecs::TransformComponent& transform,
-                              const ecs::RenderableComponent& renderable) const {
+void Renderer::drawRenderable (const ecs::TransformComponent& transform,
+                               const ecs::RenderableComponent& renderable) const 
+{
     glPushMatrix();
     glTranslatef(transform.position.x, transform.position.y, transform.position.z);
 
@@ -97,19 +110,17 @@ void Renderer::drawRenderable(const ecs::TransformComponent& transform,
     glScalef(transform.scale.x, transform.scale.y, transform.scale.z);
     glColor3f(renderable.color.x, renderable.color.y, renderable.color.z);
 
-    switch (renderable.primitive) {
-        case ecs::Primitive::Cube:
-            drawCube();
-            break;
-        case ecs::Primitive::Plane:
-            drawPlane();
-            break;
+    switch (renderable.primitive) 
+    {
+        case ecs::Primitive::Cube:  drawCube(); break;
+        case ecs::Primitive::Plane: drawPlane(); break;
     }
 
     glPopMatrix();
 }
 
-void Renderer::render(const ecs::World& world) {
+void Renderer::render (const ecs::World& world) 
+{
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     const ecs::Entity camera_entity = world.activeCamera();
@@ -129,7 +140,7 @@ void Renderer::render(const ecs::World& world) {
     }
 }
 
-void Renderer::shutdown() {
+void Renderer::shutdown () {
 }
 
 } // namespace render
