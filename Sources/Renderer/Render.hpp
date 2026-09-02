@@ -5,6 +5,7 @@
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
+#include "Renderer/Lumen/Reflections.hpp"
 #include "Renderer/Lumen/ScreenProbe.hpp"
 #include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
@@ -56,6 +57,7 @@ private:
     Lumen::CardScene cards_;
     Lumen::SurfaceCache surface_cache_;
     Lumen::RadianceCache radiance_cache_;
+    Lumen::ReflectionSystem reflection_system_;
     Lumen::ScreenProbeGather screen_probe_gather_;
 
     Math::Mat4 view_       = Math::identity(),
@@ -64,6 +66,7 @@ private:
     std::vector<Math::Vec3> direct_color_,
                             indirect_color_,
                             indirect_resolved_,
+                            reflection_color_,
                             frame_color_,
                             resolved_color_;
 

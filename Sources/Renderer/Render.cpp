@@ -57,6 +57,7 @@ void Rendering::resize (int width, int height)
     direct_color_.resize(pixel_count);
     indirect_color_.resize(pixel_count);
     indirect_resolved_.resize(pixel_count);
+    reflection_color_.resize(pixel_count);
     frame_color_.resize(pixel_count);
     resolved_color_.resize(pixel_count);
     color_buffer_.resize(pixel_count * 3u);
@@ -246,8 +247,11 @@ void Rendering::composeFinal ()
         {
             color = Lighting::toneMap(
                     Math::add(
-                            direct_color_[index],
-                            indirect_resolved_[index]
+                            Math::add(
+                                    direct_color_[index],
+                                    indirect_resolved_[index]
+                                ),
+                            reflection_color_[index]
                         )
                 );
         }
@@ -397,6 +401,18 @@ void Rendering::render (const Ecs::World& world)
             &indirect_resolved_
         );
 
+    reflection_system_.render(
+            gbuffer_,
+            view_,
+            projection_,
+            tracer_,
+            surface_cache_,
+            radiance_cache_,
+            camera_position,
+            frame_state_.frameIndex(),
+            &reflection_color_
+        );
+
     composeFinal();
 
     Temporal::resolveTaa(
@@ -419,6 +435,7 @@ void Rendering::shutdown ()
     direct_color_.clear();
     indirect_color_.clear();
     indirect_resolved_.clear();
+    reflection_color_.clear();
     frame_color_.clear();
     resolved_color_.clear();
     color_buffer_.clear();
