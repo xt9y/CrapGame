@@ -27,6 +27,11 @@ struct BvhNodeGpu
     std::int32_t meta[4] = {};
 };
 
+static_assert(
+        sizeof(BvhNodeGpu) == 48u,
+        "BvhNodeGpu must match the GLSL std430 BvhNode layout"
+    );
+
 struct BvhBuild
 {
     std::vector<BvhNodeGpu> nodes;
