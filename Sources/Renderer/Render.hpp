@@ -5,6 +5,7 @@
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
+#include "Renderer/Lumen/ScreenProbe.hpp"
 #include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
 #include "Renderer/Math/Math.hpp"
@@ -42,6 +43,7 @@ private:
                 const Math::Vec3& camera_position
         );
 
+    void composeFinal ();
     void writeColorBuffer (const std::vector<Math::Vec3>& color);
     void present ();
 
@@ -53,11 +55,14 @@ private:
     Lumen::CardScene cards_;
     Lumen::SurfaceCache surface_cache_;
     Lumen::RadianceCache radiance_cache_;
+    Lumen::ScreenProbeGather screen_probe_gather_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
 
-    std::vector<Math::Vec3> frame_color_,
+    std::vector<Math::Vec3> direct_color_,
+                            indirect_color_,
+                            frame_color_,
                             resolved_color_;
 
     std::vector<std::uint8_t> color_buffer_,

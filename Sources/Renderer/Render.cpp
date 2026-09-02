@@ -53,6 +53,8 @@ void Rendering::resize (int width, int height)
         static_cast<std::size_t>(width_) *
         static_cast<std::size_t>(height_);
 
+    direct_color_.resize(pixel_count);
+    indirect_color_.resize(pixel_count);
     frame_color_.resize(pixel_count);
     resolved_color_.resize(pixel_count);
     color_buffer_.resize(pixel_count * 3u);
@@ -213,17 +215,41 @@ void Rendering::composeLighting (
                                 )
                         );
                 }
-
-                color = Lighting::toneMap(color);
             }
 
-            const std::size_t pixel_index =
+            direct_color_[
                 static_cast<std::size_t>(y) *
                 static_cast<std::size_t>(width_) +
-                static_cast<std::size_t>(x);
-
-            frame_color_[pixel_index] = color;
+                static_cast<std::size_t>(x)
+            ] = color;
         }
+    }
+}
+
+void Rendering::composeFinal () 
+{
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(width_) *
+        static_cast<std::size_t>(height_);
+
+    for (std::size_t index = 0; index < pixel_count; ++index) 
+    {
+        const int x = static_cast<int>(index % static_cast<std::size_t>(width_)),
+                  y = static_cast<int>(index / static_cast<std::size_t>(width_));
+
+        Math::Vec3 color = direct_color_[index];
+
+        if (gbuffer_.pixel(x, y).valid) 
+        {
+            color = Lighting::toneMap(
+                    Math::add(
+                            direct_color_[index],
+                            indirect_color_[index]
+                        )
+                );
+        }
+
+        frame_color_[index] = color;
     }
 }
 
@@ -342,6 +368,21 @@ void Rendering::render (const Ecs::World& world)
 
     composeLighting(world, camera_position);
 
+    screen_probe_gather_.gather(
+            gbuffer_,
+            view_,
+            projection_,
+            tracer_,
+            surface_cache_,
+            radiance_cache_,
+            frame_state_.frameIndex(),
+            16,
+            8,
+            &indirect_color_
+        );
+
+    composeFinal();
+
     Temporal::resolveTaa(
             gbuffer_,
             history_,
@@ -358,6 +399,8 @@ void Rendering::render (const Ecs::World& world)
 
 void Rendering::shutdown () 
 {
+    direct_color_.clear();
+    indirect_color_.clear();
     frame_color_.clear();
     resolved_color_.clear();
     color_buffer_.clear();
