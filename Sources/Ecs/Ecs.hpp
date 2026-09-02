@@ -40,6 +40,17 @@ enum class Primitive
     Plane,
 };
 
+enum class MeshType 
+{
+    Cube,
+    Plane,
+};
+
+struct MeshComponent 
+{
+    MeshType mesh;
+};
+
 struct RenderableComponent 
 {
     Primitive primitive;
@@ -73,6 +84,11 @@ public:
                 const RenderableComponent& component
         );
 
+    MeshComponent& addMesh (
+                Entity entity,
+                const MeshComponent& component
+        );
+
     LightComponent& addLight (
                 Entity entity,
                 const LightComponent& component
@@ -86,6 +102,9 @@ public:
     
     RenderableComponent *getRenderable (Entity entity);
     const RenderableComponent *getRenderable (Entity entity) const;
+
+    MeshComponent *getMesh (Entity entity);
+    const MeshComponent *getMesh (Entity entity) const;
     
     LightComponent *getLight (Entity entity);
     const LightComponent *getLight (Entity entity) const;
@@ -100,6 +119,7 @@ private:
     std::vector<std::optional<TransformComponent>> transforms_;
     std::vector<std::optional<CameraComponent>> cameras_;
     std::vector<std::optional<RenderableComponent>> renderables_;
+    std::vector<std::optional<MeshComponent>> meshes_;
     std::vector<std::optional<LightComponent>> lights_;
 };
 

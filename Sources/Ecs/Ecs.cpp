@@ -23,6 +23,11 @@ void World::ensureCapacity (Entity entity)
         renderables_.resize(size);
     }
 
+    if (meshes_.size() < size) 
+    {
+        meshes_.resize(size);
+    }
+
     if (lights_.size() < size) 
     {
         lights_.resize(size);
@@ -67,6 +72,16 @@ RenderableComponent& World::addRenderable (
     ensureCapacity(entity);
     renderables_[entity] = component;
     return *renderables_[entity];
+}
+
+MeshComponent& World::addMesh (
+                Entity entity,
+                const MeshComponent& component
+        ) 
+{
+    ensureCapacity(entity);
+    meshes_[entity] = component;
+    return *meshes_[entity];
 }
 
 LightComponent& World::addLight (
@@ -143,6 +158,28 @@ const RenderableComponent *World::getRenderable (Entity entity) const
     }
 
     return &*renderables_[entity];
+}
+
+MeshComponent *World::getMesh (Entity entity) 
+{
+    if (entity >= meshes_.size() 
+            || !meshes_[entity]) 
+    {
+        return nullptr;
+    }
+
+    return &*meshes_[entity];
+}
+
+const MeshComponent *World::getMesh (Entity entity) const 
+{
+    if (entity >= meshes_.size() 
+            || !meshes_[entity]) 
+    {
+        return nullptr;
+    }
+
+    return &*meshes_[entity];
 }
 
 LightComponent *World::getLight (Entity entity) 
