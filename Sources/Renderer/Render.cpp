@@ -2,6 +2,7 @@
 
 #include "Renderer/Lighting/Lighting.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
+#include "Renderer/Shadows/Shadows.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -185,13 +186,25 @@ void Rendering::composeLighting (
                                 pixel.world_position
                             );
 
+                    float visibility = 1.0f;
+
+                    if (active_light.light->casts_shadows
+                            && light_sample.valid) 
+                    {
+                        visibility = shadows_.visibility(
+                                pixel.world_position,
+                                pixel.normal,
+                                light_sample
+                            );
+                    }
+
                     color = Math::add(
                             color,
                             Lighting::evaluateDirect(
                                     pixel,
                                     camera_position,
                                     light_sample,
-                                    1.0f
+                                    visibility
                                 )
                         );
                 }
@@ -269,6 +282,7 @@ void Rendering::render (const Ecs::World& world)
 
     applyCamera(*camera_transform, *camera);
     renderGeometry(world);
+    shadows_.build(world);
     composeLighting(
             world,
             toVec3(camera_transform->position)

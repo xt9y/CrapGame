@@ -53,6 +53,7 @@ void build (C_Build *b)
     c_sources(app, "Sources/Renderer/Shader/*.cpp");
     c_sources(app, "Sources/Renderer/GBuffer/*.cpp");
     c_sources(app, "Sources/Renderer/Lighting/*.cpp");
+    c_sources(app, "Sources/Renderer/Shadows/*.cpp");
 
     c_flag(app, "-std=c++17");
 

@@ -4,6 +4,7 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Math/Math.hpp"
+#include "Renderer/Shadows/Shadows.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <rendercheck/capture.h>
@@ -39,6 +40,7 @@ private:
     void present ();
 
     GBuffer::Buffer gbuffer_;
+    Shadows::Scene shadows_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
