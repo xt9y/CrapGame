@@ -265,7 +265,14 @@ void Profiler::endFrame ()
 
 void Profiler::printIfDue (std::uint64_t frame_index)
 {
-    if (!initialized_ || frame_index == 0 || frame_index % 120u != 0u)
+    /* At the original 120-frame cadence, an uncapped renderer could spend
+     * measurable CPU time writing profiler lines to the terminal. Keep GPU
+     * query collection continuous but make human-readable output sparse. */
+    constexpr std::uint64_t PRINT_INTERVAL = 4096u;
+
+    if (!initialized_
+            || frame_index == 0
+            || frame_index % PRINT_INTERVAL != 0u)
     {
         return;
     }
