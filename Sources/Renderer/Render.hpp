@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Math/Math.hpp"
+#include "Renderer/Mesh/Mesh.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <rendercheck/capture.h>
@@ -30,11 +31,11 @@ private:
 
     void drawRenderable (
                 const Ecs::TransformComponent& transform,
+                const Ecs::MeshComponent& mesh,
                 const Ecs::RenderableComponent& renderable
         ) const;
 
-    void drawCube () const;
-    void drawPlane () const;
+    void drawMesh (const Mesh::MeshData& mesh) const;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();

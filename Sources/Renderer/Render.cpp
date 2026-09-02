@@ -76,34 +76,28 @@ void Rendering::applyCamera (
     glLoadMatrixf(projection_.value);
 }
 
-void Rendering::drawCube () const 
+void Rendering::drawMesh (const Mesh::MeshData& mesh) const 
 {
-    constexpr float h = 0.75f;
+    glBegin(GL_TRIANGLES);
 
-    glBegin(GL_QUADS);
+    for (const std::uint32_t index : mesh.indices) 
+    {
+        const Mesh::Vertex& vertex = 
+            mesh.vertices[index];
 
-    glVertex3f(-h, -h,  h); glVertex3f( h, -h,  h); glVertex3f( h,  h,  h); glVertex3f(-h,  h,  h);
-    glVertex3f( h, -h, -h); glVertex3f(-h, -h, -h); glVertex3f(-h,  h, -h); glVertex3f( h,  h, -h);
-    glVertex3f(-h, -h, -h); glVertex3f(-h, -h,  h); glVertex3f(-h,  h,  h); glVertex3f(-h,  h, -h);
-    glVertex3f( h, -h,  h); glVertex3f( h, -h, -h); glVertex3f( h,  h, -h); glVertex3f( h,  h,  h);
-    glVertex3f(-h,  h,  h); glVertex3f( h,  h,  h); glVertex3f( h,  h, -h); glVertex3f(-h,  h, -h);
-    glVertex3f(-h, -h, -h); glVertex3f( h, -h, -h); glVertex3f( h, -h,  h); glVertex3f(-h, -h,  h);
+        glVertex3f(
+                vertex.position.x,
+                vertex.position.y,
+                vertex.position.z
+            );
+    }
 
-    glEnd();
-}
-
-void Rendering::drawPlane () const 
-{
-    glBegin(GL_QUADS);
-    glVertex3f(-0.5f, 0.0f, -0.5f);
-    glVertex3f(-0.5f, 0.0f,  0.5f);
-    glVertex3f( 0.5f, 0.0f,  0.5f);
-    glVertex3f( 0.5f, 0.0f, -0.5f);
     glEnd();
 }
 
 void Rendering::drawRenderable (
                 const Ecs::TransformComponent& transform,
+                const Ecs::MeshComponent& mesh,
                 const Ecs::RenderableComponent& renderable
         ) const 
 {
@@ -126,11 +120,7 @@ void Rendering::drawRenderable (
             renderable.color.z
         );
 
-    switch (renderable.primitive) 
-    {
-        case Ecs::Primitive::Cube:  drawCube(); break;
-        case Ecs::Primitive::Plane: drawPlane(); break;
-    }
+    drawMesh(Mesh::meshForType(mesh.mesh));
 }
 
 void Rendering::render (const Ecs::World& world) 
@@ -164,16 +154,20 @@ void Rendering::render (const Ecs::World& world)
         const Ecs::TransformComponent *transform = 
             world.getTransform(entity);
 
+        const Ecs::MeshComponent *mesh = 
+            world.getMesh(entity);
+
         const Ecs::RenderableComponent *renderable = 
             world.getRenderable(entity);
 
         if (!transform 
+                || !mesh 
                 || !renderable) 
         {
             continue;
         }
 
-        drawRenderable(*transform, *renderable);
+        drawRenderable(*transform, *mesh, *renderable);
     }
 }
 
