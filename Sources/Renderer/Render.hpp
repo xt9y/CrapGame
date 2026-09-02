@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
+#include "Renderer/Lumen/Tracer.hpp"
 #include "Renderer/Math/Math.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
 #include "Renderer/Temporal/Temporal.hpp"
@@ -45,6 +46,7 @@ private:
     Shadows::Scene shadows_;
     Temporal::FrameState frame_state_;
     Temporal::HistoryBuffer history_;
+    Lumen::Tracer tracer_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();

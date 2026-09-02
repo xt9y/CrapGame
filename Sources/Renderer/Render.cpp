@@ -312,6 +312,11 @@ void Rendering::render (const Ecs::World& world)
             frame_state_
         );
 
+    tracer_.build(
+            world,
+            toVec3(camera_transform->position)
+        );
+
     shadows_.build(world);
 
     composeLighting(
