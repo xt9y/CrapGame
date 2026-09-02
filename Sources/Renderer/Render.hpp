@@ -3,6 +3,8 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
+#include "Renderer/Lumen/Cards.hpp"
+#include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
 #include "Renderer/Math/Math.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
@@ -47,6 +49,8 @@ private:
     Temporal::FrameState frame_state_;
     Temporal::HistoryBuffer history_;
     Lumen::Tracer tracer_;
+    Lumen::CardScene cards_;
+    Lumen::SurfaceCache surface_cache_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();

@@ -1,6 +1,7 @@
 #include "Render.hpp"
 
 #include "Renderer/Lighting/Lighting.hpp"
+#include "Renderer/Lumen/SceneLighting.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
 
@@ -317,7 +318,16 @@ void Rendering::render (const Ecs::World& world)
             toVec3(camera_transform->position)
         );
 
+    cards_.build(world);
+    surface_cache_.build(world, cards_);
+
     shadows_.build(world);
+
+    Lumen::updateSceneLighting(
+            &surface_cache_,
+            world,
+            shadows_
+        );
 
     composeLighting(
             world,
