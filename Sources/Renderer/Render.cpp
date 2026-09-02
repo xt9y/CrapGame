@@ -349,18 +349,37 @@ void Rendering::render (const Ecs::World& world)
             frame_state_
         );
 
-    tracer_.build(world, camera_position);
+    const Lumen::ChangeSet changes =
+        change_tracker_.update(world);
 
-    cards_.build(world);
-    surface_cache_.build(world, cards_);
+    if (changes.geometry_changed
+            || changes.camera_changed) 
+    {
+        tracer_.build(world, camera_position);
+    }
 
-    shadows_.build(world);
+    if (changes.geometry_changed) 
+    {
+        cards_.build(world);
+        shadows_.build(world);
+    }
 
-    Lumen::updateSceneLighting(
-            &surface_cache_,
-            world,
-            shadows_
-        );
+    if (changes.geometry_changed
+            || changes.material_changed) 
+    {
+        surface_cache_.build(world, cards_);
+    }
+
+    if (changes.geometry_changed
+            || changes.material_changed
+            || changes.lighting_changed) 
+    {
+        Lumen::updateSceneLighting(
+                &surface_cache_,
+                world,
+                shadows_
+            );
+    }
 
     Lumen::updateRadiosity(
             &surface_cache_,
@@ -442,6 +461,7 @@ void Rendering::shutdown ()
     present_buffer_.clear();
     gi_history_.clear();
     history_.clear();
+    change_tracker_.clear();
 }
 
 } // namespace Renderer

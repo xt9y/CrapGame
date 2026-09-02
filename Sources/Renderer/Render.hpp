@@ -6,6 +6,7 @@
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
 #include "Renderer/Lumen/Reflections.hpp"
+#include "Renderer/Lumen/SceneChanges.hpp"
 #include "Renderer/Lumen/ScreenProbe.hpp"
 #include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
@@ -57,6 +58,7 @@ private:
     Lumen::CardScene cards_;
     Lumen::SurfaceCache surface_cache_;
     Lumen::RadianceCache radiance_cache_;
+    Lumen::ChangeTracker change_tracker_;
     Lumen::ReflectionSystem reflection_system_;
     Lumen::ScreenProbeGather screen_probe_gather_;
 
