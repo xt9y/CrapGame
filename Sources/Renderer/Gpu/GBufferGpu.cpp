@@ -1,5 +1,6 @@
 #include "GBufferGpu.hpp"
 
+#include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 
@@ -343,23 +344,6 @@ bool GBufferGpu::uploadBatch (Batch *batch, std::string *error)
         return false;
     }
 
-    const bool same_size =
-        batch->instances.size() == batch->uploaded_instances.size();
-
-    const bool same_data =
-        same_size
-        && (batch->instances.empty()
-            || std::memcmp(
-                    batch->instances.data(),
-                    batch->uploaded_instances.data(),
-                    batch->instances.size() * sizeof(InstanceGpu)
-                ) == 0);
-
-    if (same_data)
-    {
-        return true;
-    }
-
     if (batch->instances.empty())
     {
         batch->uploaded_instances.clear();
@@ -367,12 +351,18 @@ bool GBufferGpu::uploadBatch (Batch *batch, std::string *error)
     }
 
     const std::size_t required = batch->instances.size() * sizeof(InstanceGpu);
-
     GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, batch->instance_buffer);
+
+    const bool full_upload =
+        required > batch->instance_capacity
+        || batch->instances.size() != batch->uploaded_instances.size();
 
     if (required > batch->instance_capacity)
     {
-        std::size_t capacity = std::max<std::size_t>(sizeof(InstanceGpu) * 16u, batch->instance_capacity);
+        std::size_t capacity = std::max<std::size_t>(
+                sizeof(InstanceGpu) * 16u,
+                batch->instance_capacity
+            );
 
         while (capacity < required)
         {
@@ -389,12 +379,31 @@ bool GBufferGpu::uploadBatch (Batch *batch, std::string *error)
         batch->instance_capacity = capacity;
     }
 
-    GL15.glBufferSubData(
-            GL_SHADER_STORAGE_BUFFER,
-            0,
-            static_cast<LWCGLsizeiptr>(required),
-            batch->instances.data()
-        );
+    if (full_upload)
+    {
+        GL15.glBufferSubData(
+                GL_SHADER_STORAGE_BUFFER,
+                0,
+                static_cast<LWCGLsizeiptr>(required),
+                batch->instances.data()
+            );
+    }
+    else
+    {
+        forEachDirtyRange(
+                batch->instances,
+                batch->uploaded_instances,
+                [&] (std::size_t first, std::size_t count)
+                {
+                    GL15.glBufferSubData(
+                            GL_SHADER_STORAGE_BUFFER,
+                            static_cast<LWCGLintptr>(first * sizeof(InstanceGpu)),
+                            static_cast<LWCGLsizeiptr>(count * sizeof(InstanceGpu)),
+                            batch->instances.data() + first
+                        );
+                }
+            );
+    }
 
     batch->uploaded_instances = batch->instances;
     return true;
@@ -445,6 +454,13 @@ bool GBufferGpu::createAttachments (std::string *error)
     GL30.glFramebufferTexture2D(
             GL_FRAMEBUFFER,
             GL_COLOR_ATTACHMENT2,
+            GL_TEXTURE_2D,
+            albedo_metallic_,
+            0
+        );
+    GL30.glFramebufferTexture2D(
+            GL_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT3,
             GL_TEXTURE_2D,
             albedo_metallic_,
             0
