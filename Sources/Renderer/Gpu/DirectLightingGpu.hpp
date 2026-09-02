@@ -147,8 +147,23 @@ public:
                 return false;
             }
 
-            BvhBuild build = buildBvh(primitive_bounds_, BVH_LEAF_SIZE);
-            bvh_nodes_ = std::move(build.nodes);
+            const bool topology_matches =
+                !bvh_nodes_.empty()
+                && bvh_primitive_count_ == primitives_.size();
+
+            bool refit_ok = false;
+
+            if (topology_matches)
+            {
+                refit_ok = refitBvh(&bvh_nodes_, primitive_bounds_);
+            }
+
+            if (!refit_ok)
+            {
+                BvhBuild build = buildBvh(primitive_bounds_, BVH_LEAF_SIZE);
+                bvh_nodes_ = std::move(build.nodes);
+                bvh_primitive_count_ = primitives_.size();
+            }
 
             if (!uploadChangedRecords(bvh_node_buffer_, &bvh_node_capacity_, bvh_nodes_, &uploaded_bvh_nodes_, error))
             {
@@ -158,6 +173,7 @@ public:
         else
         {
             bvh_nodes_.clear();
+            bvh_primitive_count_ = 0u;
         }
 
         if (error) error->clear();
@@ -210,6 +226,7 @@ public:
         if (bvh_node_buffer_ != 0) GL15.glDeleteBuffers(1, &bvh_node_buffer_);
         bvh_node_buffer_ = 0;
         bvh_node_capacity_ = 0;
+        bvh_primitive_count_ = 0u;
         bvh_nodes_.clear();
         uploaded_bvh_nodes_.clear();
         use_bvh_ = false;
@@ -401,6 +418,7 @@ private:
     GLuint light_buffer_ = 0, primitive_buffer_ = 0, bvh_node_buffer_ = 0, direct_color_ = 0;
     GLint camera_location_ = -1, light_count_location_ = -1, primitive_count_location_ = -1, bvh_node_count_location_ = -1;
     std::size_t light_capacity_ = 0, primitive_capacity_ = 0, bvh_node_capacity_ = 0;
+    std::size_t bvh_primitive_count_ = 0u;
     std::vector<LightGpu> lights_, uploaded_lights_;
     std::vector<PrimitiveGpu> primitives_, uploaded_primitives_;
     std::vector<BvhBoundsInput> primitive_bounds_;
