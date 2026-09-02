@@ -2,8 +2,11 @@
 #define CRAPGAME_RENDERER_GPU_DIRECTLIGHTINGGPU_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/Gpu/Bvh.hpp"
+#include "Renderer/Gpu/BvhShaders.hpp"
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -11,6 +14,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -38,6 +42,7 @@ public:
 
         lights_.clear();
         primitives_.clear();
+        primitive_bounds_.clear();
 
         for (const Ecs::Entity entity : world.entities())
         {
@@ -112,7 +117,12 @@ public:
             primitive.emissive_roughness[2] = material->emissive.z * material->emissive_strength;
             primitive.emissive_roughness[3] = material->roughness;
 
+            const std::uint32_t primitive_index =
+                static_cast<std::uint32_t>(primitives_.size());
             primitives_.push_back(primitive);
+            primitive_bounds_.push_back(
+                    primitiveBounds(*transform, mesh->mesh, primitive_index)
+                );
         }
 
         if (!uploadChangedRecords(
@@ -131,6 +141,41 @@ public:
             ))
         {
             return false;
+        }
+
+        if (primitives_.size() > BVH_THRESHOLD)
+        {
+            if (!ensureBvhResources(error))
+            {
+                return false;
+            }
+
+            BvhBuild build = buildBvh(primitive_bounds_, BVH_LEAF_SIZE);
+            bvh_nodes_ = std::move(build.nodes);
+            bvh_indices_ = std::move(build.primitive_indices);
+
+            if (!uploadChangedRecords(
+                    bvh_node_buffer_,
+                    &bvh_node_capacity_,
+                    bvh_nodes_,
+                    &uploaded_bvh_nodes_,
+                    error
+                )
+                || !uploadChangedRecords(
+                    bvh_index_buffer_,
+                    &bvh_index_capacity_,
+                    bvh_indices_,
+                    &uploaded_bvh_indices_,
+                    error
+                ))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            bvh_nodes_.clear();
+            bvh_indices_.clear();
         }
 
         if (error)
@@ -155,15 +200,33 @@ public:
             return false;
         }
 
-        GL20.glUseProgram(program_);
+        const bool use_bvh = bvhReady();
+        const GLuint active_program = use_bvh ? bvh_program_ : program_;
+        const GLint camera_location = use_bvh ? bvh_camera_location_ : camera_location_;
+        const GLint light_count_location = use_bvh ? bvh_light_count_location_ : light_count_location_;
+        const GLint primitive_count_location = use_bvh
+            ? bvh_primitive_count_location_
+            : primitive_count_location_;
+
+        GL20.glUseProgram(active_program);
         GL20.glUniform3f(
-                camera_location_,
+                camera_location,
                 camera_position.x,
                 camera_position.y,
                 camera_position.z
             );
-        GL20.glUniform1i(light_count_location_, static_cast<GLint>(lights_.size()));
-        GL20.glUniform1i(primitive_count_location_, static_cast<GLint>(primitives_.size()));
+        GL20.glUniform1i(light_count_location, static_cast<GLint>(lights_.size()));
+        GL20.glUniform1i(primitive_count_location, static_cast<GLint>(primitives_.size()));
+
+        if (use_bvh)
+        {
+            GL20.glUniform1i(
+                    bvh_node_count_location_,
+                    static_cast<GLint>(bvh_nodes_.size())
+                );
+            GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, bvh_node_buffer_);
+            GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, bvh_index_buffer_);
+        }
 
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, light_buffer_);
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, primitive_buffer_);
@@ -202,16 +265,54 @@ public:
 
     void shutdown ();
 
+    void releaseAcceleration ()
+    {
+        if (bvh_node_buffer_ != 0)
+        {
+            GL15.glDeleteBuffers(1, &bvh_node_buffer_);
+            bvh_node_buffer_ = 0;
+        }
+        if (bvh_index_buffer_ != 0)
+        {
+            GL15.glDeleteBuffers(1, &bvh_index_buffer_);
+            bvh_index_buffer_ = 0;
+        }
+        destroyProgram(&bvh_program_);
+        bvh_node_capacity_ = 0;
+        bvh_index_capacity_ = 0;
+        bvh_nodes_.clear();
+        bvh_indices_.clear();
+        uploaded_bvh_nodes_.clear();
+        uploaded_bvh_indices_.clear();
+        bvh_camera_location_ = -1;
+        bvh_light_count_location_ = -1;
+        bvh_primitive_count_location_ = -1;
+        bvh_node_count_location_ = -1;
+    }
+
     bool ready () const { return program_ != 0 && direct_color_ != 0; }
     GLuint directTexture () const { return direct_color_; }
     GLuint finalTexture () const { return direct_color_; }
 
-    /* The analytic-shadow primitive layout is intentionally shared with
-     * LumenGpu. One ECS extraction/upload feeds both compute pipelines. */
     GLuint primitiveBuffer () const { return primitive_buffer_; }
     std::size_t primitiveCount () const { return primitives_.size(); }
 
+    bool bvhReady () const
+    {
+        return primitives_.size() > BVH_THRESHOLD
+            && bvh_program_ != 0
+            && bvh_node_buffer_ != 0
+            && bvh_index_buffer_ != 0
+            && !bvh_nodes_.empty();
+    }
+    GLuint bvhNodeBuffer () const { return bvh_node_buffer_; }
+    GLuint bvhIndexBuffer () const { return bvh_index_buffer_; }
+    std::size_t bvhNodeCount () const { return bvh_nodes_.size(); }
+
 private:
+    static constexpr std::size_t BVH_THRESHOLD = 8u;
+    static constexpr std::size_t BVH_LEAF_SIZE = 4u;
+
     struct LightGpu
     {
         float position_type[4];
@@ -228,6 +329,50 @@ private:
         float albedo_metallic[4];
         float emissive_roughness[4];
     };
+
+    bool ensureBvhResources (std::string *error)
+    {
+        if (bvh_program_ == 0)
+        {
+            bvh_program_ = createComputeProgram(DIRECT_LIGHTING_BVH_COMPUTE, error);
+            if (bvh_program_ == 0)
+            {
+                return false;
+            }
+
+            bvh_camera_location_ = GL20.glGetUniformLocation(bvh_program_, "uCameraPosition");
+            bvh_light_count_location_ = GL20.glGetUniformLocation(bvh_program_, "uLightCount");
+            bvh_primitive_count_location_ = GL20.glGetUniformLocation(bvh_program_, "uPrimitiveCount");
+            bvh_node_count_location_ = GL20.glGetUniformLocation(bvh_program_, "uBvhNodeCount");
+
+            if (bvh_camera_location_ < 0
+                    || bvh_light_count_location_ < 0
+                    || bvh_primitive_count_location_ < 0
+                    || bvh_node_count_location_ < 0)
+            {
+                setInlineError(error, "GPU BVH direct-light uniforms are unavailable");
+                destroyProgram(&bvh_program_);
+                return false;
+            }
+        }
+
+        if (bvh_node_buffer_ == 0)
+        {
+            GL15.glGenBuffers(1, &bvh_node_buffer_);
+        }
+        if (bvh_index_buffer_ == 0)
+        {
+            GL15.glGenBuffers(1, &bvh_index_buffer_);
+        }
+
+        if (bvh_node_buffer_ == 0 || bvh_index_buffer_ == 0)
+        {
+            setInlineError(error, "failed to allocate shared GPU BVH buffers");
+            return false;
+        }
+
+        return true;
+    }
 
     template <typename T>
     bool uploadChangedRecords (
@@ -251,7 +396,6 @@ private:
             {
                 return false;
             }
-
             uploaded->clear();
             return true;
         }
@@ -264,17 +408,10 @@ private:
 
         if (full_upload)
         {
-            if (!uploadBuffer(
-                    buffer,
-                    capacity,
-                    current.data(),
-                    required,
-                    error
-                ))
+            if (!uploadBuffer(buffer, capacity, current.data(), required, error))
             {
                 return false;
             }
-
             *uploaded = current;
             return true;
         }
@@ -293,7 +430,6 @@ private:
                         );
                 }
             );
-
         *uploaded = current;
         return true;
     }
@@ -334,21 +470,35 @@ private:
     void destroyTextures ();
 
     GLuint program_ = 0;
+    GLuint bvh_program_ = 0;
     GLuint light_buffer_ = 0;
     GLuint primitive_buffer_ = 0;
+    GLuint bvh_node_buffer_ = 0;
+    GLuint bvh_index_buffer_ = 0;
     GLuint direct_color_ = 0;
 
     GLint camera_location_ = -1;
     GLint light_count_location_ = -1;
     GLint primitive_count_location_ = -1;
+    GLint bvh_camera_location_ = -1;
+    GLint bvh_light_count_location_ = -1;
+    GLint bvh_primitive_count_location_ = -1;
+    GLint bvh_node_count_location_ = -1;
 
     std::size_t light_capacity_ = 0;
     std::size_t primitive_capacity_ = 0;
+    std::size_t bvh_node_capacity_ = 0;
+    std::size_t bvh_index_capacity_ = 0;
 
     std::vector<LightGpu> lights_;
     std::vector<PrimitiveGpu> primitives_;
+    std::vector<BvhBoundsInput> primitive_bounds_;
+    std::vector<BvhNodeGpu> bvh_nodes_;
+    std::vector<std::uint32_t> bvh_indices_;
     std::vector<LightGpu> uploaded_lights_;
     std::vector<PrimitiveGpu> uploaded_primitives_;
+    std::vector<BvhNodeGpu> uploaded_bvh_nodes_;
+    std::vector<std::uint32_t> uploaded_bvh_indices_;
 
     int width_ = 0;
     int height_ = 0;
