@@ -6,6 +6,32 @@ namespace Renderer
 {
 namespace Lumen 
 {
+namespace 
+{
+
+Math::Vec3 reflectionFresnel (
+                const GBuffer::Pixel& pixel,
+                const Math::Vec3& view_direction
+        ) 
+{
+    const Math::Vec3 f0 = Math::mix(
+            {0.04f, 0.04f, 0.04f},
+            pixel.albedo,
+            Math::saturate(pixel.metallic)
+        );
+
+    return Lighting::fresnelSchlick(
+            Math::saturate(
+                    Math::dot(
+                            pixel.normal,
+                            view_direction
+                        )
+                ),
+            f0
+        );
+}
+
+} // namespace
 
 void ReflectionSystem::render (
                 const GBuffer::Buffer& gbuffer,
@@ -24,10 +50,6 @@ void ReflectionSystem::render (
         return;
     }
 
-    (void)view;
-    (void)projection;
-    (void)tracer;
-    (void)surface_cache;
     (void)frame_index;
 
     const std::size_t pixel_count =
@@ -43,8 +65,7 @@ void ReflectionSystem::render (
             const GBuffer::Pixel& pixel =
                 gbuffer.pixel(x, y);
 
-            if (!pixel.valid
-                    || pixel.roughness < 0.35f) 
+            if (!pixel.valid) 
             {
                 continue;
             }
@@ -63,39 +84,78 @@ void ReflectionSystem::render (
                         )
                 );
 
-            const float sample_distance =
-                1.5f + pixel.roughness * 4.0f;
+            Math::Vec3 radiance = {0.0f, 0.0f, 0.0f};
+            float reflection_weight = 1.0f;
 
-            const Math::Vec3 radiance = radiance_cache.sample(
-                    Math::add(
-                            pixel.world_position,
-                            Math::multiply(
-                                    reflection_direction,
-                                    sample_distance
-                                )
-                        )
-                );
+            if (pixel.roughness >= 0.35f) 
+            {
+                const float sample_distance =
+                    1.5f + pixel.roughness * 4.0f;
 
-            const Math::Vec3 f0 = Math::mix(
-                    {0.04f, 0.04f, 0.04f},
-                    pixel.albedo,
-                    Math::saturate(pixel.metallic)
-                );
+                radiance = radiance_cache.sample(
+                        Math::add(
+                                pixel.world_position,
+                                Math::multiply(
+                                        reflection_direction,
+                                        sample_distance
+                                    )
+                            )
+                    );
 
-            const Math::Vec3 fresnel = Lighting::fresnelSchlick(
-                    Math::saturate(
-                            Math::dot(
-                                    pixel.normal,
-                                    view_direction
-                                )
-                        ),
-                    f0
-                );
+                reflection_weight = Math::clamp(
+                        1.0f - pixel.roughness * 0.65f,
+                        0.15f,
+                        1.0f
+                    );
+            }
+            else 
+            {
+                const Math::Vec3 origin = Math::add(
+                        pixel.world_position,
+                        Math::multiply(pixel.normal, 0.035f)
+                    );
 
-            const float roughness_weight = Math::clamp(
-                    1.0f - pixel.roughness * 0.65f,
-                    0.15f,
-                    1.0f
+                const UnifiedTraceHit hit = tracer.trace(
+                        gbuffer,
+                        view,
+                        projection,
+                        origin,
+                        reflection_direction,
+                        40.0f
+                    );
+
+                radiance = radiance_cache.sample(
+                        Math::add(
+                                origin,
+                                Math::multiply(
+                                        reflection_direction,
+                                        8.0f
+                                    )
+                            )
+                    );
+
+                if (hit.hit) 
+                {
+                    radiance = surface_cache.radiance(
+                            hit.entity,
+                            hit.position,
+                            hit.normal
+                        );
+                }
+
+                const float smoothness = Math::clamp(
+                        1.0f - pixel.roughness / 0.35f,
+                        0.0f,
+                        1.0f
+                    );
+
+                reflection_weight =
+                    0.65f + smoothness * 0.35f;
+            }
+
+            const Math::Vec3 fresnel = reflectionFresnel(
+                    pixel,
+                    view_direction
                 );
 
             (*output)[
@@ -104,7 +164,7 @@ void ReflectionSystem::render (
                 static_cast<std::size_t>(x)
             ] = Math::multiply(
                     Math::multiply(radiance, fresnel),
-                    roughness_weight
+                    reflection_weight
                 );
         }
     }
