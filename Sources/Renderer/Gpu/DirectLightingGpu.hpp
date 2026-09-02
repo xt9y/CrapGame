@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Gpu/Bvh.hpp"
+#include "Renderer/Gpu/BvhBench.hpp"
 #include "Renderer/Gpu/BvhShadersV2.hpp"
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -106,8 +108,28 @@ public:
             primitive_bounds_.push_back(primitiveBounds(*transform, mesh->mesh, primitive_index));
         }
 
-        const bool use_bvh = primitives_.size() > BVH_THRESHOLD;
-        if (!ensureBvhShader(use_bvh, error))
+        const std::size_t scene_primitive_count = primitives_.size();
+        const BvhBenchConfig& config = benchConfig();
+        appendStressPrimitives(config.stress_primitives);
+
+        use_bvh_ = shouldUseBvh(config.mode, primitives_.size(), BVH_THRESHOLD);
+
+        if (!bench_reported_
+                && (config.stress_primitives > 0u || config.mode != BvhMode::Auto))
+        {
+            std::fprintf(
+                    stderr,
+                    "GPU BVH benchmark: scene %zu + stress %zu = %zu primitives, mode %s, traversal %s\n",
+                    scene_primitive_count,
+                    config.stress_primitives,
+                    primitives_.size(),
+                    bvhModeName(config.mode),
+                    use_bvh_ ? "bvh" : "linear"
+                );
+            bench_reported_ = true;
+        }
+
+        if (!ensureBvhShader(use_bvh_, error))
         {
             return false;
         }
@@ -118,7 +140,7 @@ public:
             return false;
         }
 
-        if (use_bvh)
+        if (use_bvh_)
         {
             if (!ensureBvhBuffer(error))
             {
@@ -190,6 +212,7 @@ public:
         bvh_node_capacity_ = 0;
         bvh_nodes_.clear();
         uploaded_bvh_nodes_.clear();
+        use_bvh_ = false;
     }
 
     bool ready () const { return program_ != 0 && direct_color_ != 0; }
@@ -197,7 +220,7 @@ public:
     GLuint finalTexture () const { return direct_color_; }
     GLuint primitiveBuffer () const { return primitive_buffer_; }
     std::size_t primitiveCount () const { return primitives_.size(); }
-    bool bvhReady () const { return primitives_.size() > BVH_THRESHOLD && bvh_program_active_ && !bvh_nodes_.empty() && bvh_node_buffer_ != 0; }
+    bool bvhReady () const { return use_bvh_ && bvh_program_active_ && !bvh_nodes_.empty() && bvh_node_buffer_ != 0; }
     GLuint bvhNodeBuffer () const { return bvh_node_buffer_; }
     std::size_t bvhNodeCount () const { return bvh_nodes_.size(); }
 
@@ -207,6 +230,75 @@ private:
 
     struct LightGpu { float position_type[4]; float direction_range[4]; float color_intensity[4]; float cone_shadow[4]; };
     struct PrimitiveGpu { float position_type[4]; float rotation[4]; float scale[4]; float albedo_metallic[4]; float emissive_roughness[4]; };
+
+    const BvhBenchConfig& benchConfig ()
+    {
+        if (!bench_config_initialized_)
+        {
+            bench_config_ = bvhBenchConfig();
+            bench_config_initialized_ = true;
+        }
+        return bench_config_;
+    }
+
+    void appendStressPrimitives (std::size_t count)
+    {
+        if (count == 0u)
+        {
+            return;
+        }
+
+        std::size_t side = 1u;
+        while (side * side < count)
+        {
+            ++side;
+        }
+
+        const float half = static_cast<float>(side - 1u) * 0.5f;
+
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const std::size_t grid_x = index % side;
+            const std::size_t grid_z = index / side;
+
+            Ecs::TransformComponent transform = {};
+            transform.position = {
+                (static_cast<float>(grid_x) - half) * 1.20f,
+                0.55f + static_cast<float>(index % 3u) * 0.18f,
+                (static_cast<float>(grid_z) - half) * 1.20f - 3.0f,
+            };
+            transform.rotation = {
+                static_cast<float>((index * 13u) % 31u),
+                static_cast<float>((index * 29u) % 360u),
+                0.0f,
+            };
+            transform.scale = {0.32f, 0.32f, 0.32f};
+
+            PrimitiveGpu primitive = {};
+            primitive.position_type[0] = transform.position.x;
+            primitive.position_type[1] = transform.position.y;
+            primitive.position_type[2] = transform.position.z;
+            primitive.position_type[3] = 0.0f;
+            primitive.rotation[0] = transform.rotation.x;
+            primitive.rotation[1] = transform.rotation.y;
+            primitive.rotation[2] = transform.rotation.z;
+            primitive.scale[0] = transform.scale.x;
+            primitive.scale[1] = transform.scale.y;
+            primitive.scale[2] = transform.scale.z;
+            primitive.scale[3] = 1.0f;
+            primitive.albedo_metallic[0] = 0.35f + static_cast<float>(index % 5u) * 0.07f;
+            primitive.albedo_metallic[1] = 0.42f;
+            primitive.albedo_metallic[2] = 0.55f;
+            primitive.albedo_metallic[3] = index % 4u == 0u ? 0.55f : 0.0f;
+            primitive.emissive_roughness[3] = 0.45f;
+
+            const std::uint32_t primitive_index = static_cast<std::uint32_t>(primitives_.size());
+            primitives_.push_back(primitive);
+            primitive_bounds_.push_back(
+                    primitiveBounds(transform, Ecs::MeshType::Cube, primitive_index)
+                );
+        }
+    }
 
     bool queryBvhLocations (GLuint program, GLint *camera, GLint *lights, GLint *primitives, GLint *nodes) const
     {
@@ -313,6 +405,10 @@ private:
     std::vector<PrimitiveGpu> primitives_, uploaded_primitives_;
     std::vector<BvhBoundsInput> primitive_bounds_;
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
+    BvhBenchConfig bench_config_ = {};
+    bool bench_config_initialized_ = false;
+    bool bench_reported_ = false;
+    bool use_bvh_ = false;
     bool bvh_shader_validated_ = false;
     bool bvh_program_active_ = false;
     int width_ = 0, height_ = 0;
