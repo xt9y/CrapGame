@@ -1,7 +1,5 @@
 #include "SceneChanges.hpp"
 
-#include <unordered_set>
-
 namespace Renderer 
 {
 namespace Lumen 
@@ -152,7 +150,6 @@ ChangeTracker::Snapshot ChangeTracker::snapshot (
 ChangeSet ChangeTracker::update (const Ecs::World& world) 
 {
     ChangeSet changes;
-    std::unordered_set<Ecs::Entity> current_entities;
 
     if (!initialized_) 
     {
@@ -164,13 +161,13 @@ ChangeSet ChangeTracker::update (const Ecs::World& world)
 
     for (const Ecs::Entity entity : world.entities()) 
     {
-        current_entities.insert(entity);
-
         const Snapshot current = snapshot(world, entity);
-        const auto found = previous_.find(entity);
+        const std::size_t index = static_cast<std::size_t>(entity);
 
-        if (found == previous_.end()) 
+        if (index >= previous_.size()) 
         {
+            previous_.resize(index + 1u);
+
             if (current.has_mesh
                     || current.has_renderable) 
             {
@@ -192,11 +189,11 @@ ChangeSet ChangeTracker::update (const Ecs::World& world)
                 changes.camera_changed = true;
             }
 
-            previous_[entity] = current;
+            previous_[index] = current;
             continue;
         }
 
-        const Snapshot& old = found->second;
+        Snapshot& old = previous_[index];
 
         const bool transform_changed =
             current.has_transform != old.has_transform
@@ -273,40 +270,7 @@ ChangeSet ChangeTracker::update (const Ecs::World& world)
             changes.camera_changed = true;
         }
 
-        found->second = current;
-    }
-
-    for (auto iterator = previous_.begin();
-            iterator != previous_.end();) 
-    {
-        if (current_entities.find(iterator->first) != current_entities.end()) 
-        {
-            ++iterator;
-            continue;
-        }
-
-        if (iterator->second.has_mesh
-                || iterator->second.has_renderable) 
-        {
-            changes.geometry_changed = true;
-        }
-
-        if (iterator->second.has_material) 
-        {
-            changes.material_changed = true;
-        }
-
-        if (iterator->second.has_light) 
-        {
-            changes.lighting_changed = true;
-        }
-
-        if (iterator->second.has_camera) 
-        {
-            changes.camera_changed = true;
-        }
-
-        iterator = previous_.erase(iterator);
+        old = current;
     }
 
     initialized_ = true;
