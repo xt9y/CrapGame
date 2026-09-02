@@ -36,6 +36,11 @@ public:
     GLuint directTexture () const { return direct_color_; }
     GLuint finalTexture () const { return final_color_; }
 
+    /* The analytic-shadow primitive layout is intentionally shared with
+     * LumenGpu. One ECS extraction/upload feeds both compute pipelines. */
+    GLuint primitiveBuffer () const { return primitive_buffer_; }
+    std::size_t primitiveCount () const { return primitives_.size(); }
+
 private:
     struct LightGpu
     {
