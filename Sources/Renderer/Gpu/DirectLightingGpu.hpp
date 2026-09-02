@@ -23,6 +23,17 @@ public:
     bool init (std::string *error = nullptr);
     bool resize (int width, int height, std::string *error = nullptr);
 
+    bool updateScene (
+                const Ecs::World& world,
+                std::string *error = nullptr
+        );
+
+    bool dispatch (
+                const GBufferGpu& gbuffer,
+                const Math::Vec3& camera_position,
+                std::string *error = nullptr
+        );
+
     bool render (
                 const Ecs::World& world,
                 const GBufferGpu& gbuffer,
@@ -84,6 +95,8 @@ private:
 
     std::vector<LightGpu> lights_;
     std::vector<PrimitiveGpu> primitives_;
+    std::vector<LightGpu> uploaded_lights_;
+    std::vector<PrimitiveGpu> uploaded_primitives_;
 
     int width_ = 0;
     int height_ = 0;
