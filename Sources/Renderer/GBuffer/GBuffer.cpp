@@ -203,9 +203,9 @@ void Buffer::rasterize (
                             weight_c = barycentric_c * inverse_c / perspective_sum;
 
                 const float ndc_depth = 
-                    ndc_a.z * weight_a +
-                    ndc_b.z * weight_b +
-                    ndc_c.z * weight_c;
+                    ndc_a.z * barycentric_a +
+                    ndc_b.z * barycentric_b +
+                    ndc_c.z * barycentric_c;
 
                 const float depth = ndc_depth * 0.5f + 0.5f;
 
