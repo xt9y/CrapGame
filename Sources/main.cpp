@@ -5,6 +5,7 @@
 #include <lwcgl/context.h>
 #include <lwcgl/glmodern.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,31 @@ static inline void ERROR (const char *operation)
             operation, message 
             ? message : "unknown lwcgl error"
         );
+}
+
+static int requestedFpsCap ()
+{
+    const char *value = std::getenv("CRAPGAME_FPS");
+
+    if (!value || !*value)
+    {
+        return 0;
+    }
+
+    char *end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+
+    if (end == value || *end != '\0' || parsed <= 0 || parsed > 100000)
+    {
+        std::fprintf(
+                stderr,
+                "Ignoring invalid CRAPGAME_FPS=%s; interactive rendering is uncapped\n",
+                value
+            );
+        return 0;
+    }
+
+    return static_cast<int>(parsed);
 }
 
 int main () 
@@ -57,6 +83,10 @@ int main ()
               window_height = renderercheck_mode
                 ? TEST_HEIGHT
                 : WINDOW_HEIGHT;
+
+    const int fps_cap = renderercheck_mode
+        ? 0
+        : requestedFpsCap();
 
     std::uint64_t frame = 0;
     int exit_code = 0;
@@ -98,6 +128,22 @@ int main ()
         return 2;
     }
 #endif
+
+    if (!renderercheck_mode)
+    {
+        /* Maximum-throughput mode is the default. CRAPGAME_FPS can add an
+         * explicit software cap when a stable test cadence is desired. */
+        Display.setVSyncEnabled(LWCGL_FALSE);
+
+        if (fps_cap > 0)
+        {
+            std::fprintf(stderr, "Frame pacing: %d FPS cap, VSync off\n", fps_cap);
+        }
+        else
+        {
+            std::fprintf(stderr, "Frame pacing: uncapped, VSync off\n");
+        }
+    }
 
     Keyboard.create();
     Mouse.create();
@@ -157,6 +203,10 @@ int main ()
 
     renderer.resize(renderer_width, renderer_height);
 
+    using Clock = std::chrono::steady_clock;
+    auto stats_start = Clock::now();
+    std::uint64_t stats_frames = 0;
+
     while (!Display.isCloseRequested() 
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
     {
@@ -198,9 +248,36 @@ int main ()
             break;
         }
         
-        if (!renderercheck_mode) 
+        if (!renderercheck_mode)
         {
-            Display.sync(60); 
+            if (fps_cap > 0)
+            {
+                Display.sync(fps_cap);
+            }
+
+            ++stats_frames;
+            const auto now = Clock::now();
+            const double elapsed = std::chrono::duration<double>(
+                    now - stats_start
+                ).count();
+
+            if (elapsed >= 2.0)
+            {
+                const double fps = static_cast<double>(stats_frames) / elapsed;
+                const double frame_ms = fps > 0.0 ? 1000.0 / fps : 0.0;
+
+                std::fprintf(
+                        stderr,
+                        "CPU frame  %.3f ms  %.1f FPS  %dx%d\n",
+                        frame_ms,
+                        fps,
+                        renderer_width,
+                        renderer_height
+                    );
+
+                stats_start = now;
+                stats_frames = 0;
+            }
         }
 
         ++frame;
