@@ -3,7 +3,6 @@
 #include "Renderer/Gpu/Gpu.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
 
 namespace Renderer
@@ -23,7 +22,6 @@ layout(rgba16f, binding = 1) readonly uniform image2D gNormalRoughness;
 layout(rgba16f, binding = 2) readonly uniform image2D gAlbedoMetallic;
 layout(rgba16f, binding = 3) readonly uniform image2D gEmissive;
 layout(rgba16f, binding = 4) writeonly uniform image2D oDirect;
-layout(rgba16f, binding = 5) writeonly uniform image2D oFinal;
 
 struct LightData
 {
@@ -276,12 +274,6 @@ vec3 evaluatePbr (
     return (diffuseWeight * diffuse + specular) * radiance * normalLight;
 }
 
-vec3 toneMap (vec3 colorValue)
-{
-    vec3 mapped = max(colorValue, vec3(0.0)) / (vec3(1.0) + max(colorValue, vec3(0.0)));
-    return pow(clamp(mapped, vec3(0.0), vec3(1.0)), vec3(1.0 / 2.2));
-}
-
 void main ()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -296,9 +288,7 @@ void main ()
 
     if (positionDepth.w <= 0.0)
     {
-        vec3 clearColor = vec3(0.055, 0.070, 0.105);
-        imageStore(oDirect, pixel, vec4(clearColor, 1.0));
-        imageStore(oFinal, pixel, vec4(clearColor, 1.0));
+        imageStore(oDirect, pixel, vec4(0.055, 0.070, 0.105, 1.0));
         return;
     }
 
@@ -384,16 +374,8 @@ void main ()
             continue;
         }
 
-        float visibility = 1.0;
-
-        if (light.coneShadow.z > 0.5)
-        {
-            visibility = shadowed(position, normal, lightDirection, maximumDistance)
-                ? 0.0
-                : 1.0;
-        }
-
-        if (visibility <= 0.0)
+        if (light.coneShadow.z > 0.5
+                && shadowed(position, normal, lightDirection, maximumDistance))
         {
             continue;
         }
@@ -405,30 +387,13 @@ void main ()
             normal,
             viewDirection,
             lightDirection,
-            radiance * visibility
+            radiance
         );
     }
 
-    vec3 ambient = albedo * (0.012 + 0.018 * clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
     imageStore(oDirect, pixel, vec4(direct, 1.0));
-    imageStore(oFinal, pixel, vec4(toneMap(direct + ambient), 1.0));
 }
 )GLSL";
-
-Math::Vec3 toVec3 (const Ecs::Vec3& value)
-{
-    return {value.x, value.y, value.z};
-}
-
-Math::Vec3 lightForward (const Ecs::TransformComponent& transform)
-{
-    return Math::normalize(
-            Math::transformDirection(
-                    Math::rotationEuler(toVec3(transform.rotation)),
-                    {0.0f, 0.0f, -1.0f}
-                )
-        );
-}
 
 GLuint createTexture (int width, int height)
 {
@@ -623,147 +588,8 @@ bool DirectLightingGpu::render (
                 std::string *error
         )
 {
-    if (!ready()
-            || !gbuffer.ready()
-            || gbuffer.width() != width_
-            || gbuffer.height() != height_)
-    {
-        setError(error, "GPU direct lighting resources are not ready for this GBuffer");
-        return false;
-    }
-
-    lights_.clear();
-    primitives_.clear();
-
-    for (const Ecs::Entity entity : world.entities())
-    {
-        const Ecs::TransformComponent *transform = world.getTransform(entity);
-        const Ecs::LightComponent *light = world.getLight(entity);
-
-        if (transform && light && light->intensity > 0.0f)
-        {
-            LightGpu gpu = {};
-            const Math::Vec3 forward = lightForward(*transform);
-
-            gpu.position_type[0] = transform->position.x;
-            gpu.position_type[1] = transform->position.y;
-            gpu.position_type[2] = transform->position.z;
-            gpu.position_type[3] = light->type == Ecs::LightType::Directional
-                ? 0.0f
-                : light->type == Ecs::LightType::Point ? 1.0f : 2.0f;
-
-            gpu.direction_range[0] = forward.x;
-            gpu.direction_range[1] = forward.y;
-            gpu.direction_range[2] = forward.z;
-            gpu.direction_range[3] = light->range;
-
-            gpu.color_intensity[0] = light->color.x;
-            gpu.color_intensity[1] = light->color.y;
-            gpu.color_intensity[2] = light->color.z;
-            gpu.color_intensity[3] = light->intensity;
-
-            gpu.cone_shadow[0] = std::cos(Math::radians(light->inner_cone));
-            gpu.cone_shadow[1] = std::cos(Math::radians(light->outer_cone));
-            gpu.cone_shadow[2] = light->casts_shadows ? 1.0f : 0.0f;
-            gpu.cone_shadow[3] = light->indirect_intensity;
-
-            lights_.push_back(gpu);
-        }
-
-        const Ecs::MeshComponent *mesh = world.getMesh(entity);
-        const Ecs::RenderableComponent *renderable = world.getRenderable(entity);
-        const Ecs::MaterialComponent *material = world.getMaterial(entity);
-
-        if (!transform
-                || !mesh
-                || !renderable
-                || !renderable->visible
-                || !material)
-        {
-            continue;
-        }
-
-        PrimitiveGpu primitive = {};
-        primitive.position_type[0] = transform->position.x;
-        primitive.position_type[1] = transform->position.y;
-        primitive.position_type[2] = transform->position.z;
-        primitive.position_type[3] = mesh->mesh == Ecs::MeshType::Cube ? 0.0f : 1.0f;
-
-        primitive.rotation[0] = transform->rotation.x;
-        primitive.rotation[1] = transform->rotation.y;
-        primitive.rotation[2] = transform->rotation.z;
-
-        primitive.scale[0] = transform->scale.x;
-        primitive.scale[1] = transform->scale.y;
-        primitive.scale[2] = transform->scale.z;
-        primitive.scale[3] = 1.0f;
-
-        primitive.albedo_metallic[0] = material->albedo.x;
-        primitive.albedo_metallic[1] = material->albedo.y;
-        primitive.albedo_metallic[2] = material->albedo.z;
-        primitive.albedo_metallic[3] = material->metallic;
-
-        primitive.emissive_roughness[0] = material->emissive.x * material->emissive_strength;
-        primitive.emissive_roughness[1] = material->emissive.y * material->emissive_strength;
-        primitive.emissive_roughness[2] = material->emissive.z * material->emissive_strength;
-        primitive.emissive_roughness[3] = material->roughness;
-
-        primitives_.push_back(primitive);
-    }
-
-    if (!uploadBuffer(
-            light_buffer_,
-            &light_capacity_,
-            lights_.data(),
-            lights_.size() * sizeof(LightGpu),
-            error
-        )
-        || !uploadBuffer(
-            primitive_buffer_,
-            &primitive_capacity_,
-            primitives_.data(),
-            primitives_.size() * sizeof(PrimitiveGpu),
-            error
-        ))
-    {
-        return false;
-    }
-
-    GL20.glUseProgram(program_);
-    GL20.glUniform3f(
-            camera_location_,
-            camera_position.x,
-            camera_position.y,
-            camera_position.z
-        );
-    GL20.glUniform1i(light_count_location_, static_cast<GLint>(lights_.size()));
-    GL20.glUniform1i(primitive_count_location_, static_cast<GLint>(primitives_.size()));
-
-    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, light_buffer_);
-    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, primitive_buffer_);
-
-    GL42.glBindImageTexture(0, gbuffer.positionDepthTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(1, gbuffer.normalRoughnessTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(3, gbuffer.emissiveTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(4, direct_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(5, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-
-    GL43.glDispatchCompute(
-            static_cast<GLuint>((width_ + 7) / 8),
-            static_cast<GLuint>((height_ + 7) / 8),
-            1
-        );
-
-    GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-    GL20.glUseProgram(0);
-
-    if (error)
-    {
-        error->clear();
-    }
-
-    return true;
+    return updateScene(world, error)
+        && dispatch(gbuffer, camera_position, error);
 }
 
 void DirectLightingGpu::destroyTextures ()
@@ -794,6 +620,8 @@ void DirectLightingGpu::shutdown ()
     primitive_capacity_ = 0;
     lights_.clear();
     primitives_.clear();
+    uploaded_lights_.clear();
+    uploaded_primitives_.clear();
     camera_location_ = -1;
     light_count_location_ = -1;
     primitive_count_location_ = -1;
