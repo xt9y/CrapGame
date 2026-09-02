@@ -282,10 +282,17 @@ bool Rendering::renderGpuFrame (
         return false;
     }
 
-    const bool geometry_dirty =
+    const bool scene_geometry_dirty =
         changes.geometry_changed
-        || changes.material_changed
+        || changes.material_changed;
+
+    const bool geometry_dirty =
+        scene_geometry_dirty
         || changes.camera_changed;
+
+    const bool lighting_scene_dirty =
+        scene_geometry_dirty
+        || changes.lighting_changed;
 
     const bool direct_dirty =
         geometry_dirty
@@ -300,11 +307,24 @@ bool Rendering::renderGpuFrame (
     std::string error;
     gpu_profiler_.beginFrame(gpu_frame_index_);
 
+    if (scene_geometry_dirty)
+    {
+        if (!gpu_gbuffer_.updateScene(world, &error))
+        {
+            gpu_profiler_.endFrame();
+            if (!gpu_error_reported_)
+            {
+                std::fprintf(stderr, "GPU GBuffer scene update failed: %s\n", error.c_str());
+                gpu_error_reported_ = true;
+            }
+            return false;
+        }
+    }
+
     if (geometry_dirty)
     {
         gpu_profiler_.begin(Gpu::Profiler::Pass::Geometry);
-        const bool geometry_ok = gpu_gbuffer_.render(
-                world,
+        const bool geometry_ok = gpu_gbuffer_.draw(
                 view_,
                 projection_,
                 &error
@@ -316,7 +336,21 @@ bool Rendering::renderGpuFrame (
             gpu_profiler_.endFrame();
             if (!gpu_error_reported_)
             {
-                std::fprintf(stderr, "GPU GBuffer frame failed: %s\n", error.c_str());
+                std::fprintf(stderr, "GPU GBuffer draw failed: %s\n", error.c_str());
+                gpu_error_reported_ = true;
+            }
+            return false;
+        }
+    }
+
+    if (lighting_scene_dirty)
+    {
+        if (!gpu_direct_lighting_.updateScene(world, &error))
+        {
+            gpu_profiler_.endFrame();
+            if (!gpu_error_reported_)
+            {
+                std::fprintf(stderr, "GPU lighting scene update failed: %s\n", error.c_str());
                 gpu_error_reported_ = true;
             }
             return false;
@@ -326,8 +360,7 @@ bool Rendering::renderGpuFrame (
     if (direct_dirty)
     {
         gpu_profiler_.begin(Gpu::Profiler::Pass::DirectLighting);
-        const bool direct_ok = gpu_direct_lighting_.render(
-                world,
+        const bool direct_ok = gpu_direct_lighting_.dispatch(
                 gpu_gbuffer_,
                 camera_position,
                 &error
@@ -339,7 +372,7 @@ bool Rendering::renderGpuFrame (
             gpu_profiler_.endFrame();
             if (!gpu_error_reported_)
             {
-                std::fprintf(stderr, "GPU direct-light frame failed: %s\n", error.c_str());
+                std::fprintf(stderr, "GPU direct-light dispatch failed: %s\n", error.c_str());
                 gpu_error_reported_ = true;
             }
             return false;
