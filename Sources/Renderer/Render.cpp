@@ -55,6 +55,7 @@ void Rendering::resize (int width, int height)
 
     direct_color_.resize(pixel_count);
     indirect_color_.resize(pixel_count);
+    indirect_resolved_.resize(pixel_count);
     frame_color_.resize(pixel_count);
     resolved_color_.resize(pixel_count);
     color_buffer_.resize(pixel_count * 3u);
@@ -62,6 +63,7 @@ void Rendering::resize (int width, int height)
 
     gbuffer_.resize(width_, height_);
     history_.resize(width_, height_);
+    gi_history_.resize(width_, height_);
 
     glViewport(0, 0, width_, height_);
 }
@@ -244,7 +246,7 @@ void Rendering::composeFinal ()
             color = Lighting::toneMap(
                     Math::add(
                             direct_color_[index],
-                            indirect_color_[index]
+                            indirect_resolved_[index]
                         )
                 );
         }
@@ -381,6 +383,13 @@ void Rendering::render (const Ecs::World& world)
             &indirect_color_
         );
 
+    Temporal::resolveTaa(
+            gbuffer_,
+            gi_history_,
+            indirect_color_,
+            &indirect_resolved_
+        );
+
     composeFinal();
 
     Temporal::resolveTaa(
@@ -393,6 +402,7 @@ void Rendering::render (const Ecs::World& world)
     writeColorBuffer(resolved_color_);
     present();
 
+    gi_history_.store(gbuffer_, indirect_resolved_);
     history_.store(gbuffer_, resolved_color_);
     frame_state_.capture(world, view_, projection_);
 }
@@ -401,10 +411,12 @@ void Rendering::shutdown ()
 {
     direct_color_.clear();
     indirect_color_.clear();
+    indirect_resolved_.clear();
     frame_color_.clear();
     resolved_color_.clear();
     color_buffer_.clear();
     present_buffer_.clear();
+    gi_history_.clear();
     history_.clear();
 }
 

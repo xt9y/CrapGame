@@ -50,7 +50,8 @@ private:
     GBuffer::Buffer gbuffer_;
     Shadows::Scene shadows_;
     Temporal::FrameState frame_state_;
-    Temporal::HistoryBuffer history_;
+    Temporal::HistoryBuffer history_,
+                            gi_history_;
     Lumen::Tracer tracer_;
     Lumen::CardScene cards_;
     Lumen::SurfaceCache surface_cache_;
@@ -62,6 +63,7 @@ private:
 
     std::vector<Math::Vec3> direct_color_,
                             indirect_color_,
+                            indirect_resolved_,
                             frame_color_,
                             resolved_color_;
 
