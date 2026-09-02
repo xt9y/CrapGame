@@ -150,6 +150,13 @@ ChangeTracker::Snapshot ChangeTracker::snapshot (
 ChangeSet ChangeTracker::update (const Ecs::World& world) 
 {
     ChangeSet changes;
+    const std::uint64_t world_revision = world.changeRevision();
+
+    if (initialized_
+            && world_revision == previous_world_revision_)
+    {
+        return changes;
+    }
 
     if (!initialized_) 
     {
@@ -273,6 +280,7 @@ ChangeSet ChangeTracker::update (const Ecs::World& world)
         old = current;
     }
 
+    previous_world_revision_ = world_revision;
     initialized_ = true;
     return changes;
 }
@@ -280,6 +288,7 @@ ChangeSet ChangeTracker::update (const Ecs::World& world)
 void ChangeTracker::clear () 
 {
     previous_.clear();
+    previous_world_revision_ = 0;
     initialized_ = false;
 }
 
