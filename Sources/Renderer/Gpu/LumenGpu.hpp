@@ -57,7 +57,8 @@ public:
         }
 
         const bool use_bvh = direct.bvhReady();
-        if (!ensureBvhTraceShader(use_bvh, error))
+        const bool use_v2_shader = use_bvh || direct.benchmarkActive();
+        if (!ensureBvhTraceShader(use_v2_shader, error))
         {
             return false;
         }
