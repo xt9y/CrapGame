@@ -288,6 +288,7 @@ void Rendering::render (const Ecs::World& world)
             toVec3(camera_transform->position)
         );
     present();
+    frame_state_.capture(world, view_, projection_);
 }
 
 void Rendering::shutdown () 

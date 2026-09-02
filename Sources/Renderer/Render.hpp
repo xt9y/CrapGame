@@ -5,6 +5,7 @@
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Math/Math.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
+#include "Renderer/Temporal/Temporal.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <rendercheck/capture.h>
@@ -41,6 +42,7 @@ private:
 
     GBuffer::Buffer gbuffer_;
     Shadows::Scene shadows_;
+    Temporal::FrameState frame_state_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
