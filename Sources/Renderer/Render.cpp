@@ -282,6 +282,11 @@ void Rendering::render (const Ecs::World& world)
 
     applyCamera(*camera_transform, *camera);
     renderGeometry(world);
+    Temporal::calculateMotion(
+            &gbuffer_,
+            world,
+            frame_state_
+        );
     shadows_.build(world);
     composeLighting(
             world,

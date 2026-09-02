@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_TEMPORAL_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <cstdint>
@@ -42,6 +43,12 @@ private:
     std::uint64_t frame_index_ = 0;
     bool has_history_ = false;
 };
+
+void calculateMotion (
+                GBuffer::Buffer *gbuffer,
+                const Ecs::World& world,
+                const FrameState& frame_state
+        );
 
 } // namespace Temporal
 } // namespace Renderer

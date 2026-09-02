@@ -27,6 +27,8 @@ struct Pixel
 
     Ecs::Entity entity;
     bool valid;
+
+    Math::Vec2 motion = {0.0f, 0.0f};
 };
 
 class Buffer 
