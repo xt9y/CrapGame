@@ -115,7 +115,7 @@ public:
             primitives_.push_back(primitive);
         }
 
-        if (!sameVectorBytes(lights_, uploaded_lights_))
+        if (light_capacity_ == 0 || !sameVectorBytes(lights_, uploaded_lights_))
         {
             if (!uploadBuffer(
                     light_buffer_,
@@ -130,7 +130,7 @@ public:
             uploaded_lights_ = lights_;
         }
 
-        if (!sameVectorBytes(primitives_, uploaded_primitives_))
+        if (primitive_capacity_ == 0 || !sameVectorBytes(primitives_, uploaded_primitives_))
         {
             if (!uploadBuffer(
                     primitive_buffer_,
