@@ -48,32 +48,29 @@ bool Rendering::init ()
 
     if (!presenter_.init(&error))
     {
-        std::fprintf(
-                stderr,
-                "GPU presenter initialization failed: %s\n",
-                error.c_str()
-            );
+        std::fprintf(stderr, "GPU presenter initialization failed: %s\n", error.c_str());
         return false;
     }
 
     if (!gpu_gbuffer_.init(&error))
     {
-        std::fprintf(
-                stderr,
-                "GPU GBuffer initialization failed: %s\n",
-                error.c_str()
-            );
+        std::fprintf(stderr, "GPU GBuffer initialization failed: %s\n", error.c_str());
         presenter_.shutdown();
         return false;
     }
 
     if (!gpu_direct_lighting_.init(&error))
     {
-        std::fprintf(
-                stderr,
-                "GPU direct lighting initialization failed: %s\n",
-                error.c_str()
-            );
+        std::fprintf(stderr, "GPU direct lighting initialization failed: %s\n", error.c_str());
+        gpu_gbuffer_.shutdown();
+        presenter_.shutdown();
+        return false;
+    }
+
+    if (!gpu_lumen_.init(&error))
+    {
+        std::fprintf(stderr, "GPU Lumen initialization failed: %s\n", error.c_str());
+        gpu_direct_lighting_.shutdown();
         gpu_gbuffer_.shutdown();
         presenter_.shutdown();
         return false;
@@ -94,7 +91,8 @@ void Rendering::resize (int width, int height)
         test_name_.empty()
         && gpu_pipeline_enabled_
         && gpu_gbuffer_.ready()
-        && gpu_direct_lighting_.ready();
+        && gpu_direct_lighting_.ready()
+        && gpu_lumen_.ready();
 
     const bool cpu_frame_ready =
         !test_name_.empty()
@@ -116,11 +114,7 @@ void Rendering::resize (int width, int height)
 
         if (!presenter_.resize(width_, height_, &error))
         {
-            std::fprintf(
-                    stderr,
-                    "GPU presenter resize failed: %s\n",
-                    error.c_str()
-                );
+            std::fprintf(stderr, "GPU presenter resize failed: %s\n", error.c_str());
             gpu_pipeline_enabled_ = false;
         }
     }
@@ -133,13 +127,10 @@ void Rendering::resize (int width, int height)
             std::string error;
 
             if (!gpu_gbuffer_.resize(width_, height_, &error)
-                    || !gpu_direct_lighting_.resize(width_, height_, &error))
+                    || !gpu_direct_lighting_.resize(width_, height_, &error)
+                    || !gpu_lumen_.resize(width_, height_, &error))
             {
-                std::fprintf(
-                        stderr,
-                        "GPU renderer resize failed: %s\n",
-                        error.c_str()
-                    );
+                std::fprintf(stderr, "GPU renderer resize failed: %s\n", error.c_str());
                 gpu_pipeline_enabled_ = false;
             }
         }
@@ -197,11 +188,8 @@ void Rendering::applyCamera (
         static_cast<float>(width_) /
         static_cast<float>(height_);
 
-    const Math::Vec3 position = 
-        toVec3(transform.position);
-
-    const Math::Vec3 rotation = 
-        toVec3(transform.rotation);
+    const Math::Vec3 position = toVec3(transform.position);
+    const Math::Vec3 rotation = toVec3(transform.rotation);
 
     const float pitch = Math::radians(rotation.x),
                 yaw   = Math::radians(rotation.y);
@@ -259,23 +247,30 @@ bool Rendering::renderGpuFrame (
                     camera_position,
                     &error
                 )
+            || !gpu_lumen_.render(
+                    world,
+                    gpu_gbuffer_,
+                    gpu_direct_lighting_,
+                    view_,
+                    projection_,
+                    camera_position,
+                    gpu_frame_index_,
+                    &error
+                )
             || !presenter_.presentTexture(
-                    gpu_direct_lighting_.finalTexture(),
+                    gpu_lumen_.finalTexture(),
                     &error
                 ))
     {
         if (!gpu_error_reported_)
         {
-            std::fprintf(
-                    stderr,
-                    "GPU frame pipeline failed: %s\n",
-                    error.c_str()
-                );
+            std::fprintf(stderr, "GPU frame pipeline failed: %s\n", error.c_str());
             gpu_error_reported_ = true;
         }
         return false;
     }
 
+    ++gpu_frame_index_;
     gpu_error_reported_ = false;
     return true;
 #endif
@@ -287,17 +282,10 @@ void Rendering::renderGeometry (const Ecs::World& world)
 
     for (const Ecs::Entity entity : world.entities()) 
     {
-        const Ecs::TransformComponent *transform = 
-            world.getTransform(entity);
-
-        const Ecs::MeshComponent *mesh = 
-            world.getMesh(entity);
-
-        const Ecs::RenderableComponent *renderable = 
-            world.getRenderable(entity);
-
-        const Ecs::MaterialComponent *material = 
-            world.getMaterial(entity);
+        const Ecs::TransformComponent *transform = world.getTransform(entity);
+        const Ecs::MeshComponent *mesh = world.getMesh(entity);
+        const Ecs::RenderableComponent *renderable = world.getRenderable(entity);
+        const Ecs::MaterialComponent *material = world.getMaterial(entity);
 
         if (!transform 
                 || !mesh 
@@ -324,22 +312,15 @@ void Rendering::composeLighting (
                 const Math::Vec3& camera_position
         ) 
 {
-    const Math::Vec3 clear_color = {
-        0.055f, 0.070f, 0.105f
-    };
-
+    const Math::Vec3 clear_color = {0.055f, 0.070f, 0.105f};
     std::vector<ActiveLight> lights;
 
     for (const Ecs::Entity entity : world.entities()) 
     {
-        const Ecs::TransformComponent *transform = 
-            world.getTransform(entity);
+        const Ecs::TransformComponent *transform = world.getTransform(entity);
+        const Ecs::LightComponent *light = world.getLight(entity);
 
-        const Ecs::LightComponent *light = 
-            world.getLight(entity);
-
-        if (!transform 
-                || !light) 
+        if (!transform || !light) 
         {
             continue;
         }
@@ -351,9 +332,7 @@ void Rendering::composeLighting (
     {
         for (int x = 0; x < width_; ++x) 
         {
-            const GBuffer::Pixel& pixel = 
-                gbuffer_.pixel(x, y);
-
+            const GBuffer::Pixel& pixel = gbuffer_.pixel(x, y);
             Math::Vec3 color = clear_color;
 
             if (pixel.valid) 
@@ -511,29 +490,22 @@ void Rendering::present ()
 
 void Rendering::render (const Ecs::World& world) 
 {
-    const Ecs::Entity camera_entity = 
-        world.activeCamera();
+    const Ecs::Entity camera_entity = world.activeCamera();
 
     if (camera_entity == Ecs::INVALID_ENTITY) 
     {
         return;
     }
 
-    const Ecs::TransformComponent *camera_transform = 
-        world.getTransform(camera_entity);
+    const Ecs::TransformComponent *camera_transform = world.getTransform(camera_entity);
+    const Ecs::CameraComponent *camera = world.getCamera(camera_entity);
 
-    const Ecs::CameraComponent *camera = 
-        world.getCamera(camera_entity);
-
-    if (!camera_transform 
-            || !camera) 
+    if (!camera_transform || !camera) 
     {
         return;
     }
 
-    const Math::Vec3 camera_position =
-        toVec3(camera_transform->position);
-
+    const Math::Vec3 camera_position = toVec3(camera_transform->position);
     applyCamera(*camera_transform, *camera);
 
     if (test_name_.empty())
@@ -550,8 +522,7 @@ void Rendering::render (const Ecs::World& world)
             frame_state_
         );
 
-    const Lumen::ChangeSet changes =
-        change_tracker_.update(world);
+    const Lumen::ChangeSet changes = change_tracker_.update(world);
 
     if (changes.geometry_changed
             || changes.camera_changed) 
@@ -671,11 +642,13 @@ void Rendering::render (const Ecs::World& world)
 
 void Rendering::shutdown () 
 {
+    gpu_lumen_.shutdown();
     gpu_direct_lighting_.shutdown();
     gpu_gbuffer_.shutdown();
     presenter_.shutdown();
     gpu_pipeline_enabled_ = false;
     gpu_error_reported_ = false;
+    gpu_frame_index_ = 0;
 
     direct_color_.clear();
     indirect_color_.clear();
