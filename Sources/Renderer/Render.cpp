@@ -43,7 +43,20 @@ bool Rendering::init ()
 
     glClearColor(0.055f, 0.070f, 0.105f, 1.0f);
 
-#if !defined(__APPLE__)
+    /* RendererCheck deliberately owns the old deterministic CPU reference
+     * pipeline. It must not depend on GPU shader compilation or GL43 passes. */
+    if (!test_name_.empty())
+    {
+        return true;
+    }
+
+#if defined(__APPLE__)
+    std::fprintf(
+            stderr,
+            "Interactive GPU renderer requires the OpenGL 4.3 lwcgl path\n"
+        );
+    return false;
+#else
     std::string error;
 
     if (!presenter_.init(&error))
@@ -76,10 +89,17 @@ bool Rendering::init ()
         return false;
     }
 
-    gpu_pipeline_enabled_ = true;
-#endif
+    if (!gpu_profiler_.init())
+    {
+        std::fprintf(
+                stderr,
+                "GPU timer queries unavailable; renderer will continue without pass timings\n"
+            );
+    }
 
+    gpu_pipeline_enabled_ = true;
     return true;
+#endif
 }
 
 void Rendering::resize (int width, int height) 
@@ -239,37 +259,91 @@ bool Rendering::renderGpuFrame (
     }
 
     std::string error;
+    gpu_profiler_.beginFrame(gpu_frame_index_);
 
-    if (!gpu_gbuffer_.render(world, view_, projection_, &error)
-            || !gpu_direct_lighting_.render(
-                    world,
-                    gpu_gbuffer_,
-                    camera_position,
-                    &error
-                )
-            || !gpu_lumen_.render(
-                    world,
-                    gpu_gbuffer_,
-                    gpu_direct_lighting_,
-                    view_,
-                    projection_,
-                    camera_position,
-                    gpu_frame_index_,
-                    &error
-                )
-            || !presenter_.presentTexture(
-                    gpu_lumen_.finalTexture(),
-                    &error
-                ))
+    gpu_profiler_.begin(Gpu::Profiler::Pass::Geometry);
+    const bool geometry_ok = gpu_gbuffer_.render(
+            world,
+            view_,
+            projection_,
+            &error
+        );
+    gpu_profiler_.end(Gpu::Profiler::Pass::Geometry);
+
+    if (!geometry_ok)
     {
+        gpu_profiler_.endFrame();
         if (!gpu_error_reported_)
         {
-            std::fprintf(stderr, "GPU frame pipeline failed: %s\n", error.c_str());
+            std::fprintf(stderr, "GPU GBuffer frame failed: %s\n", error.c_str());
             gpu_error_reported_ = true;
         }
         return false;
     }
 
+    gpu_profiler_.begin(Gpu::Profiler::Pass::DirectLighting);
+    const bool direct_ok = gpu_direct_lighting_.render(
+            world,
+            gpu_gbuffer_,
+            camera_position,
+            &error
+        );
+    gpu_profiler_.end(Gpu::Profiler::Pass::DirectLighting);
+
+    if (!direct_ok)
+    {
+        gpu_profiler_.endFrame();
+        if (!gpu_error_reported_)
+        {
+            std::fprintf(stderr, "GPU direct-light frame failed: %s\n", error.c_str());
+            gpu_error_reported_ = true;
+        }
+        return false;
+    }
+
+    gpu_profiler_.begin(Gpu::Profiler::Pass::Lumen);
+    const bool lumen_ok = gpu_lumen_.render(
+            world,
+            gpu_gbuffer_,
+            gpu_direct_lighting_,
+            view_,
+            projection_,
+            camera_position,
+            gpu_frame_index_,
+            &error
+        );
+    gpu_profiler_.end(Gpu::Profiler::Pass::Lumen);
+
+    if (!lumen_ok)
+    {
+        gpu_profiler_.endFrame();
+        if (!gpu_error_reported_)
+        {
+            std::fprintf(stderr, "GPU Lumen frame failed: %s\n", error.c_str());
+            gpu_error_reported_ = true;
+        }
+        return false;
+    }
+
+    gpu_profiler_.begin(Gpu::Profiler::Pass::Present);
+    const bool present_ok = presenter_.presentTexture(
+            gpu_lumen_.finalTexture(),
+            &error
+        );
+    gpu_profiler_.end(Gpu::Profiler::Pass::Present);
+    gpu_profiler_.endFrame();
+
+    if (!present_ok)
+    {
+        if (!gpu_error_reported_)
+        {
+            std::fprintf(stderr, "GPU presentation failed: %s\n", error.c_str());
+            gpu_error_reported_ = true;
+        }
+        return false;
+    }
+
+    gpu_profiler_.printIfDue(gpu_frame_index_);
     ++gpu_frame_index_;
     gpu_error_reported_ = false;
     return true;
@@ -642,6 +716,7 @@ void Rendering::render (const Ecs::World& world)
 
 void Rendering::shutdown () 
 {
+    gpu_profiler_.shutdown();
     gpu_lumen_.shutdown();
     gpu_direct_lighting_.shutdown();
     gpu_gbuffer_.shutdown();
