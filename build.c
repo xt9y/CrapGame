@@ -23,31 +23,21 @@ static void configure_platform(C_Target *target) {
 }
 
 static void configure_app(C_Target *target,
-                          C_Dependency *lwcgl,
                           C_Dependency *renderercheck) {
     c_warnings_strict(target);
-    c_use(target, lwcgl);
     c_use(target, renderercheck);
+    // Use system-installed lwcgl from `make && sudo make install` in the lwcgl repo
+    // (expected at /usr/local/lib/liblwcgl.a and /usr/local/include/lwcgl/lwcgl.h).
+    // /usr/local/include and /usr/local/lib are default search paths on most
+    // systems, so only the -llwcgl link is required; cbuild emits -L flags
+    // after -l flags, so we rely on the default search path instead of
+    // adding an explicit -L that would be ordered incorrectly.
+    c_include(target, "/usr/local/include");
+    c_link_system(target, "lwcgl");
     configure_platform(target);
 }
 
 void build(C_Build *b) {
-    C_Dependency *lwcgl = c_git(
-        b,
-        "lwcgl",
-        "https://github.com/xt9y/lwcgl.git",
-        "v2.9.3"
-    );
-    c_dep_source(lwcgl);
-    c_dep_include(lwcgl, "include");
-    c_dep_sources(lwcgl, "src/*.c");
-    c_dep_flag(lwcgl, "-D_POSIX_C_SOURCE=200809L");
-#ifdef __APPLE__
-    c_dep_flag(lwcgl, "-DGL_SILENCE_DEPRECATION");
-    c_dep_flag(lwcgl, "-I/opt/homebrew/include");
-    c_dep_flag(lwcgl, "-I/usr/local/include");
-#endif
-
     C_Dependency *renderercheck = c_git(
         b,
         "renderercheck",
@@ -57,14 +47,11 @@ void build(C_Build *b) {
     c_dep_header_only(renderercheck);
     c_dep_include(renderercheck, "include");
 
-    C_Target *c_app = c_executable(b, "crapgame-c");
-    c_sources(c_app, "main.c");
-    c_standard(c_app, C_STANDARD_C11);
-    configure_app(c_app, lwcgl, renderercheck);
-    c_default_target(b, c_app);
-
-    C_Target *cpp_app = c_executable(b, "crapgame-cpp");
-    c_sources(cpp_app, "main.cpp");
-    c_flag(cpp_app, "-std=c++17");
-    configure_app(cpp_app, lwcgl, renderercheck);
+    C_Target *app = c_executable(b, "crapgame");
+    c_sources(app, "main.cpp");
+    c_flag(app, "-std=c++17");
+    configure_app(app, renderercheck);
+    // c uses $(CC) for linking, so an explicit stdlib link is needed for C++.
+    c_link_system(app, "stdc++");
+    c_default_target(b, app);
 }

@@ -1,6 +1,6 @@
 [project]
 name = "crapgame-lwcgl-v2"
-command = "sh scripts/rendercheck-run.sh"
+command = "./build/debug/crapgame"
 cwd = "."
 baseline_dir = "rendercheck/baselines"
 headless = "auto"
@@ -11,16 +11,7 @@ timeout_ms = 10000.0
 vulkan = false
 
 [[test]]
-name = "c"
-args = "c"
-capture = true
-warmup_frames = 2
-pixel_threshold = 1
-max_changed_percent = 0.01
-
-[[test]]
 name = "cpp"
-args = "cpp"
 capture = true
 warmup_frames = 2
 pixel_threshold = 1

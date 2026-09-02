@@ -1,15 +1,14 @@
 # CrapGame
 
-Minimal `lwcgl` **v2.9.3** starter showing the same LWJGL-2-style C ABI from both C and C++.
+Minimal `lwcgl` **v2.9.3** C++ starter showing the LWJGL-2-style C ABI from C++.
 
 ## Files
 
-- `main.c` — C11 example
-- `main.cpp` — C++17 example using the same `<lwcgl/lwcgl.h>` C ABI
-- `build.c` — C-BuildSystem configuration
-- `rendercheck.toml` — RendererCheck tests for both executables
+- `main.cpp` — C++17 example using `<lwcgl/lwcgl.h>` C ABI (`new DisplayMode(...)` syntax)
+- `build.c` — C-BuildSystem configuration (single `crapgame` target)
+- `rendercheck.toml` — RendererCheck test for the executable
 
-Both examples create a 640x360 OpenGL 2.1 window, initialize `Display`, `Keyboard`, and `Mouse`, draw the same deterministic frame, and exit on Escape/window close.
+The example creates a 640x360 OpenGL 2.1 window, initializes `Display`, `Keyboard`, and `Mouse`, draws a deterministic frame, and exits on Escape/window close.
 
 ## Requirements
 
@@ -17,6 +16,7 @@ Install:
 
 - C-BuildSystem: https://xt9y.de/c.html
 - RendererCheck: https://xt9y.de/rendercheck.html
+- `lwcgl` **v2.9.3** installed to the system (provides `/usr/local/include/lwcgl/lwcgl.h` and `/usr/local/lib/liblwcgl.a`)
 - GLFW 3 development files
 - OpenGL development files
 - GLU development files
@@ -27,35 +27,31 @@ On Debian/Ubuntu:
 sudo apt install pkg-config libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
 ```
 
-`build.c` fetches:
+Install `lwcgl` from its checkout (e.g. `../lwcgl` or `~/Documents/lwcgl`):
 
-- `https://github.com/xt9y/lwcgl.git` at `v2.9.3`
-- `https://github.com/xt9y/RendererCheck.git` at `main`
+```sh
+cd ../lwcgl   # or wherever the lwcgl checkout lives
+make
+sudo make install   # installs to /usr/local by default (PREFIX=/usr/local)
+```
 
-Because `lwcgl` is private, your normal Git credentials must be able to clone it over HTTPS.
+`build.c` links against the system-installed `lwcgl` (`-llwcgl`). It still fetches:
+
+- `https://github.com/xt9y/RendererCheck.git` at `main` (header-only)
 
 ## Build
 
-Build the C example:
-
 ```sh
-c build crapgame-c
+c build
 ```
 
-Build the C++ example:
-
-```sh
-c build crapgame-cpp
-```
-
-C-BuildSystem writes them to:
+C-BuildSystem writes the binary to:
 
 ```text
-build/debug/crapgame-c
-build/debug/crapgame-cpp
+build/debug/crapgame
 ```
 
-The C target is the default, so this also works:
+Shorthand:
 
 ```sh
 c build
@@ -64,59 +60,41 @@ c run
 
 ## Run
 
-C:
-
 ```sh
-./build/debug/crapgame-c
-```
-
-C++:
-
-```sh
-./build/debug/crapgame-cpp
+./build/debug/crapgame
 ```
 
 ## RendererCheck
 
-Build both binaries first:
+Build the binary first:
 
 ```sh
-c build crapgame-c
-c build crapgame-cpp
+c build
 ```
 
-The first time, create the two visual baselines:
+The first time, create the visual baseline:
 
 ```sh
-renderercheck approve c
 renderercheck approve cpp
 ```
 
-Then run both regression tests:
+Then run the regression test:
 
 ```sh
 renderercheck run
 ```
 
-Or run only one:
+Or explicitly:
 
 ```sh
-renderercheck run c
 renderercheck run cpp
 ```
 
 Approved images are stored under `rendercheck/baselines/`. Commit those baselines after approval if you want future renders compared against them.
 
-## C vs C++
+## C++ DisplayMode syntax
 
-The C version uses the native C-compatible `DisplayMode(...)` compound-literal form:
-
-```c
-DisplayMode mode = DisplayMode(640, 360);
-Display.setDisplayMode(&mode);
-```
-
-The C++ version demonstrates the LWJGL-2-shaped syntax supported by the same header:
+The C++ version demonstrates the LWJGL-2-shaped syntax supported by the same C header:
 
 ```cpp
 DisplayMode *mode = new DisplayMode(640, 360);
