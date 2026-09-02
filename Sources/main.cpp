@@ -1,11 +1,16 @@
 #include "Renderer/Render.hpp"
+#include "Renderer/Test/TestScene.hpp"
 #include "Ecs/Ecs.hpp"
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 870
+
+#define TEST_WIDTH 320
+#define TEST_HEIGHT 218
 
 static inline void ERROR (const char *operation) 
 {
@@ -18,97 +23,43 @@ static inline void ERROR (const char *operation)
         );
 }
 
-static Ecs::Entity createScene (Ecs::World& world) 
-{
-    const Ecs::Entity cube   = world.createEntity(),
-                      camera = world.createEntity(),
-                      ground = world.createEntity(),
-                      light  = world.createEntity();
-
-    { // Camera
-        world.addTransform(camera, {
-            {0.0f, 3.0f, 8.0f},
-            {-12.0f, 0.0f, 0.0f},
-            {1.0f, 1.0f, 1.0f},
-        });
-
-        world.addCamera(camera, {
-            60.0f, 0.1f, 100.0f, true
-        });
-    }
-
-    { // Cube
-        world.addTransform(cube, {
-            {0.0f, 1.45f, 0.0f},
-            {-35.2643897f, 0.0f, 45.0f},
-            {1.0f, 1.0f, 1.0f},
-        });
-
-        world.addMesh(cube, {Ecs::MeshType::Cube});
-
-        world.addRenderable(cube, {true});
-
-        world.addMaterial(cube, {
-            {1.0f, 1.0f, 1.0f},
-            {0.0f, 0.0f, 0.0f},
-            0.0f,
-            0.35f,
-            0.0f,
-        });
-    }
-
-    { // Ground
-        world.addTransform(ground, {
-            {0.0f, 0.0f, 0.0f},
-            {0.0f, 0.0f, 0.0f},
-            {14.0f, 1.0f, 14.0f},
-        });
-
-        world.addMesh(ground, {Ecs::MeshType::Plane});
-
-        world.addRenderable(ground, {true});
-
-        world.addMaterial(ground, {
-            {0.28f, 0.30f, 0.34f},
-            {0.0f, 0.0f, 0.0f},
-            0.0f,
-            0.80f,
-            0.0f,
-        });
-    }
-
-    { // Light
-        world.addTransform(light, {
-            {3.0f, 5.0f, 2.0f},
-            {-45.0f, -135.0f, 0.0f},
-            {1.0f, 1.0f, 1.0f},
-        });
-
-        world.addLight(light, {
-            Ecs::LightType::Point,
-            {1.0f, 1.0f, 1.0f},
-            40.0f,
-            15.0f,
-            20.0f,
-            35.0f,
-            1.0f,
-            true,
-        });
-    }
-
-    return cube;
-}
-
 int main () 
 {
     const bool renderercheck_mode = 
         rendercheck_capture_requested() != 0;
 
+    const char *test_name = renderercheck_mode
+        ? std::getenv("RENDERCHECK_TEST")
+        : nullptr;
+
+    if (renderercheck_mode
+            && (!test_name
+                || !*test_name
+                || !Renderer::Test::knownTest(test_name)))
+    {
+        std::fprintf(
+                stderr,
+                "Unknown RendererCheck test: %s\n",
+                test_name
+                ? test_name
+                : "(null)"
+            );
+
+        return 3;
+    }
+
+    const int window_width = renderercheck_mode
+                ? TEST_WIDTH
+                : WINDOW_WIDTH,
+              window_height = renderercheck_mode
+                ? TEST_HEIGHT
+                : WINDOW_HEIGHT;
+
     std::uint64_t frame = 0;
     int exit_code = 0;
 
     Display.setDisplayMode(
-            new DisplayMode(WINDOW_WIDTH, WINDOW_HEIGHT)
+            new DisplayMode(window_width, window_height)
         );
 
     Display.create();
@@ -116,12 +67,53 @@ int main ()
     Mouse.create();
 
     Ecs::World world;
+    Renderer::Test::SceneState scene_state;
 
-    const Ecs::Entity cube = 
-        createScene(world);
+    if (!Renderer::Test::buildScene(
+            test_name,
+            &world,
+            &scene_state
+        ))
+    {
+        std::fprintf(
+                stderr,
+                "Failed to create renderer test scene\n"
+            );
+
+        Mouse.destroy();
+        Keyboard.destroy();
+        Display.destroy();
+        return 3;
+    }
 
     Renderer::Rendering renderer;
-    renderer.init();
+
+    if (!renderer.init())
+    {
+        ERROR("renderer.init");
+
+        Mouse.destroy();
+        Keyboard.destroy();
+        Display.destroy();
+        return 2;
+    }
+
+    if (!renderer.setTestName(test_name))
+    {
+        std::fprintf(
+                stderr,
+                "Renderer has no output mode for test: %s\n",
+                test_name
+                ? test_name
+                : "(null)"
+            );
+
+        renderer.shutdown();
+        Mouse.destroy();
+        Keyboard.destroy();
+        Display.destroy();
+        return 3;
+    }
 
     while (!Display.isCloseRequested() 
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
@@ -134,7 +126,7 @@ int main ()
         renderer.render(world);
         glFinish();
 
-        if (captureFrame(frame) != 0) 
+        if (renderer.captureFrame(frame) != 0) 
         {
             std::fprintf(
                     stderr, 
@@ -147,18 +139,11 @@ int main ()
 
         Display.update();
 
-        Ecs::TransformComponent *cube_transform = 
-            world.getTransform(cube);
-
-        if (cube_transform) 
-        {
-            cube_transform->rotation.y += 0.65f;
-            
-            if (cube_transform->rotation.y >= 360.0f) 
-            {
-                cube_transform->rotation.y -= 360.0f;
-            }
-        }
+        Renderer::Test::updateScene(
+                &world,
+                &scene_state,
+                frame
+            );
 
         if (renderercheck_mode 
                 && rendercheck_frame_is_last(frame)) 

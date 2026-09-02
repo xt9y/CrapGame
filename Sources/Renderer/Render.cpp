@@ -439,14 +439,26 @@ void Rendering::render (const Ecs::World& world)
             &reflection_color_
         );
 
-    composeFinal();
+    if (render_mode_ == RenderMode::Final)
+    {
+        composeFinal();
 
-    Temporal::resolveTaa(
-            gbuffer_,
-            history_,
-            frame_color_,
-            &resolved_color_
-        );
+        Temporal::resolveTaa(
+                gbuffer_,
+                history_,
+                frame_color_,
+                &resolved_color_
+            );
+    }
+    else
+    {
+        composeDebug(
+                world,
+                camera_position
+            );
+
+        resolved_color_ = frame_color_;
+    }
 
     writeColorBuffer(resolved_color_);
     present();

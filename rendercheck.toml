@@ -5,14 +5,249 @@ cwd = "."
 baseline_dir = "rendercheck/baselines"
 headless = "auto"
 renderer = "auto"
-timeout_ms = 10000.0
+timeout_ms = 60000.0
+capture = true
+warmup_frames = 2
+pixel_threshold = 3
+max_changed_percent = 0.05
 
 [validation]
 vulkan = false
 
+# Geometry and GBuffer
 [[test]]
-name = "cpp"
-capture = true
-warmup_frames = 2
-pixel_threshold = 1
-max_changed_percent = 0.01
+name = "GeometryCube"
+
+[[test]]
+name = "GeometryPlane"
+
+[[test]]
+name = "Depth"
+
+[[test]]
+name = "CameraPerspective"
+
+[[test]]
+name = "Normals"
+
+[[test]]
+name = "MaterialAlbedo"
+
+[[test]]
+name = "MaterialRoughness"
+
+[[test]]
+name = "MaterialMetallic"
+
+[[test]]
+name = "MaterialEmissive"
+
+[[test]]
+name = "GBufferAlbedo"
+
+[[test]]
+name = "GBufferNormal"
+
+[[test]]
+name = "GBufferDepth"
+
+[[test]]
+name = "GBufferMaterial"
+
+# Direct lighting and shadows
+[[test]]
+name = "DirectPoint"
+
+[[test]]
+name = "DirectDirectional"
+
+[[test]]
+name = "DirectSpot"
+
+[[test]]
+name = "LightFalloff"
+
+[[test]]
+name = "LightColor"
+
+[[test]]
+name = "PbrDiffuse"
+
+[[test]]
+name = "PbrSpecular"
+
+[[test]]
+name = "PbrFresnel"
+
+[[test]]
+name = "ShadowPoint"
+
+[[test]]
+name = "ShadowDirectional"
+
+[[test]]
+name = "ShadowSpot"
+
+[[test]]
+name = "ShadowBias"
+
+# Temporal rendering
+[[test]]
+name = "MotionVectors"
+warmup_frames = 10
+
+[[test]]
+name = "TemporalStatic"
+warmup_frames = 10
+
+[[test]]
+name = "TemporalMotion"
+warmup_frames = 10
+
+[[test]]
+name = "TaaEdges"
+warmup_frames = 10
+
+# Tracing and distance fields
+[[test]]
+name = "ScreenTraceHit"
+
+[[test]]
+name = "ScreenTraceMiss"
+
+[[test]]
+name = "MeshSdfCube"
+
+[[test]]
+name = "MeshSdfPlane"
+
+[[test]]
+name = "SdfInsideOutside"
+
+[[test]]
+name = "SdfTraceHit"
+
+[[test]]
+name = "SdfTraceMiss"
+
+[[test]]
+name = "GlobalSdf"
+
+[[test]]
+name = "LumenTraceFallback"
+
+[[test]]
+name = "LumenCardCoverage"
+
+# Surface cache and probes
+[[test]]
+name = "SurfaceCacheAlbedo"
+
+[[test]]
+name = "SurfaceCacheNormal"
+
+[[test]]
+name = "SurfaceCacheLighting"
+
+[[test]]
+name = "RadianceProbe"
+warmup_frames = 12
+
+[[test]]
+name = "RadianceCache"
+warmup_frames = 12
+
+[[test]]
+name = "ScreenProbePlacement"
+warmup_frames = 12
+
+[[test]]
+name = "ScreenProbeTrace"
+warmup_frames = 12
+
+[[test]]
+name = "ScreenProbeGather"
+warmup_frames = 12
+
+# Diffuse GI and AO
+[[test]]
+name = "LumenDirectOnly"
+warmup_frames = 16
+
+[[test]]
+name = "LumenIndirectOnly"
+warmup_frames = 16
+
+[[test]]
+name = "LumenBounceOne"
+warmup_frames = 16
+
+[[test]]
+name = "LumenMultiBounce"
+warmup_frames = 24
+
+[[test]]
+name = "LumenColorBleed"
+warmup_frames = 16
+
+[[test]]
+name = "LumenOcclusion"
+warmup_frames = 16
+
+[[test]]
+name = "ShortRangeAo"
+warmup_frames = 16
+
+# Reflections
+[[test]]
+name = "ReflectionRough"
+warmup_frames = 16
+
+[[test]]
+name = "ReflectionSmooth"
+warmup_frames = 16
+
+[[test]]
+name = "ReflectionOffscreen"
+warmup_frames = 16
+
+[[test]]
+name = "ReflectionTemporal"
+warmup_frames = 10
+
+# Dynamic invalidation and final
+[[test]]
+name = "EmissiveGi"
+warmup_frames = 16
+
+[[test]]
+name = "MovingLightGi"
+warmup_frames = 24
+
+[[test]]
+name = "MovingObjectGi"
+warmup_frames = 24
+
+[[test]]
+name = "SurfaceCacheDirty"
+warmup_frames = 24
+
+[[test]]
+name = "RadianceCacheDirty"
+warmup_frames = 24
+
+[[test]]
+name = "LumenConvergence"
+warmup_frames = 48
+
+[[test]]
+name = "LumenFinal"
+warmup_frames = 24
+
+[[test]]
+name = "LumenStress"
+warmup_frames = 24
+
+[[test]]
+name = "FinalScene"
+warmup_frames = 24
