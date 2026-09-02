@@ -66,12 +66,13 @@ int main ()
         );
 
 #if !defined(__APPLE__)
-    /*
-     * LWJGL 2.9.3 exposes GL43. Request a compatibility context so the
-     * existing GL11 path remains valid while heavy passes migrate to the GPU.
-     */
-    lwcglSetContextVersion(4, 3);
-    lwcglSetContextProfile(LWCGL_CONTEXT_COMPATIBILITY_PROFILE);
+    if (!renderercheck_mode)
+    {
+        /* LWJGL 2.9.3 exposes GL43. Interactive rendering requires it;
+         * RendererCheck intentionally stays on the legacy CPU reference. */
+        lwcglSetContextVersion(4, 3);
+        lwcglSetContextProfile(LWCGL_CONTEXT_COMPATIBILITY_PROFILE);
+    }
 #endif
 
     if (Display.create() != 0)
@@ -81,7 +82,7 @@ int main ()
     }
 
 #if !defined(__APPLE__)
-    if (!lwcglModernGLAvailable())
+    if (!renderercheck_mode && !lwcglModernGLAvailable())
     {
         std::fprintf(
                 stderr,
