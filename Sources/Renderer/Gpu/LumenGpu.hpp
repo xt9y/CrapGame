@@ -2,7 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_LUMENGPU_HPP
 
 #include "Ecs/Ecs.hpp"
-#include "Renderer/Gpu/BvhShaders.hpp"
+#include "Renderer/Gpu/BvhShadersV2.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
@@ -91,8 +91,7 @@ public:
                 );
             if (use_bvh)
             {
-                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, direct.bvhNodeBuffer());
-                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, direct.bvhIndexBuffer());
+                GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, direct.bvhNodeBuffer());
             }
         }
 
@@ -170,21 +169,11 @@ private:
 
     bool ensureBvhTraceShader (bool activate, std::string *error)
     {
-        if (bvh_trace_active_)
-        {
-            return true;
-        }
+        if (bvh_trace_active_) return true;
+        if (bvh_shader_validated_ && !activate) return true;
 
-        if (bvh_shader_validated_ && !activate)
-        {
-            return true;
-        }
-
-        GLuint candidate = createComputeProgram(LUMEN_TRACE_BVH_COMPUTE, error);
-        if (candidate == 0)
-        {
-            return false;
-        }
+        GLuint candidate = createComputeProgram(LUMEN_TRACE_BVH_V2_COMPUTE, error);
+        if (candidate == 0) return false;
 
         GLint view_projection = -1, camera = -1, primitive_count = -1,
               node_count = -1, frame = -1, history = -1;
