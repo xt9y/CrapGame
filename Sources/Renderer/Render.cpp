@@ -381,10 +381,17 @@ void Rendering::render (const Ecs::World& world)
             );
     }
 
+    const Lumen::FrameBudget frame_budget =
+        Lumen::budgetForFrame(
+                width_,
+                height_,
+                frame_state_.frameIndex()
+            );
+
     Lumen::updateRadiosity(
             &surface_cache_,
             radiance_cache_,
-            0.35f
+            frame_budget.radiosity_feedback
         );
 
     radiance_cache_.update(
@@ -395,7 +402,7 @@ void Rendering::render (const Ecs::World& world)
             surface_cache_,
             camera_position,
             frame_state_.frameIndex(),
-            12u
+            frame_budget.radiance_probes_per_frame
         );
 
     composeLighting(world, camera_position);
@@ -408,8 +415,8 @@ void Rendering::render (const Ecs::World& world)
             surface_cache_,
             radiance_cache_,
             frame_state_.frameIndex(),
-            16,
-            8,
+            frame_budget.screen_probe_spacing,
+            frame_budget.screen_probe_rays,
             &indirect_color_
         );
 
