@@ -17,17 +17,17 @@ constexpr const char *LUMEN_TRACE_COMPUTE = R"GLSL(
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(rgba16f, binding = 0) readonly uniform image2D gPositionDepth;
-layout(rgba16f, binding = 1) readonly uniform image2D gNormalRoughness;
-layout(rgba16f, binding = 2) readonly uniform image2D gAlbedoMetallic;
-layout(rgba16f, binding = 3) readonly uniform image2D gEmissive;
-layout(rgba16f, binding = 4) readonly uniform image2D gDirect;
-layout(rgba16f, binding = 5) writeonly uniform image2D oIndirect;
-layout(rgba16f, binding = 6) writeonly uniform image2D oReflection;
-layout(rgba16f, binding = 7) readonly uniform image2D gPreviousIndirect;
-layout(rgba16f, binding = 8) readonly uniform image2D gPreviousReflection;
-layout(rgba16f, binding = 9) readonly uniform image2D gPreviousPosition;
-layout(rgba16f, binding = 10) writeonly uniform image2D oPositionHistory;
+layout(binding = 0) uniform sampler2D sPositionDepth;
+layout(binding = 1) uniform sampler2D sNormalRoughness;
+layout(binding = 2) uniform sampler2D sAlbedoMetallic;
+layout(binding = 3) uniform sampler2D sDirect;
+layout(binding = 4) uniform sampler2D sPreviousIndirect;
+layout(binding = 5) uniform sampler2D sPreviousReflection;
+layout(binding = 6) uniform sampler2D sPreviousPosition;
+
+layout(rgba16f, binding = 0) writeonly uniform image2D oIndirect;
+layout(rgba16f, binding = 1) writeonly uniform image2D oReflection;
+layout(rgba16f, binding = 2) writeonly uniform image2D oPositionHistory;
 
 struct PrimitiveData
 {
@@ -323,19 +323,19 @@ vec3 screenRadiance (vec3 position, int primitiveIndex)
         return primitiveFallbackRadiance(primitiveIndex);
     }
 
-    ivec2 dimensions = imageSize(gPositionDepth);
+    ivec2 dimensions = textureSize(sPositionDepth, 0);
     ivec2 samplePixel = clamp(
         ivec2(uv * vec2(dimensions)),
         ivec2(0),
         dimensions - ivec2(1)
     );
 
-    vec4 samplePosition = imageLoad(gPositionDepth, samplePixel);
+    vec4 samplePosition = texelFetch(sPositionDepth, samplePixel, 0);
 
     if (samplePosition.w > 0.0
             && distance(samplePosition.xyz, position) < 0.35)
     {
-        return imageLoad(gDirect, samplePixel).xyz;
+        return texelFetch(sDirect, samplePixel, 0).xyz;
     }
 
     return primitiveFallbackRadiance(primitiveIndex);
@@ -351,10 +351,10 @@ void main ()
         return;
     }
 
-    ivec2 fullDimensions = imageSize(gPositionDepth);
+    ivec2 fullDimensions = textureSize(sPositionDepth, 0);
     ivec2 pixel = min(tracePixel * 2 + ivec2(1), fullDimensions - ivec2(1));
 
-    vec4 positionDepth = imageLoad(gPositionDepth, pixel);
+    vec4 positionDepth = texelFetch(sPositionDepth, pixel, 0);
 
     if (positionDepth.w <= 0.0)
     {
@@ -364,8 +364,8 @@ void main ()
         return;
     }
 
-    vec4 normalRoughness = imageLoad(gNormalRoughness, pixel);
-    vec4 albedoMetallic = imageLoad(gAlbedoMetallic, pixel);
+    vec4 normalRoughness = texelFetch(sNormalRoughness, pixel, 0);
+    vec4 albedoMetallic = texelFetch(sAlbedoMetallic, pixel, 0);
 
     vec3 position = positionDepth.xyz;
     vec3 normal = normalize(normalRoughness.xyz);
@@ -432,13 +432,13 @@ void main ()
 
     if (uHistoryValid != 0)
     {
-        vec4 previousPosition = imageLoad(gPreviousPosition, tracePixel);
+        vec4 previousPosition = texelFetch(sPreviousPosition, tracePixel, 0);
 
         if (previousPosition.w > 0.0
                 && distance(previousPosition.xyz, position) < 0.18)
         {
-            vec3 previousIndirect = imageLoad(gPreviousIndirect, tracePixel).xyz;
-            vec3 previousReflection = imageLoad(gPreviousReflection, tracePixel).xyz;
+            vec3 previousIndirect = texelFetch(sPreviousIndirect, tracePixel, 0).xyz;
+            vec3 previousReflection = texelFetch(sPreviousReflection, tracePixel, 0).xyz;
 
             indirect = mix(indirect, previousIndirect, 0.84);
             reflection = mix(reflection, previousReflection, 0.72);
@@ -456,13 +456,13 @@ constexpr const char *LUMEN_COMPOSITE_COMPUTE = R"GLSL(
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(rgba16f, binding = 0) readonly uniform image2D gPositionDepth;
-layout(rgba16f, binding = 1) readonly uniform image2D gNormalRoughness;
-layout(rgba16f, binding = 2) readonly uniform image2D gAlbedoMetallic;
-layout(rgba16f, binding = 3) readonly uniform image2D gDirect;
-layout(rgba16f, binding = 4) readonly uniform image2D gIndirect;
-layout(rgba16f, binding = 5) readonly uniform image2D gReflection;
-layout(rgba16f, binding = 6) writeonly uniform image2D oFinal;
+layout(binding = 0) uniform sampler2D sPositionDepth;
+layout(binding = 1) uniform sampler2D sNormalRoughness;
+layout(binding = 2) uniform sampler2D sDirect;
+layout(binding = 3) uniform sampler2D sIndirect;
+layout(binding = 4) uniform sampler2D sReflection;
+
+layout(rgba16f, binding = 0) writeonly uniform image2D oFinal;
 
 vec3 toneMap (vec3 colorValue)
 {
@@ -473,7 +473,7 @@ vec3 toneMap (vec3 colorValue)
 
 float shortRangeAo (ivec2 pixel, vec3 position, vec3 normal)
 {
-    ivec2 dimensions = imageSize(gPositionDepth);
+    ivec2 dimensions = textureSize(sPositionDepth, 0);
     const ivec2 offsets[8] = ivec2[8](
         ivec2( 2,  0),
         ivec2(-2,  0),
@@ -490,7 +490,7 @@ float shortRangeAo (ivec2 pixel, vec3 position, vec3 normal)
     for (int index = 0; index < 8; ++index)
     {
         ivec2 samplePixel = clamp(pixel + offsets[index], ivec2(0), dimensions - ivec2(1));
-        vec4 samplePosition = imageLoad(gPositionDepth, samplePixel);
+        vec4 samplePosition = texelFetch(sPositionDepth, samplePixel, 0);
 
         if (samplePosition.w <= 0.0)
         {
@@ -515,15 +515,15 @@ float shortRangeAo (ivec2 pixel, vec3 position, vec3 normal)
 void main ()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 dimensions = imageSize(gPositionDepth);
+    ivec2 dimensions = textureSize(sPositionDepth, 0);
 
     if (pixel.x >= dimensions.x || pixel.y >= dimensions.y)
     {
         return;
     }
 
-    vec4 positionDepth = imageLoad(gPositionDepth, pixel);
-    vec3 direct = imageLoad(gDirect, pixel).xyz;
+    vec4 positionDepth = texelFetch(sPositionDepth, pixel, 0);
+    vec3 direct = texelFetch(sDirect, pixel, 0).xyz;
 
     if (positionDepth.w <= 0.0)
     {
@@ -531,12 +531,12 @@ void main ()
         return;
     }
 
-    vec3 normal = normalize(imageLoad(gNormalRoughness, pixel).xyz);
-    ivec2 halfDimensions = imageSize(gIndirect);
+    vec3 normal = normalize(texelFetch(sNormalRoughness, pixel, 0).xyz);
+    ivec2 halfDimensions = textureSize(sIndirect, 0);
     ivec2 halfPixel = clamp(pixel / 2, ivec2(0), halfDimensions - ivec2(1));
 
-    vec3 indirect = imageLoad(gIndirect, halfPixel).xyz;
-    vec3 reflection = imageLoad(gReflection, halfPixel).xyz;
+    vec3 indirect = texelFetch(sIndirect, halfPixel, 0).xyz;
+    vec3 reflection = texelFetch(sReflection, halfPixel, 0).xyz;
     float ao = shortRangeAo(pixel, positionDepth.xyz, normal);
 
     vec3 finalHdr = direct + indirect * ao + reflection;
@@ -570,6 +570,22 @@ GLuint createTexture (int width, int height, GLint filter)
             nullptr
         );
     return texture;
+}
+
+void bindTextureUnit (GLuint unit, GLuint texture)
+{
+    GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
+    glBindTexture(GL_TEXTURE_2D, texture);
+}
+
+void unbindTextureUnits (GLuint count)
+{
+    for (GLuint unit = 0; unit < count; ++unit)
+    {
+        bindTextureUnit(unit, 0);
+    }
+
+    GLModern.glActiveTexture(GL_TEXTURE0);
 }
 
 void deleteTexture (GLuint *texture)
@@ -854,6 +870,14 @@ bool LumenGpu::render (
     const int read_index = history_index_;
     const int write_index = 1 - history_index_;
 
+    bindTextureUnit(0, gbuffer.positionDepthTexture());
+    bindTextureUnit(1, gbuffer.normalRoughnessTexture());
+    bindTextureUnit(2, gbuffer.albedoMetallicTexture());
+    bindTextureUnit(3, direct.directTexture());
+    bindTextureUnit(4, indirect_history_[read_index]);
+    bindTextureUnit(5, reflection_history_[read_index]);
+    bindTextureUnit(6, position_history_[read_index]);
+
     GL20.glUseProgram(trace_program_);
     GL20.glUniformMatrix4fv(
             trace_view_projection_location_,
@@ -881,18 +905,9 @@ bool LumenGpu::render (
         );
 
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, primitive_buffer_);
-
-    GL42.glBindImageTexture(0, gbuffer.positionDepthTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(1, gbuffer.normalRoughnessTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(3, gbuffer.emissiveTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(4, direct.directTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(5, indirect_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(6, reflection_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(7, indirect_history_[read_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(8, reflection_history_[read_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(9, position_history_[read_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(10, position_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(0, indirect_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(1, reflection_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(2, position_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
     GL43.glDispatchCompute(
             static_cast<GLuint>((trace_width_ + 7) / 8),
@@ -900,16 +915,19 @@ bool LumenGpu::render (
             1
         );
 
-    GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    GL42.glMemoryBarrier(
+            GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+            GL_TEXTURE_FETCH_BARRIER_BIT
+        );
+
+    bindTextureUnit(0, gbuffer.positionDepthTexture());
+    bindTextureUnit(1, gbuffer.normalRoughnessTexture());
+    bindTextureUnit(2, direct.directTexture());
+    bindTextureUnit(3, indirect_history_[write_index]);
+    bindTextureUnit(4, reflection_history_[write_index]);
 
     GL20.glUseProgram(composite_program_);
-    GL42.glBindImageTexture(0, gbuffer.positionDepthTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(1, gbuffer.normalRoughnessTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(3, direct.directTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(4, indirect_history_[write_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(5, reflection_history_[write_index], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(6, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+    GL42.glBindImageTexture(0, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
     GL43.glDispatchCompute(
             static_cast<GLuint>((width_ + 7) / 8),
@@ -917,8 +935,12 @@ bool LumenGpu::render (
             1
         );
 
-    GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+    GL42.glMemoryBarrier(
+            GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+            GL_TEXTURE_FETCH_BARRIER_BIT
+        );
     GL20.glUseProgram(0);
+    unbindTextureUnits(7);
 
     history_index_ = write_index;
     history_valid_ = true;
