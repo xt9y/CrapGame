@@ -2,6 +2,9 @@
 #include "Renderer/Test/TestScene.hpp"
 #include "Ecs/Ecs.hpp"
 
+#include <lwcgl/context.h>
+#include <lwcgl/glmodern.h>
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -62,6 +65,15 @@ int main ()
             new DisplayMode(window_width, window_height)
         );
 
+#if !defined(__APPLE__)
+    /*
+     * LWJGL 2.9.3 exposes GL43. Request a compatibility context so the
+     * existing GL11 path remains valid while heavy passes migrate to the GPU.
+     */
+    lwcglSetContextVersion(4, 3);
+    lwcglSetContextProfile(LWCGL_CONTEXT_COMPATIBILITY_PROFILE);
+#endif
+
     Display.create();
     Keyboard.create();
     Mouse.create();
@@ -115,16 +127,26 @@ int main ()
         return 3;
     }
 
+    int renderer_width = Display.getWidth(),
+        renderer_height = Display.getHeight();
+
+    renderer.resize(renderer_width, renderer_height);
+
     while (!Display.isCloseRequested() 
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
     {
-        renderer.resize(
-                Display.getWidth(), 
-                Display.getHeight()
-            );
+        const int display_width = Display.getWidth(),
+                  display_height = Display.getHeight();
+
+        if (display_width != renderer_width
+                || display_height != renderer_height)
+        {
+            renderer_width = display_width;
+            renderer_height = display_height;
+            renderer.resize(renderer_width, renderer_height);
+        }
 
         renderer.render(world);
-        glFinish();
 
         if (renderer.captureFrame(frame) != 0) 
         {
