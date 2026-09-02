@@ -51,6 +51,29 @@ static inline int capture_frame (std::uint64_t frame)
     return result < 0 ? -1 : 0;
 }
 
+
+typedef enum 
+{
+    MOB,
+    GEOMETRY,
+}
+ECS_TYPE;
+
+typedef struct 
+{
+    float c_x, 
+          c_y, 
+          c_z;
+
+    float n_x, 
+          n_y, 
+          n_z;
+
+    ECS_TYPE *type;
+}
+ECS_STATE;
+
+
 static inline void ERROR (const char *operation) 
 {
     const char *message = lwcglGetLastError();
