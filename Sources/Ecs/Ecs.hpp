@@ -60,9 +60,26 @@ struct MaterialComponent
           emissive_strength;
 };
 
+enum class LightType 
+{
+    Directional,
+    Point,
+    Spot,
+};
+
 struct LightComponent 
 {
+    LightType type;
+
     Vec3 color;
+
+    float intensity,
+          range,
+          inner_cone,
+          outer_cone,
+          indirect_intensity;
+
+    bool casts_shadows;
 };
 
 class World 

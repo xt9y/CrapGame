@@ -22,7 +22,8 @@ static Ecs::Entity createScene (Ecs::World& world)
 {
     const Ecs::Entity cube   = world.createEntity(),
                       camera = world.createEntity(),
-                      ground = world.createEntity();
+                      ground = world.createEntity(),
+                      light  = world.createEntity();
 
     { // Camera
         world.addTransform(camera, {
@@ -73,6 +74,25 @@ static Ecs::Entity createScene (Ecs::World& world)
             0.0f,
             0.80f,
             0.0f,
+        });
+    }
+
+    { // Light
+        world.addTransform(light, {
+            {3.0f, 5.0f, 2.0f},
+            {-45.0f, -135.0f, 0.0f},
+            {1.0f, 1.0f, 1.0f},
+        });
+
+        world.addLight(light, {
+            Ecs::LightType::Point,
+            {1.0f, 1.0f, 1.0f},
+            40.0f,
+            15.0f,
+            20.0f,
+            35.0f,
+            1.0f,
+            true,
         });
     }
 
