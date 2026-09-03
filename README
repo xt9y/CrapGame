@@ -1,3 +1,6 @@
 CrapGame
 
-Minimal lwcgl v2.9.3 C++ starter showing the LWJGL-2-style C ABI from C++.
+lwcgl v2.9.3 C++ implementation of the UE Lumen rendering backend.
+
+build --> c build (C-BuildSystem needed)
+check --> renderercheck run (if installed)
