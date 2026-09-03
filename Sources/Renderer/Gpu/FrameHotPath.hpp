@@ -25,6 +25,17 @@ inline bool frameCaptureRequired (bool renderercheck_mode)
     return renderercheck_mode;
 }
 
+inline bool visualRunTimingRequired (
+            bool renderercheck_mode,
+            bool performance_mode,
+            bool metrics_path_available
+    )
+{
+    return renderercheck_mode
+        && !performance_mode
+        && metrics_path_available;
+}
+
 } // namespace Gpu
 } // namespace Renderer
 
