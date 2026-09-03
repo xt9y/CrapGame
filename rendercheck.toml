@@ -28,6 +28,17 @@ command = "./build/release/crapgame"
 warmup_ms = 1000
 sample_ms = 3000
 
+# Freeze simulation long enough for the adaptive Lumen scheduler to settle at
+# its 30 Hz steady-state cadence. The lumen_* sample counts should therefore be
+# about 30 during this one-second measurement window.
+[[perf]]
+name = "StableScene"
+command = "./build/release/crapgame"
+env = "CRAPGAME_PERF_STATIC_SCENE=1"
+warmup_ms = 3200
+sample_ms = 1000
+min_samples = 20
+
 [[perf]]
 name = "BVH4-linear"
 command = "./build/release/crapgame"
