@@ -8,6 +8,7 @@
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/SurfaceFormats.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -208,11 +209,11 @@ public:
 
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, light_buffer_);
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, primitive_buffer_);
-        GL42.glBindImageTexture(0, gbuffer.positionDepthTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-        GL42.glBindImageTexture(1, gbuffer.normalRoughnessTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-        GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-        GL42.glBindImageTexture(3, gbuffer.emissiveTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA16F);
-        GL42.glBindImageTexture(4, direct_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        GL42.glBindImageTexture(0, gbuffer.positionDepthTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, imageFormatInline(GBUFFER_POSITION_DEPTH_FORMAT));
+        GL42.glBindImageTexture(1, gbuffer.normalRoughnessTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, imageFormatInline(GBUFFER_NORMAL_ROUGHNESS_FORMAT));
+        GL42.glBindImageTexture(2, gbuffer.albedoMetallicTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, imageFormatInline(GBUFFER_ALBEDO_METALLIC_FORMAT));
+        GL42.glBindImageTexture(3, gbuffer.emissiveTexture(), 0, GL_FALSE, 0, GL_READ_ONLY, imageFormatInline(GBUFFER_EMISSIVE_FORMAT));
+        GL42.glBindImageTexture(4, direct_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, imageFormatInline(DIRECT_COLOR_FORMAT));
         GL43.glDispatchCompute(static_cast<GLuint>((width_ + 7) / 8), static_cast<GLuint>((height_ + 7) / 8), 1);
         GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
         GL20.glUseProgram(0);
@@ -335,7 +336,25 @@ private:
         if (bvh_program_active_) return true;
         if (bvh_shader_validated_ && !activate) return true;
 
-        GLuint candidate = createComputeProgram(DIRECT_LIGHTING_BVH_V2_COMPUTE, error);
+        std::string shader_source = DIRECT_LIGHTING_BVH_V2_COMPUTE;
+        if (GBUFFER_ALBEDO_METALLIC_FORMAT == SurfaceFormat::Rgba8)
+        {
+            constexpr const char *old_layout =
+                "layout(rgba16f,binding=2) readonly uniform image2D gAlbedoMetallic;";
+            constexpr const char *new_layout =
+                "layout(rgba8,binding=2) readonly uniform image2D gAlbedoMetallic;";
+            const std::size_t layout_position = shader_source.find(old_layout);
+
+            if (layout_position == std::string::npos)
+            {
+                setInlineError(error, "GPU BVH direct-light material image layout is unavailable");
+                return false;
+            }
+
+            shader_source.replace(layout_position, std::char_traits<char>::length(old_layout), new_layout);
+        }
+
+        GLuint candidate = createComputeProgram(shader_source.c_str(), error);
         if (candidate == 0) return false;
 
         GLint camera = -1, lights = -1, primitives = -1, nodes = -1;
@@ -412,6 +431,10 @@ private:
     static Math::Vec3 lightForwardInline (const Ecs::TransformComponent& transform)
     {
         return Math::normalize(Math::transformDirection(Math::rotationEuler(toVec3Inline(transform.rotation)), {0.0f, 0.0f, -1.0f}));
+    }
+    static GLenum imageFormatInline (SurfaceFormat format)
+    {
+        return format == SurfaceFormat::Rgba8 ? GL_RGBA8 : GL_RGBA16F;
     }
     static void setInlineError (std::string *error, const char *message) { if (error) *error = message ? message : "GPU direct lighting error"; }
 
