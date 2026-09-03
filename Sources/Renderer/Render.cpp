@@ -1,5 +1,6 @@
 #include "Render.hpp"
 
+#include "Renderer/Gpu/CameraCache.hpp"
 #include "Renderer/Lighting/Lighting.hpp"
 #include "Renderer/Lumen/Radiosity.hpp"
 #include "Renderer/Lumen/SceneLighting.hpp"
@@ -110,6 +111,7 @@ bool Rendering::init ()
 
     gpu_lumen_schedule_.reset();
     gpu_lumen_sample_index_ = 0;
+    gpu_camera_matrices_valid_ = false;
     gpu_pipeline_enabled_ = true;
     return true;
 #endif
@@ -174,6 +176,7 @@ void Rendering::resize (int width, int height)
         change_tracker_.clear();
         gpu_lumen_schedule_.reset();
         gpu_lumen_sample_index_ = 0;
+        gpu_camera_matrices_valid_ = false;
 
         direct_color_.clear();
         indirect_color_.clear();
@@ -680,14 +683,27 @@ void Rendering::render (const Ecs::World& world)
     }
 
     const Math::Vec3 camera_position = toVec3(camera_transform->position);
-    applyCamera(*camera_transform, *camera);
 
     if (test_name_.empty())
     {
         const Lumen::ChangeSet changes = change_tracker_.update(world);
+
+        if (Gpu::shouldUpdateCameraMatrices(
+                gpu_camera_matrices_valid_,
+                changes.camera_changed,
+                false))
+        {
+            applyCamera(*camera_transform, *camera);
+            gpu_camera_matrices_valid_ = true;
+        }
+
         renderGpuFrame(world, camera_position, changes);
         return;
     }
+
+    /* RendererCheck's deterministic CPU reference path intentionally keeps
+     * rebuilding camera matrices per captured frame. */
+    applyCamera(*camera_transform, *camera);
 
     renderGeometry(world);
 
@@ -824,6 +840,7 @@ void Rendering::shutdown ()
     presenter_.shutdown();
     gpu_pipeline_enabled_ = false;
     gpu_error_reported_ = false;
+    gpu_camera_matrices_valid_ = false;
     gpu_frame_index_ = 0;
     gpu_lumen_sample_index_ = 0;
     gpu_lumen_schedule_.reset();
