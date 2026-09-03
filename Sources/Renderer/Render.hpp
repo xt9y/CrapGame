@@ -4,6 +4,7 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
+#include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/LumenGpu.hpp"
 #include "Renderer/Gpu/LumenSchedule.hpp"
@@ -20,13 +21,16 @@
 #include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
 #include "Renderer/Math/Math.hpp"
+#include "Renderer/PerformanceMetrics.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
 #include "Renderer/Temporal/Temporal.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <rendercheck/capture.h>
 
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -48,7 +52,26 @@ public:
     {
         if (!test_name_.empty())
         {
+            const char *metrics_path = std::getenv("RENDERCHECK_METRICS_PATH");
+            const bool visual_timing = Gpu::visualRunTimingRequired(
+                    true,
+                    PerformanceMetrics::requested(),
+                    metrics_path && *metrics_path
+                );
+
+            if (!visual_timing)
+            {
+                render(world, frame_time_ns);
+                return;
+            }
+
+            const auto render_started = std::chrono::steady_clock::now();
             render(world, frame_time_ns);
+            const auto render_finished = std::chrono::steady_clock::now();
+            const double render_ms = std::chrono::duration<double, std::milli>(
+                    render_finished - render_started
+                ).count();
+            (void)visual_metrics_writer_.write("cpu_render_ms", render_ms);
             return;
         }
 
@@ -187,6 +210,7 @@ private:
     Gpu::LumenSchedule gpu_lumen_schedule_;
     Gpu::Presenter presenter_;
     Gpu::Profiler gpu_profiler_;
+    PerformanceMetrics::Writer visual_metrics_writer_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
