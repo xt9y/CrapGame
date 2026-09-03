@@ -10,6 +10,7 @@
 #include "Renderer/Gpu/Presenter.hpp"
 #include "Renderer/Gpu/Profiler.hpp"
 #include "Renderer/Gpu/RuntimeHotPath.hpp"
+#include "Renderer/Gpu/RuntimeHotPathV3.hpp"
 #include "Renderer/Lumen/Budget.hpp"
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
@@ -51,7 +52,21 @@ public:
             return;
         }
 
-        const Lumen::ChangeSet changes = change_tracker_.update(world);
+        Lumen::ChangeSet changes;
+        const std::uint64_t world_revision = world.changeRevision();
+        const bool revision_valid =
+            gpu_world_revision_valid_ && gpu_camera_matrices_valid_;
+
+        if (Gpu::rendererRevisionNeedsUpdate(
+                revision_valid,
+                world_revision,
+                gpu_world_revision_))
+        {
+            changes = change_tracker_.update(world);
+            gpu_world_revision_ = world_revision;
+            gpu_world_revision_valid_ = true;
+        }
+
         const bool refresh_camera = Gpu::cameraDataNeedsRefresh(
                 gpu_camera_data_valid_ && gpu_camera_matrices_valid_,
                 changes.camera_changed
@@ -195,6 +210,8 @@ private:
     bool gpu_camera_matrices_valid_ = false;
     bool gpu_camera_data_valid_ = false;
     bool gpu_profiler_enabled_ = false;
+    bool gpu_world_revision_valid_ = false;
+    std::uint64_t gpu_world_revision_ = 0u;
     std::uint64_t gpu_frame_index_ = 0;
     std::uint64_t gpu_lumen_sample_index_ = 0;
 
