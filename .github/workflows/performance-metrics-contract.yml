@@ -69,3 +69,12 @@ jobs:
             tests/gpu_presenter_policy_contract.cpp \
             -o /tmp/gpu-presenter-policy-contract
           /tmp/gpu-presenter-policy-contract
+      - name: GPU frame hot path contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/gpu_frame_hot_path_contract.cpp \
+            -o /tmp/gpu-frame-hot-path-contract
+          /tmp/gpu-frame-hot-path-contract
