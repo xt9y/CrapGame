@@ -17,5 +17,10 @@ int main ()
     assert(!frameCaptureRequired(false));
     assert(frameCaptureRequired(true));
 
+    assert(!visualRunTimingRequired(false, false, true));
+    assert(!visualRunTimingRequired(true, true, true));
+    assert(!visualRunTimingRequired(true, false, false));
+    assert(visualRunTimingRequired(true, false, true));
+
     return 0;
 }
