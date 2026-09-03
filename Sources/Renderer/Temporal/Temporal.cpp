@@ -1,7 +1,12 @@
 #include "Temporal.hpp"
 
+#include "Renderer/ParallelRows.hpp"
+#include "Renderer/Temporal/MotionTransformCache.hpp"
+
 #include <algorithm>
 #include <cmath>
+#include <thread>
+#include <unordered_map>
 
 namespace Renderer 
 {
@@ -54,6 +59,12 @@ bool projectUv (
 
     return true;
 }
+
+struct MotionEntityState
+{
+    CachedMotionInverseTransform current_inverse;
+    Math::Mat4 previous_model;
+};
 
 } // namespace
 
@@ -137,81 +148,107 @@ void calculateMotion (
         return;
     }
 
-    for (int y = 0; y < gbuffer->height(); ++y) 
+    std::unordered_map<Ecs::Entity, MotionEntityState> motion_entities;
+
+    if (frame_state.hasHistory())
     {
-        for (int x = 0; x < gbuffer->width(); ++x) 
+        motion_entities.reserve(world.entities().size());
+
+        for (const Ecs::Entity entity : world.entities())
         {
-            GBuffer::Pixel& pixel = 
-                gbuffer->pixel(x, y);
-
-            pixel.motion = {0.0f, 0.0f};
-
-            if (!pixel.valid 
-                    || !frame_state.hasHistory()) 
-            {
-                continue;
-            }
-
-            const Ecs::TransformComponent *current_transform = 
-                world.getTransform(pixel.entity);
+            const Ecs::TransformComponent *current_transform =
+                world.getTransform(entity);
 
             Ecs::TransformComponent previous_transform = {};
 
             if (!current_transform
                     || !frame_state.previousTransform(
-                            pixel.entity,
+                            entity,
                             &previous_transform
-                        )) 
+                        ))
             {
                 continue;
             }
 
-            const Math::Vec3 local_position = 
-                Math::inverseTransformPoint(
-                        pixel.world_position,
-                        toVec3(current_transform->position),
-                        toVec3(current_transform->rotation),
-                        toVec3(current_transform->scale)
-                    );
-
-            const Math::Mat4 previous_model = 
-                Math::transform(
-                        toVec3(previous_transform.position),
-                        toVec3(previous_transform.rotation),
-                        toVec3(previous_transform.scale)
-                    );
-
-            const Math::Vec3 previous_world_position = 
-                Math::transformPoint(
-                        previous_model,
-                        local_position
-                    );
-
-            Math::Vec2 previous_uv = {};
-
-            if (!projectUv(
-                    previous_world_position,
-                    frame_state.previousView(),
-                    frame_state.previousProjection(),
-                    &previous_uv
-                )) 
-            {
-                continue;
-            }
-
-            const Math::Vec2 current_uv = {
-                (static_cast<float>(x) + 0.5f) /
-                    static_cast<float>(gbuffer->width()),
-                (static_cast<float>(y) + 0.5f) /
-                    static_cast<float>(gbuffer->height()),
-            };
-
-            pixel.motion = {
-                current_uv.x - previous_uv.x,
-                current_uv.y - previous_uv.y,
-            };
+            motion_entities.emplace(
+                    entity,
+                    MotionEntityState{
+                        cacheMotionInverseTransform(*current_transform),
+                        Math::transform(
+                                toVec3(previous_transform.position),
+                                toVec3(previous_transform.rotation),
+                                toVec3(previous_transform.scale)
+                            ),
+                    }
+                );
         }
     }
+
+    const auto& motion_cache = motion_entities;
+
+    parallelRowsDynamic(
+            gbuffer->height(),
+            std::thread::hardware_concurrency(),
+            [&](int y)
+            {
+                for (int x = 0; x < gbuffer->width(); ++x) 
+                {
+                    GBuffer::Pixel& pixel = 
+                        gbuffer->pixel(x, y);
+
+                    pixel.motion = {0.0f, 0.0f};
+
+                    if (!pixel.valid 
+                            || !frame_state.hasHistory()) 
+                    {
+                        continue;
+                    }
+
+                    const auto found = motion_cache.find(pixel.entity);
+
+                    if (found == motion_cache.end())
+                    {
+                        continue;
+                    }
+
+                    const Math::Vec3 local_position = 
+                        inverseTransformPointMotionCached(
+                                pixel.world_position,
+                                found->second.current_inverse
+                            );
+
+                    const Math::Vec3 previous_world_position = 
+                        Math::transformPoint(
+                                found->second.previous_model,
+                                local_position
+                            );
+
+                    Math::Vec2 previous_uv = {};
+
+                    if (!projectUv(
+                            previous_world_position,
+                            frame_state.previousView(),
+                            frame_state.previousProjection(),
+                            &previous_uv
+                        )) 
+                    {
+                        continue;
+                    }
+
+                    const Math::Vec2 current_uv = {
+                        (static_cast<float>(x) + 0.5f) /
+                            static_cast<float>(gbuffer->width()),
+                        (static_cast<float>(y) + 0.5f) /
+                            static_cast<float>(gbuffer->height()),
+                    };
+
+                    pixel.motion = {
+                        current_uv.x - previous_uv.x,
+                        current_uv.y - previous_uv.y,
+                    };
+                }
+            }
+        );
 }
 
 void HistoryBuffer::resize (int width, int height) 
@@ -332,23 +369,27 @@ void HistoryBuffer::store (
         return;
     }
 
-    for (int y = 0; y < height_; ++y) 
-    {
-        for (int x = 0; x < width_; ++x) 
-        {
-            const GBuffer::Pixel& source =
-                gbuffer.pixel(x, y);
+    parallelRowsDynamic(
+            height_,
+            std::thread::hardware_concurrency(),
+            [&](int y)
+            {
+                for (int x = 0; x < width_; ++x) 
+                {
+                    const GBuffer::Pixel& source =
+                        gbuffer.pixel(x, y);
 
-            HistoryPixel& destination =
-                pixels_[index(x, y)];
+                    HistoryPixel& destination =
+                        pixels_[index(x, y)];
 
-            destination.color = color[index(x, y)];
-            destination.normal = source.normal;
-            destination.depth = source.depth;
-            destination.entity = source.entity;
-            destination.valid = source.valid;
-        }
-    }
+                    destination.color = color[index(x, y)];
+                    destination.normal = source.normal;
+                    destination.depth = source.depth;
+                    destination.entity = source.entity;
+                    destination.valid = source.valid;
+                }
+            }
+        );
 
     has_history_ = true;
 }
@@ -393,110 +434,114 @@ void resolveTaa (
         return;
     }
 
-    for (int y = 0; y < gbuffer.height(); ++y) 
-    {
-        for (int x = 0; x < gbuffer.width(); ++x) 
-        {
-            const std::size_t pixel_index =
-                static_cast<std::size_t>(y) *
-                static_cast<std::size_t>(gbuffer.width()) +
-                static_cast<std::size_t>(x);
-
-            const Math::Vec3 current_color =
-                current[pixel_index];
-
-            Math::Vec3 history_color = {};
-
-            if (!history.sample(
-                    x,
-                    y,
-                    gbuffer.pixel(x, y),
-                    &history_color
-                )) 
+    parallelRowsDynamic(
+            gbuffer.height(),
+            std::thread::hardware_concurrency(),
+            [&](int y)
             {
-                (*output)[pixel_index] = current_color;
-                continue;
-            }
-
-            Math::Vec3 minimum = current_color,
-                       maximum = current_color;
-
-            for (int offset_y = -1; offset_y <= 1; ++offset_y) 
-            {
-                for (int offset_x = -1; offset_x <= 1; ++offset_x) 
+                for (int x = 0; x < gbuffer.width(); ++x) 
                 {
-                    const int sample_x =
+                    const std::size_t pixel_index =
+                        static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(gbuffer.width()) +
+                        static_cast<std::size_t>(x);
+
+                    const Math::Vec3 current_color =
+                        current[pixel_index];
+
+                    Math::Vec3 history_color = {};
+
+                    if (!history.sample(
+                            x,
+                            y,
+                            gbuffer.pixel(x, y),
+                            &history_color
+                        )) 
+                    {
+                        (*output)[pixel_index] = current_color;
+                        continue;
+                    }
+
+                    Math::Vec3 minimum = current_color,
+                               maximum = current_color;
+
+                    for (int offset_y = -1; offset_y <= 1; ++offset_y) 
+                    {
+                        for (int offset_x = -1; offset_x <= 1; ++offset_x) 
+                        {
+                            const int sample_x =
+                                std::max(
+                                        0,
+                                        std::min(
+                                                gbuffer.width() - 1,
+                                                x + offset_x
+                                            )
+                                    );
+
+                            const int sample_y =
+                                std::max(
+                                        0,
+                                        std::min(
+                                                gbuffer.height() - 1,
+                                                y + offset_y
+                                            )
+                                    );
+
+                            const Math::Vec3 sample =
+                                current[
+                                    static_cast<std::size_t>(sample_y) *
+                                    static_cast<std::size_t>(gbuffer.width()) +
+                                    static_cast<std::size_t>(sample_x)
+                                ];
+
+                            minimum.x = std::min(minimum.x, sample.x);
+                            minimum.y = std::min(minimum.y, sample.y);
+                            minimum.z = std::min(minimum.z, sample.z);
+
+                            maximum.x = std::max(maximum.x, sample.x);
+                            maximum.y = std::max(maximum.y, sample.y);
+                            maximum.z = std::max(maximum.z, sample.z);
+                        }
+                    }
+
+                    history_color = {
+                        std::max(minimum.x, std::min(maximum.x, history_color.x)),
+                        std::max(minimum.y, std::min(maximum.y, history_color.y)),
+                        std::max(minimum.z, std::min(maximum.z, history_color.z)),
+                    };
+
+                    const Math::Vec2 motion =
+                        gbuffer.pixel(x, y).motion;
+
+                    const float motion_length =
+                        std::sqrt(
+                                motion.x * motion.x +
+                                motion.y * motion.y
+                            );
+
+                    const float history_weight =
                         std::max(
-                                0,
+                                0.20f,
                                 std::min(
-                                        gbuffer.width() - 1,
-                                        x + offset_x
+                                        0.90f,
+                                        0.90f - motion_length * 4.0f
                                     )
                             );
 
-                    const int sample_y =
-                        std::max(
-                                0,
-                                std::min(
-                                        gbuffer.height() - 1,
-                                        y + offset_y
+                    (*output)[pixel_index] =
+                        Math::add(
+                                Math::multiply(
+                                        current_color,
+                                        1.0f - history_weight
+                                    ),
+                                Math::multiply(
+                                        history_color,
+                                        history_weight
                                     )
                             );
-
-                    const Math::Vec3 sample =
-                        current[
-                            static_cast<std::size_t>(sample_y) *
-                            static_cast<std::size_t>(gbuffer.width()) +
-                            static_cast<std::size_t>(sample_x)
-                        ];
-
-                    minimum.x = std::min(minimum.x, sample.x);
-                    minimum.y = std::min(minimum.y, sample.y);
-                    minimum.z = std::min(minimum.z, sample.z);
-
-                    maximum.x = std::max(maximum.x, sample.x);
-                    maximum.y = std::max(maximum.y, sample.y);
-                    maximum.z = std::max(maximum.z, sample.z);
                 }
             }
-
-            history_color = {
-                std::max(minimum.x, std::min(maximum.x, history_color.x)),
-                std::max(minimum.y, std::min(maximum.y, history_color.y)),
-                std::max(minimum.z, std::min(maximum.z, history_color.z)),
-            };
-
-            const Math::Vec2 motion =
-                gbuffer.pixel(x, y).motion;
-
-            const float motion_length =
-                std::sqrt(
-                        motion.x * motion.x +
-                        motion.y * motion.y
-                    );
-
-            const float history_weight =
-                std::max(
-                        0.20f,
-                        std::min(
-                                0.90f,
-                                0.90f - motion_length * 4.0f
-                            )
-                    );
-
-            (*output)[pixel_index] =
-                Math::add(
-                        Math::multiply(
-                                current_color,
-                                1.0f - history_weight
-                            ),
-                        Math::multiply(
-                                history_color,
-                                history_weight
-                            )
-                    );
-        }
-    }
+        );
 }
 
 } // namespace Temporal

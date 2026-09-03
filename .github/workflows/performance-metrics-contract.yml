@@ -153,7 +153,7 @@ jobs:
             Sources/Renderer/Math/Math.cpp \
             -o /tmp/trace-direction-contract
           /tmp/trace-direction-contract
-      - name: Contact AO Stage 47-50 contract
+      - name: Contact AO Stage 47-54 contract
         shell: bash
         run: |
           set -euo pipefail
@@ -161,8 +161,21 @@ jobs:
             -ISources \
             tests/contact_ao_stage47_50_contract.cpp \
             Sources/Renderer/Math/Math.cpp \
-            -o /tmp/contact-ao-stage47-50-contract
-          /tmp/contact-ao-stage47-50-contract
+            -o /tmp/contact-ao-stage47-54-contract
+          /tmp/contact-ao-stage47-54-contract
+      - name: Temporal Stage 55-58 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
+            -ISources \
+            tests/temporal_stage55_58_contract.cpp \
+            Sources/Renderer/Math/Math.cpp \
+            -o /tmp/temporal-stage55-58-contract
+          /tmp/temporal-stage55-58-contract
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
+            -ISources -c Sources/Renderer/Temporal/Temporal.cpp \
+            -o /tmp/temporal.o
       - name: Screen probe implementation compile
         shell: bash
         run: |
