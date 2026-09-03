@@ -15,6 +15,13 @@ inline bool gpuWorkInvalidatesPresenter (
     return geometry_ran || direct_ran || lumen_ran;
 }
 
+inline bool conservativeGpuCleanupRequired (
+            bool next_consumer_explicitly_rebinds
+    )
+{
+    return !next_consumer_explicitly_rebinds;
+}
+
 inline bool frameEndClockRequired (bool performance_mode)
 {
     return performance_mode;

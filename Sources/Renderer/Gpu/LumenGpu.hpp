@@ -4,6 +4,7 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Gpu/BvhShadersV2.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
+#include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
@@ -94,8 +95,14 @@ public:
                 1
             );
         GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-        GL20.glUseProgram(0);
-        unbindTextureUnitsInline(7);
+
+        /* Composite explicitly binds its program and texture units next, so
+         * clearing all trace state here only adds driver calls. */
+        if (conservativeGpuCleanupRequired(true))
+        {
+            GL20.glUseProgram(0);
+            unbindTextureUnitsInline(7);
+        }
 
         history_index_ = write_index;
         history_valid_ = true;
@@ -130,8 +137,15 @@ public:
                 1
             );
         GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-        GL20.glUseProgram(0);
-        unbindTextureUnitsInline(5);
+
+        /* renderGpuFrame invalidates the presenter whenever Lumen runs; the
+         * presenter then explicitly rebinds framebuffer/program/texture/VAO. */
+        if (conservativeGpuCleanupRequired(true))
+        {
+            GL20.glUseProgram(0);
+            unbindTextureUnitsInline(5);
+        }
+
         if (error) error->clear();
         return true;
     }

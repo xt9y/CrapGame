@@ -11,6 +11,9 @@ int main ()
     assert(gpuWorkInvalidatesPresenter(false, true, false));
     assert(gpuWorkInvalidatesPresenter(false, false, true));
 
+    assert(!conservativeGpuCleanupRequired(true));
+    assert(conservativeGpuCleanupRequired(false));
+
     assert(!frameEndClockRequired(false));
     assert(frameEndClockRequired(true));
 
