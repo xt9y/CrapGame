@@ -1,6 +1,7 @@
 #include "DirectLightingGpu.hpp"
 
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/SurfaceFormats.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -19,7 +20,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(rgba16f, binding = 0) readonly uniform image2D gPositionDepth;
 layout(rgba16f, binding = 1) readonly uniform image2D gNormalRoughness;
-layout(rgba16f, binding = 2) readonly uniform image2D gAlbedoMetallic;
+layout(rgba8, binding = 2) readonly uniform image2D gAlbedoMetallic;
 layout(rgba16f, binding = 3) readonly uniform image2D gEmissive;
 layout(rgba16f, binding = 4) writeonly uniform image2D oDirect;
 
@@ -395,7 +396,21 @@ void main ()
 }
 )GLSL";
 
-GLuint createTexture (int width, int height)
+GLint surfaceInternalFormat (SurfaceFormat format)
+{
+    return format == SurfaceFormat::Rgba8 ? GL_RGBA8 : GL_RGBA16F;
+}
+
+GLenum surfacePixelType (SurfaceFormat format)
+{
+    return format == SurfaceFormat::Rgba8 ? GL_UNSIGNED_BYTE : GL_FLOAT;
+}
+
+GLuint createTexture (
+            int width,
+            int height,
+            SurfaceFormat format
+    )
 {
     const GLuint texture = lwcgl_glGenTexture();
 
@@ -412,12 +427,12 @@ GLuint createTexture (int width, int height)
     glTexImage2D(
             GL_TEXTURE_2D,
             0,
-            GL_RGBA16F,
+            surfaceInternalFormat(format),
             width,
             height,
             0,
             GL_RGBA,
-            GL_FLOAT,
+            surfacePixelType(format),
             nullptr
         );
     return texture;
@@ -502,7 +517,7 @@ bool DirectLightingGpu::resize (int width, int height, std::string *error)
     height_ = new_height;
     destroyTextures();
 
-    direct_color_ = createTexture(width_, height_);
+    direct_color_ = createTexture(width_, height_, DIRECT_COLOR_FORMAT);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     if (direct_color_ == 0)
