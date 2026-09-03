@@ -30,6 +30,7 @@ public:
 
     bool init ();
     void shutdown ();
+    bool enabled () const { return initialized_; }
 
     void beginFrame (std::uint64_t frame_index);
     void begin (Pass pass);
