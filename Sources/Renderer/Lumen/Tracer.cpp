@@ -1,5 +1,6 @@
 #include "Tracer.hpp"
 
+#include "Renderer/Lumen/SdfTraceMath.hpp"
 #include "Renderer/Lumen/TraceDirection.hpp"
 
 #include <algorithm>
@@ -63,7 +64,8 @@ UnifiedTraceHit Tracer::trace (
         return result;
     }
 
-    const Math::Vec3 sdf_direction = Math::normalize(ray_direction);
+    const Math::Vec3 sdf_direction =
+        normalizedTraceDirection(ray_direction);
     float travelled = 0.05f;
 
     for (int step = 0;
@@ -71,9 +73,10 @@ UnifiedTraceHit Tracer::trace (
             ++step) 
     {
         const Math::Vec3 position =
-            Math::add(
+            sdfTraceSamplePositionExact(
                     origin,
-                    Math::multiply(ray_direction, travelled)
+                    ray_direction,
+                    travelled
                 );
 
         const float global_distance =
@@ -169,16 +172,18 @@ VisibilityTraceHit Tracer::traceVisibility (
         return result;
     }
 
-    const Math::Vec3 sdf_direction = Math::normalize(ray_direction);
+    const Math::Vec3 sdf_direction =
+        normalizedTraceDirection(ray_direction);
     float travelled = 0.05f;
 
     for (int step = 0;
             step < 96 && travelled <= maximum_distance;
             ++step)
     {
-        const Math::Vec3 position = Math::add(
+        const Math::Vec3 position = sdfTraceSamplePositionExact(
                 origin,
-                Math::multiply(ray_direction, travelled)
+                ray_direction,
+                travelled
             );
 
         const float global_distance = global_distance_field_.sample(position);

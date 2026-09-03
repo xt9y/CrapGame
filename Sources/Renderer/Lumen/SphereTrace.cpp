@@ -1,5 +1,7 @@
 #include "SphereTrace.hpp"
 
+#include "Renderer/Lumen/SdfTraceMath.hpp"
+#include "Renderer/Lumen/TraceDirection.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 
 #include <algorithm>
@@ -314,7 +316,7 @@ SdfHit DistanceFieldScene::trace (
 {
     return traceNormalized(
             origin,
-            Math::normalize(direction),
+            normalizedTraceDirection(direction),
             maximum_distance,
             maximum_steps,
             minimum_step,
@@ -347,9 +349,10 @@ SdfHit DistanceFieldScene::traceNormalized (
             ++step) 
     {
         const Math::Vec3 position =
-            Math::add(
+            sdfTraceSamplePositionExact(
                     origin,
-                    Math::multiply(normalized_direction, travelled)
+                    normalized_direction,
+                    travelled
                 );
 
         Ecs::Entity entity = Ecs::INVALID_ENTITY;
@@ -389,7 +392,7 @@ SdfDistanceHit DistanceFieldScene::traceDistance (
 {
     return traceDistanceNormalized(
             origin,
-            Math::normalize(direction),
+            normalizedTraceDirection(direction),
             maximum_distance,
             maximum_steps,
             minimum_step,
@@ -421,9 +424,10 @@ SdfDistanceHit DistanceFieldScene::traceDistanceNormalized (
             step < maximum_steps && travelled <= maximum_distance;
             ++step)
     {
-        const Math::Vec3 position = Math::add(
+        const Math::Vec3 position = sdfTraceSamplePositionExact(
                 origin,
-                Math::multiply(normalized_direction, travelled)
+                normalized_direction,
+                travelled
             );
 
         const float scene_distance = distanceOnly(position);
@@ -475,7 +479,7 @@ Math::Vec3 DistanceFieldScene::normalAt (
                 dz = distance({position.x, position.y, position.z + epsilon}) -
                      distance({position.x, position.y, position.z - epsilon});
 
-    return Math::normalize({dx, dy, dz});
+    return normalizedTraceDirection({dx, dy, dz});
 }
 
 } // namespace Lumen

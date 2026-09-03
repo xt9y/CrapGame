@@ -38,6 +38,11 @@ inline float sdfBoundsDistance (
                 position.z - bounds.maximum.z
             );
 
+    if (dx == 0.0f && dy == 0.0f && dz == 0.0f)
+    {
+        return 0.0f;
+    }
+
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 

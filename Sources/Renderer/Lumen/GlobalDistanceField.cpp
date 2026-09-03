@@ -31,17 +31,6 @@ std::size_t index (
            static_cast<std::size_t>(x);
 }
 
-bool contains (
-                const Math::Vec3& center,
-                float half_extent,
-                const Math::Vec3& position
-        ) 
-{
-    return std::fabs(position.x - center.x) <= half_extent
-        && std::fabs(position.y - center.y) <= half_extent
-        && std::fabs(position.z - center.z) <= half_extent;
-}
-
 } // namespace
 
 void GlobalDistanceField::build (
@@ -76,7 +65,11 @@ float GlobalDistanceField::sample (
 {
     for (const Clipmap& clipmap : clipmaps_) 
     {
-        if (contains(clipmap.center, clipmap.half_extent, position)) 
+        if (gdfContainsExact(
+                clipmap.center,
+                clipmap.half_extent,
+                position
+            )) 
         {
             return sampleClipmap(clipmap, position);
         }

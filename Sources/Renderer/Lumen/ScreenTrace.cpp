@@ -4,7 +4,6 @@
 #include "Renderer/Lumen/ScreenTracePolicy.hpp"
 #include "Renderer/Lumen/TraceDirection.hpp"
 
-#include <algorithm>
 #include <cmath>
 
 namespace Renderer 
@@ -83,9 +82,6 @@ bool walkScreenTraceExact (
         return false;
     }
 
-    const float width_float = static_cast<float>(width),
-                height_float = static_cast<float>(height);
-
     const GBuffer::Pixel *pixels = gbuffer.data();
 
     for (float distance = step_size;
@@ -113,21 +109,8 @@ bool walkScreenTraceExact (
             continue;
         }
 
-        const int x = std::max(
-                0,
-                std::min(
-                        width - 1,
-                        static_cast<int>(screen_x * width_float)
-                    )
-            );
-
-        const int y = std::max(
-                0,
-                std::min(
-                        height - 1,
-                        static_cast<int>(screen_y * height_float)
-                    )
-            );
+        const int x = screenTraceNormalizedPixelIndexExact(screen_x, width),
+                  y = screenTraceNormalizedPixelIndexExact(screen_y, height);
 
         const GBuffer::Pixel& pixel = pixels[
             static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
