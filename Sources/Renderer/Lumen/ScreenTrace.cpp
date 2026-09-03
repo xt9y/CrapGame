@@ -58,9 +58,8 @@ bool projectPoint (
     return true;
 }
 
-} // namespace
-
-TraceHit traceScreenNormalized (
+template <typename HitWriter>
+bool walkScreenTraceExact (
                 const GBuffer::Buffer& gbuffer,
                 const Math::Mat4& view,
                 const Math::Mat4& projection,
@@ -68,11 +67,10 @@ TraceHit traceScreenNormalized (
                 const Math::Vec3& normalized_direction,
                 float maximum_distance,
                 float step_size,
-                float thickness
-        ) 
+                float thickness,
+                HitWriter&& write_hit
+        )
 {
-    TraceHit result;
-
     const int width = gbuffer.width(),
               height = gbuffer.height();
 
@@ -80,9 +78,9 @@ TraceHit traceScreenNormalized (
             || height <= 0
             || maximum_distance <= 0.0f
             || step_size <= 0.0f
-            || thickness <= 0.0f) 
+            || thickness <= 0.0f)
     {
-        return result;
+        return false;
     }
 
     const float width_float = static_cast<float>(width),
@@ -92,7 +90,7 @@ TraceHit traceScreenNormalized (
 
     for (float distance = step_size;
             distance <= maximum_distance;
-            distance += step_size) 
+            distance += step_size)
     {
         const Math::Vec3 sample_position =
             screenTraceSamplePosition(
@@ -110,7 +108,7 @@ TraceHit traceScreenNormalized (
                 projection,
                 &screen_x,
                 &screen_y
-            )) 
+            ))
         {
             continue;
         }
@@ -136,7 +134,7 @@ TraceHit traceScreenNormalized (
             static_cast<std::size_t>(x)
         ];
 
-        if (!pixel.valid) 
+        if (!pixel.valid)
         {
             continue;
         }
@@ -152,15 +150,88 @@ TraceHit traceScreenNormalized (
             continue;
         }
 
-        result.position = pixel.world_position;
-        result.normal = pixel.normal;
-        result.entity = pixel.entity;
-        result.distance = distance;
-        result.x = x;
-        result.y = y;
-        result.hit = true;
-        return result;
+        write_hit(pixel, distance, x, y);
+        return true;
     }
+
+    return false;
+}
+
+} // namespace
+
+TraceHit traceScreenNormalized (
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Math::Vec3& origin,
+                const Math::Vec3& normalized_direction,
+                float maximum_distance,
+                float step_size,
+                float thickness
+        ) 
+{
+    TraceHit result;
+
+    result.hit = walkScreenTraceExact(
+            gbuffer,
+            view,
+            projection,
+            origin,
+            normalized_direction,
+            maximum_distance,
+            step_size,
+            thickness,
+            [&] (
+                    const GBuffer::Pixel& pixel,
+                    float distance,
+                    int x,
+                    int y
+                )
+            {
+                result.position = pixel.world_position;
+                result.normal = pixel.normal;
+                result.entity = pixel.entity;
+                result.distance = distance;
+                result.x = x;
+                result.y = y;
+            }
+        );
+
+    return result;
+}
+
+ScreenDistanceHit traceScreenDistanceNormalized (
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Math::Vec3& origin,
+                const Math::Vec3& normalized_direction,
+                float maximum_distance,
+                float step_size,
+                float thickness
+        )
+{
+    ScreenDistanceHit result;
+
+    result.hit = walkScreenTraceExact(
+            gbuffer,
+            view,
+            projection,
+            origin,
+            normalized_direction,
+            maximum_distance,
+            step_size,
+            thickness,
+            [&] (
+                    const GBuffer::Pixel&,
+                    float distance,
+                    int,
+                    int
+                )
+            {
+                result.distance = distance;
+            }
+        );
 
     return result;
 }

@@ -235,6 +235,23 @@ jobs:
           c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
             -ISources -c Sources/Renderer/Lumen/SceneLighting.cpp \
             -o /tmp/scene-lighting-stage91-94.o
+      - name: Contact AO Stage 95-98 distance-only contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/contact_ao_stage95_98_contract.cpp \
+            Sources/Ecs/Ecs.cpp \
+            Sources/Renderer/GBuffer/GBuffer.cpp \
+            Sources/Renderer/Shader/Shader.cpp \
+            Sources/Renderer/Lumen/ScreenTrace.cpp \
+            Sources/Renderer/Lumen/SphereTrace.cpp \
+            Sources/Renderer/Lumen/DistanceField.cpp \
+            Sources/Renderer/Mesh/Mesh.cpp \
+            Sources/Renderer/Math/Math.cpp \
+            -o /tmp/contact-ao-stage95-98-contract
+          /tmp/contact-ao-stage95-98-contract
       - name: Screen probe implementation compile
         shell: bash
         run: |

@@ -151,7 +151,7 @@ VisibilityTraceHit Tracer::traceVisibility (
     }
 
     const Math::Vec3 ray_direction = normalizedTraceDirection(direction);
-    const TraceHit screen_hit = traceScreenNormalized(
+    const ScreenDistanceHit screen_hit = traceScreenDistanceNormalized(
             gbuffer,
             view,
             projection,

@@ -141,7 +141,7 @@ void GlobalDistanceField::buildClipmap (
                         y,
                         z,
                         clipmap->resolution
-                    )] = scene.distance(position);
+                    )] = scene.distanceOnly(position);
             }
         }
     }

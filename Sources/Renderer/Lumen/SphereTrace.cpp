@@ -252,6 +252,59 @@ float DistanceFieldScene::distance (
     return nearest_distance;
 }
 
+float DistanceFieldScene::distanceOnly (
+                const Math::Vec3& position
+        ) const
+{
+    float nearest_distance =
+        std::numeric_limits<float>::max();
+
+    for (const Instance& instance : instances_)
+    {
+        const float lower_bound =
+            sdfBoundsDistance(instance.world_bounds, position) *
+            instance.broadphase_scale;
+
+        if (lower_bound > nearest_distance)
+        {
+            continue;
+        }
+
+        const MeshDistanceField& field =
+            fieldFor(instance.mesh);
+
+        const Math::Vec3 local_position =
+            inverseTransformPointCached(
+                    position,
+                    instance.inverse_transform
+                );
+
+        float local_distance = 0.0f;
+
+        if (insideBounds(field.bounds, local_position))
+        {
+            local_distance = std::fabs(
+                    sampleDistanceField(field, local_position)
+                );
+        }
+        else
+        {
+            local_distance =
+                distanceToBounds(field.bounds, local_position);
+        }
+
+        const float world_distance =
+            local_distance * instance.minimum_scale;
+
+        if (world_distance < nearest_distance)
+        {
+            nearest_distance = world_distance;
+        }
+    }
+
+    return nearest_distance;
+}
+
 SdfHit DistanceFieldScene::trace (
                 const Math::Vec3& origin,
                 const Math::Vec3& direction,
@@ -375,7 +428,7 @@ SdfDistanceHit DistanceFieldScene::traceDistanceNormalized (
                 Math::multiply(normalized_direction, travelled)
             );
 
-        const float scene_distance = distance(position, nullptr);
+        const float scene_distance = distanceOnly(position);
 
         if (scene_distance <= hit_epsilon)
         {

@@ -42,6 +42,8 @@ public:
                 Ecs::Entity *entity = nullptr
         ) const;
 
+    float distanceOnly (const Math::Vec3& position) const;
+
     SdfHit trace (
                 const Math::Vec3& origin,
                 const Math::Vec3& direction,

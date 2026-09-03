@@ -24,7 +24,24 @@ struct TraceHit
     bool hit = false;
 };
 
+struct ScreenDistanceHit
+{
+    float distance = 0.0f;
+    bool hit = false;
+};
+
 TraceHit traceScreenNormalized (
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Math::Vec3& origin,
+                const Math::Vec3& normalized_direction,
+                float maximum_distance,
+                float step_size,
+                float thickness
+        );
+
+ScreenDistanceHit traceScreenDistanceNormalized (
                 const GBuffer::Buffer& gbuffer,
                 const Math::Mat4& view,
                 const Math::Mat4& projection,
