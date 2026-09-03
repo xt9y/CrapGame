@@ -25,9 +25,12 @@ public:
 private:
     struct Clipmap 
     {
-        Math::Vec3 center;
+        Math::Vec3 center,
+                   minimum;
         float half_extent = 0.0f;
+        float extent = 0.0f;
         int resolution = 0;
+        int resolution_minus_one = 0;
         std::vector<float> distance;
     };
 
