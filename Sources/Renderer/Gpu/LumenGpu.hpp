@@ -6,6 +6,7 @@
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/SurfaceFormats.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -14,7 +15,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace Renderer
 {
@@ -26,17 +26,6 @@ class LumenGpu
 public:
     bool init (std::string *error = nullptr);
     bool resize (int width, int height, std::string *error = nullptr);
-
-    bool render (
-                const Ecs::World& world,
-                const GBufferGpu& gbuffer,
-                const DirectLightingGpu& direct,
-                const Math::Mat4& view,
-                const Math::Mat4& projection,
-                const Math::Vec3& camera_position,
-                std::uint64_t frame_index,
-                std::string *error = nullptr
-        );
 
     bool traceShared (
                 const GBufferGpu& gbuffer,
@@ -96,9 +85,9 @@ public:
             }
         }
 
-        GL42.glBindImageTexture(0, indirect_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-        GL42.glBindImageTexture(1, reflection_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-        GL42.glBindImageTexture(2, position_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        GL42.glBindImageTexture(0, indirect_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, imageFormatInline(LUMEN_HISTORY_FORMAT));
+        GL42.glBindImageTexture(1, reflection_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, imageFormatInline(LUMEN_HISTORY_FORMAT));
+        GL42.glBindImageTexture(2, position_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, imageFormatInline(LUMEN_POSITION_HISTORY_FORMAT));
         GL43.glDispatchCompute(
                 static_cast<GLuint>((trace_width_ + 7) / 8),
                 static_cast<GLuint>((trace_height_ + 7) / 8),
@@ -134,7 +123,7 @@ public:
         bindTextureUnitInline(4, reflection_history_[history_index_]);
 
         GL20.glUseProgram(composite_program_);
-        GL42.glBindImageTexture(0, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        GL42.glBindImageTexture(0, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, imageFormatInline(LUMEN_FINAL_FORMAT));
         GL43.glDispatchCompute(
                 static_cast<GLuint>((width_ + 7) / 8),
                 static_cast<GLuint>((height_ + 7) / 8),
@@ -219,26 +208,20 @@ private:
         GLModern.glActiveTexture(GL_TEXTURE0);
     }
 
+    static GLenum imageFormatInline (SurfaceFormat format)
+    {
+        return format == SurfaceFormat::Rgba8 ? GL_RGBA8 : GL_RGBA16F;
+    }
+
     static void setInlineError (std::string *error, const char *message)
     {
         if (error) *error = message ? message : "GPU Lumen error";
     }
 
-    struct PrimitiveGpu
-    {
-        float position_type[4];
-        float rotation[4];
-        float scale[4];
-        float albedo_metallic[4];
-        float emissive_roughness[4];
-    };
-
-    bool uploadPrimitives (const Ecs::World& world, std::string *error);
     void destroyTextures ();
 
     GLuint trace_program_ = 0;
     GLuint composite_program_ = 0;
-    GLuint primitive_buffer_ = 0;
     GLuint indirect_history_[2] = {0, 0};
     GLuint reflection_history_[2] = {0, 0};
     GLuint position_history_[2] = {0, 0};
@@ -250,9 +233,6 @@ private:
     GLint trace_bvh_node_count_location_ = -1;
     GLint trace_frame_location_ = -1;
     GLint trace_history_valid_location_ = -1;
-
-    std::size_t primitive_capacity_ = 0;
-    std::vector<PrimitiveGpu> primitives_;
 
     int history_index_ = 0;
     bool history_valid_ = false;
