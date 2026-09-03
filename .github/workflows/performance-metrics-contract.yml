@@ -105,3 +105,12 @@ jobs:
             tests/gpu_final_hot_path_contract.cpp \
             -o /tmp/gpu-final-hot-path-contract
           /tmp/gpu-final-hot-path-contract
+      - name: CPU reference policy contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/cpu_reference_policy_contract.cpp \
+            -o /tmp/cpu-reference-policy-contract
+          /tmp/cpu-reference-policy-contract

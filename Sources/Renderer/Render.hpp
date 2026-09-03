@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDER_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/CpuReferencePolicy.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/FrameHotPath.hpp"
@@ -41,6 +42,8 @@ class Rendering
 {
 
 public:
+    ~Rendering ();
+
     bool init ();
     void resize (int width, int height);
     void render (const Ecs::World& world, std::uint64_t frame_time_ns);
@@ -53,25 +56,38 @@ public:
         if (!test_name_.empty())
         {
             const char *metrics_path = std::getenv("RENDERCHECK_METRICS_PATH");
-            const bool visual_timing = Gpu::visualRunTimingRequired(
+            cpu_visual_metrics_enabled_ = Gpu::visualRunTimingRequired(
                     true,
                     PerformanceMetrics::requested(),
                     metrics_path && *metrics_path
                 );
 
-            if (!visual_timing)
+            if (!cpu_visual_metrics_enabled_)
             {
-                render(world, frame_time_ns);
+                renderCpuReference(world, frame_time_ns);
                 return;
             }
 
+            if (cpu_render_samples_.capacity() == 0u)
+            {
+                constexpr std::size_t expected_visual_frames = 64u;
+                cpu_render_samples_.reserve(expected_visual_frames);
+                cpu_geometry_samples_.reserve(expected_visual_frames);
+                cpu_scene_samples_.reserve(expected_visual_frames);
+                cpu_direct_samples_.reserve(expected_visual_frames);
+                cpu_lumen_samples_.reserve(expected_visual_frames);
+                cpu_reflection_samples_.reserve(expected_visual_frames);
+                cpu_resolve_samples_.reserve(expected_visual_frames);
+            }
+
             const auto render_started = std::chrono::steady_clock::now();
-            render(world, frame_time_ns);
+            renderCpuReference(world, frame_time_ns);
             const auto render_finished = std::chrono::steady_clock::now();
-            const double render_ms = std::chrono::duration<double, std::milli>(
-                    render_finished - render_started
-                ).count();
-            (void)visual_metrics_writer_.write("cpu_render_ms", render_ms);
+            cpu_render_samples_.push_back(
+                    std::chrono::duration<double, std::milli>(
+                            render_finished - render_started
+                        ).count()
+                );
             return;
         }
 
@@ -140,31 +156,16 @@ public:
     int captureFrame (std::uint64_t frame);
 
 private:
-    enum class RenderMode
-    {
-        Final,
-        Albedo,
-        Normal,
-        Depth,
-        Material,
-        Direct,
-        Shadow,
-        Motion,
-        MeshSdf,
-        GlobalSdf,
-        Trace,
-        SurfaceCache,
-        SurfaceLighting,
-        RadianceCache,
-        ScreenProbes,
-        Indirect,
-        Ao,
-        Reflection,
-    };
+    using RenderMode = CpuReferenceMode;
 
     void applyCamera (
                 const Ecs::TransformComponent& transform,
                 const Ecs::CameraComponent& camera
+        );
+
+    void renderCpuReference (
+                const Ecs::World& world,
+                std::uint64_t frame_time_ns
         );
 
     bool renderGpuFrame (
@@ -210,7 +211,6 @@ private:
     Gpu::LumenSchedule gpu_lumen_schedule_;
     Gpu::Presenter presenter_;
     Gpu::Profiler gpu_profiler_;
-    PerformanceMetrics::Writer visual_metrics_writer_;
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
@@ -226,9 +226,20 @@ private:
     std::vector<std::uint8_t> color_buffer_,
                               present_buffer_;
 
+    std::vector<double> cpu_render_samples_,
+                        cpu_geometry_samples_,
+                        cpu_scene_samples_,
+                        cpu_direct_samples_,
+                        cpu_lumen_samples_,
+                        cpu_reflection_samples_,
+                        cpu_resolve_samples_;
+
     RenderMode render_mode_ = RenderMode::Final;
     std::string test_name_;
     std::string gpu_error_scratch_;
+    bool cpu_geometry_valid_ = false;
+    bool cpu_direct_valid_ = false;
+    bool cpu_visual_metrics_enabled_ = false;
     bool gpu_pipeline_enabled_ = false;
     bool gpu_error_reported_ = false;
     bool gpu_camera_matrices_valid_ = false;
