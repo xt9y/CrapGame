@@ -303,10 +303,10 @@ bool Presenter::presentTexture (
                 std::string *error
         )
 {
-    /* Other renderer passes can alter program/VAO/texture state. Until the
-     * renderer explicitly publishes a state-dirty bit, conservatively rebind
-     * the minimal presentation state on each GPU frame. */
-    invalidateGpuState();
+    /* Rendering publishes explicit invalidation whenever geometry, direct
+     * lighting, Lumen, resize, or CPU upload mutates presentation state. A
+     * stable present-only frame can therefore reuse the known program/VAO/
+     * texture/framebuffer bindings and issue only the fullscreen draw. */
     return drawTexture(texture, false, false, error);
 }
 
