@@ -1,10 +1,12 @@
 #include "GlobalDistanceField.hpp"
 
 #include "Renderer/Lumen/GlobalDistanceFieldPolicy.hpp"
+#include "Renderer/ParallelRows.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <thread>
 
 namespace Renderer 
 {
@@ -48,9 +50,23 @@ void GlobalDistanceField::build (
 {
     clipmaps_.resize(3u);
 
-    buildClipmap(&clipmaps_[0], scene, camera_position, 8.0f, 18);
-    buildClipmap(&clipmaps_[1], scene, camera_position, 24.0f, 18);
-    buildClipmap(&clipmaps_[2], scene, camera_position, 64.0f, 18);
+    constexpr float HALF_EXTENTS[] = {8.0f, 24.0f, 64.0f};
+
+    parallelRowsDynamic(
+            3,
+            std::thread::hardware_concurrency(),
+            [&] (int clipmap_index)
+            {
+                buildClipmap(
+                        &clipmaps_[static_cast<std::size_t>(clipmap_index)],
+                        scene,
+                        camera_position,
+                        HALF_EXTENTS[clipmap_index],
+                        18
+                    );
+            },
+            3u
+        );
 }
 
 float GlobalDistanceField::sample (

@@ -1,5 +1,6 @@
 #include "SurfaceCache.hpp"
 
+#include <cstddef>
 #include <limits>
 
 namespace Renderer 
@@ -16,18 +17,17 @@ Math::Vec3 toVec3 (const Ecs::Vec3& value)
 
 Math::Vec3 previousIndirect (
                 const std::vector<SurfaceSample>& previous,
-                const Card& card
+                const Card& card,
+                std::size_t begin,
+                std::size_t end
         ) 
 {
     Math::Vec3 result = {0.0f, 0.0f, 0.0f};
     float best_score = std::numeric_limits<float>::max();
 
-    for (const SurfaceSample& sample : previous) 
+    for (std::size_t index = begin; index < end; ++index) 
     {
-        if (sample.card.entity != card.entity) 
-        {
-            continue;
-        }
+        const SurfaceSample& sample = previous[index];
 
         const float facing = Math::dot(
                 sample.card.normal,
@@ -65,10 +65,18 @@ void SurfaceCache::build (
                 const CardScene& cards
         ) 
 {
-    const std::vector<SurfaceSample> previous = samples_;
-
+    previous_samples_.swap(samples_);
     samples_.clear();
-    samples_.reserve(cards.cards().size());
+
+    if (samples_.capacity() < cards.cards().size())
+    {
+        samples_.reserve(cards.cards().size());
+    }
+
+    std::size_t previous_cursor = 0u,
+                previous_begin = 0u,
+                previous_end = 0u;
+    Ecs::Entity previous_entity = Ecs::INVALID_ENTITY;
 
     for (const Card& card : cards.cards()) 
     {
@@ -80,6 +88,26 @@ void SurfaceCache::build (
             continue;
         }
 
+        if (card.entity != previous_entity)
+        {
+            while (previous_cursor < previous_samples_.size()
+                    && previous_samples_[previous_cursor].card.entity < card.entity)
+            {
+                ++previous_cursor;
+            }
+
+            previous_begin = previous_cursor;
+
+            while (previous_cursor < previous_samples_.size()
+                    && previous_samples_[previous_cursor].card.entity == card.entity)
+            {
+                ++previous_cursor;
+            }
+
+            previous_end = previous_cursor;
+            previous_entity = card.entity;
+        }
+
         samples_.push_back({
             card,
             toVec3(material->albedo),
@@ -89,7 +117,12 @@ void SurfaceCache::build (
                 material->emissive.z * material->emissive_strength,
             },
             {0.0f, 0.0f, 0.0f},
-            previousIndirect(previous, card),
+            previousIndirect(
+                    previous_samples_,
+                    card,
+                    previous_begin,
+                    previous_end
+                ),
             material->metallic,
             material->roughness,
         });

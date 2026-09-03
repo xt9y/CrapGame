@@ -215,6 +215,26 @@ jobs:
             Sources/Renderer/Math/Math.cpp \
             -o /tmp/contact-ao-stage71-74-contract
           /tmp/contact-ao-stage71-74-contract
+      - name: Dynamic scene Stage 91-94 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
+            -ISources \
+            tests/dynamic_scene_stage91_94_contract.cpp \
+            Sources/Ecs/Ecs.cpp \
+            Sources/Renderer/Lumen/Cards.cpp \
+            Sources/Renderer/Lumen/SurfaceCache.cpp \
+            Sources/Renderer/Mesh/Mesh.cpp \
+            Sources/Renderer/Math/Math.cpp \
+            -o /tmp/dynamic-scene-stage91-94-contract
+          /tmp/dynamic-scene-stage91-94-contract
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
+            -ISources -c Sources/Renderer/Lumen/GlobalDistanceField.cpp \
+            -o /tmp/global-distance-field-stage91-94.o
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources -c Sources/Renderer/Lumen/SceneLighting.cpp \
+            -o /tmp/scene-lighting-stage91-94.o
       - name: Screen probe implementation compile
         shell: bash
         run: |

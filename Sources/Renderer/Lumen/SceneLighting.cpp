@@ -32,7 +32,13 @@ void updateSceneLighting (
         return;
     }
 
-    std::vector<ActiveLight> lights;
+    static thread_local std::vector<ActiveLight> lights;
+    lights.clear();
+
+    if (lights.capacity() < world.entities().size())
+    {
+        lights.reserve(world.entities().size());
+    }
 
     for (const Ecs::Entity entity : world.entities()) 
     {

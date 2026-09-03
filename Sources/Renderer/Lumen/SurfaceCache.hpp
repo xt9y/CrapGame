@@ -50,7 +50,8 @@ public:
     const std::vector<SurfaceSample>& samples () const;
 
 private:
-    std::vector<SurfaceSample> samples_;
+    std::vector<SurfaceSample> samples_,
+                               previous_samples_;
 };
 
 } // namespace Lumen
