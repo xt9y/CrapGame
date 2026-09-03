@@ -1,5 +1,6 @@
 #include "ShortRangeAo.hpp"
 
+#include "Renderer/Lumen/AoSamplingMath.hpp"
 #include "Renderer/Lumen/Sampling.hpp"
 
 #include <algorithm>
@@ -23,12 +24,18 @@ float shortRangeWeight (
         return 0.0f;
     }
 
-    const float remaining = 1.0f - Math::clamp(
-            distance / maximum_distance,
-            0.0f,
-            1.0f
-        );
+    float normalized = distance / maximum_distance;
 
+    if (normalized < 0.0f)
+    {
+        normalized = 0.0f;
+    }
+    else if (normalized > 1.0f)
+    {
+        normalized = 1.0f;
+    }
+
+    const float remaining = 1.0f - normalized;
     return remaining * remaining;
 }
 
@@ -53,14 +60,9 @@ float shortRangeVisibility (
         static_cast<std::size_t>(gbuffer.width()) *
         static_cast<std::size_t>(gbuffer.height());
 
-    /*
-     * Keep RendererCheck's 320x218 traced AO unchanged.  At interactive
-     * resolutions a per-pixel unified SDF trace is catastrophically costly,
-     * so derive the contact term from nearby reconstructed GBuffer samples.
-     */
     if (pixel_count > 640u * 360u)
     {
-        const GBuffer::Pixel *base = &gbuffer.pixel(0, 0);
+        const GBuffer::Pixel *base = gbuffer.data();
         const std::ptrdiff_t index = &pixel - base;
         const std::ptrdiff_t count =
             static_cast<std::ptrdiff_t>(pixel_count);
@@ -91,7 +93,7 @@ float shortRangeVisibility (
             Math::multiply(pixel.normal, 0.025f)
         );
 
-    const HemisphereBasis basis = hemisphereBasis(pixel.normal);
+    const HemisphereBasis basis = aoHemisphereBasisExact(pixel.normal);
     const bool cached_sequence =
         sequence && sequence->size() >= static_cast<std::size_t>(rays);
 
@@ -103,7 +105,7 @@ float shortRangeVisibility (
             ? (*sequence)[static_cast<std::size_t>(ray)]
             : hemisphereSequenceSample(ray, rays, frame_index + 31u);
 
-        const Math::Vec3 direction = sampleHemisphere(basis, sample);
+        const Math::Vec3 direction = aoSampleHemisphereExact(basis, sample);
 
         const VisibilityTraceHit hit = tracer.traceVisibility(
                 gbuffer,

@@ -1,5 +1,6 @@
 #include "ScreenProbe.hpp"
 
+#include "Renderer/Lumen/AoSamplingMath.hpp"
 #include "Renderer/Lumen/ParallelRows.hpp"
 #include "Renderer/Lumen/Sampling.hpp"
 #include "Renderer/Lumen/ScreenProbePolicy.hpp"
@@ -237,7 +238,10 @@ void ScreenProbeGather::gather (
             static_cast<std::size_t>(probe_height)
         );
 
-    output->assign(pixel_count, {0.0f, 0.0f, 0.0f});
+    if (output->size() != pixel_count)
+    {
+        output->resize(pixel_count);
+    }
 
     const std::vector<HemisphereSample> probe_sequence =
         buildHemisphereSequence(rays_per_probe, frame_index);
@@ -533,6 +537,7 @@ void ScreenProbeGather::gather (
     });
     const auto filter_finished = ProbeClock::now();
 
+    const GBuffer::Pixel *pixels = gbuffer.data();
     const auto ao_started = ProbeClock::now();
     parallelRows(gbuffer.height(), [&](int y)
     {
@@ -545,10 +550,17 @@ void ScreenProbeGather::gather (
 
             if (!filtered_valid[index])
             {
+                (*output)[index] = {0.0f, 0.0f, 0.0f};
                 continue;
             }
 
-            const GBuffer::Pixel& pixel = gbuffer.pixel(x, y);
+            if (aoRadianceIsExactlyZero(filtered_indirect[index]))
+            {
+                (*output)[index] = filtered_indirect[index];
+                continue;
+            }
+
+            const GBuffer::Pixel& pixel = pixels[index];
             const float visibility = shortRangeVisibility(
                     gbuffer,
                     view,
