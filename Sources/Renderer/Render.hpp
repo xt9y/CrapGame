@@ -189,10 +189,12 @@ private:
 
     RenderMode render_mode_ = RenderMode::Final;
     std::string test_name_;
+    std::string gpu_error_scratch_;
     bool gpu_pipeline_enabled_ = false;
     bool gpu_error_reported_ = false;
     bool gpu_camera_matrices_valid_ = false;
     bool gpu_camera_data_valid_ = false;
+    bool gpu_profiler_enabled_ = false;
     std::uint64_t gpu_frame_index_ = 0;
     std::uint64_t gpu_lumen_sample_index_ = 0;
 
