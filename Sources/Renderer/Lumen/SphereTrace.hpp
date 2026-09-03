@@ -84,7 +84,7 @@ private:
     struct Instance 
     {
         Ecs::Entity entity;
-        Ecs::MeshType mesh;
+        const MeshDistanceField *field = nullptr;
         Ecs::TransformComponent transform;
         CachedInverseTransform inverse_transform;
         SdfWorldBounds world_bounds;

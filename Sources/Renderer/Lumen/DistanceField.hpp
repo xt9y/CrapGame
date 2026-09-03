@@ -3,6 +3,7 @@
 
 #include "Renderer/Mesh/Mesh.hpp"
 
+#include <cstddef>
 #include <vector>
 
 namespace Renderer 
@@ -18,6 +19,7 @@ struct MeshDistanceField
 
     int resolution = 0;
     int resolution_minus_one = 0;
+    std::size_t resolution_squared = 0u;
     bool signed_distance = false;
 };
 

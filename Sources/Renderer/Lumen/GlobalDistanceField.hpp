@@ -4,6 +4,7 @@
 #include "Renderer/Lumen/SphereTrace.hpp"
 #include "Renderer/Math/Math.hpp"
 
+#include <cstddef>
 #include <vector>
 
 namespace Renderer 
@@ -31,6 +32,7 @@ private:
         float extent = 0.0f;
         int resolution = 0;
         int resolution_minus_one = 0;
+        std::size_t resolution_squared = 0u;
         std::vector<float> distance;
     };
 

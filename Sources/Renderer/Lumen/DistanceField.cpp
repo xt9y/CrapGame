@@ -1,6 +1,7 @@
 #include "DistanceField.hpp"
 
 #include "Renderer/Lumen/DistanceFieldSamplePolicy.hpp"
+#include "Renderer/Lumen/TrilinearIndex.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -223,6 +224,9 @@ MeshDistanceField buildDistanceField (
 
     field.resolution = std::max(4, resolution);
     field.resolution_minus_one = field.resolution - 1;
+    field.resolution_squared =
+        static_cast<std::size_t>(field.resolution) *
+        static_cast<std::size_t>(field.resolution);
     field.signed_distance = isVolumetric(mesh.bounds);
 
     const Math::Vec3 original_extent =
@@ -248,8 +252,7 @@ MeshDistanceField buildDistanceField (
     };
 
     const std::size_t voxel_count =
-        static_cast<std::size_t>(field.resolution) *
-        static_cast<std::size_t>(field.resolution) *
+        field.resolution_squared *
         static_cast<std::size_t>(field.resolution);
 
     field.distance.resize(voxel_count);
@@ -364,15 +367,18 @@ float sampleDistanceField (
                 ty = grid_y - static_cast<float>(y0),
                 tz = grid_z - static_cast<float>(z0);
 
-    const auto sample = [&] (int x, int y, int z) 
-    {
-        return field.distance[index(x, y, z, field.resolution)];
-    };
+    const TrilinearIndices indices = trilinearIndicesExact(
+            x0, x1,
+            y0, y1,
+            z0, z1,
+            field.resolution,
+            field.resolution_squared
+        );
 
-    const float c00 = sample(x0, y0, z0) * (1.0f - tx) + sample(x1, y0, z0) * tx,
-                c10 = sample(x0, y1, z0) * (1.0f - tx) + sample(x1, y1, z0) * tx,
-                c01 = sample(x0, y0, z1) * (1.0f - tx) + sample(x1, y0, z1) * tx,
-                c11 = sample(x0, y1, z1) * (1.0f - tx) + sample(x1, y1, z1) * tx,
+    const float c00 = field.distance[indices.x0y0z0] * (1.0f - tx) + field.distance[indices.x1y0z0] * tx,
+                c10 = field.distance[indices.x0y1z0] * (1.0f - tx) + field.distance[indices.x1y1z0] * tx,
+                c01 = field.distance[indices.x0y0z1] * (1.0f - tx) + field.distance[indices.x1y0z1] * tx,
+                c11 = field.distance[indices.x0y1z1] * (1.0f - tx) + field.distance[indices.x1y1z1] * tx,
                 c0 = c00 * (1.0f - ty) + c10 * ty,
                 c1 = c01 * (1.0f - ty) + c11 * ty;
 

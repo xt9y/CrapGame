@@ -1,6 +1,7 @@
 #include "GlobalDistanceField.hpp"
 
 #include "Renderer/Lumen/GlobalDistanceFieldPolicy.hpp"
+#include "Renderer/Lumen/TrilinearIndex.hpp"
 #include "Renderer/ParallelRows.hpp"
 
 #include <algorithm>
@@ -100,6 +101,9 @@ void GlobalDistanceField::buildClipmap (
     clipmap->half_extent = half_extent;
     clipmap->resolution = std::max(4, resolution);
     clipmap->resolution_minus_one = clipmap->resolution - 1;
+    clipmap->resolution_squared =
+        static_cast<std::size_t>(clipmap->resolution) *
+        static_cast<std::size_t>(clipmap->resolution);
     clipmap->extent = half_extent * 2.0f;
 
     const float voxel_size =
@@ -118,8 +122,7 @@ void GlobalDistanceField::buildClipmap (
     };
 
     const std::size_t voxel_count =
-        static_cast<std::size_t>(clipmap->resolution) *
-        static_cast<std::size_t>(clipmap->resolution) *
+        clipmap->resolution_squared *
         static_cast<std::size_t>(clipmap->resolution);
 
     clipmap->distance.resize(voxel_count);
@@ -192,20 +195,18 @@ float GlobalDistanceField::sampleClipmap (
                 ty = grid_y - static_cast<float>(y0),
                 tz = grid_z - static_cast<float>(z0);
 
-    const auto sample_value = [&] (int x, int y, int z) 
-    {
-        return clipmap.distance[index(
-                x,
-                y,
-                z,
-                clipmap.resolution
-            )];
-    };
+    const TrilinearIndices indices = trilinearIndicesExact(
+            x0, x1,
+            y0, y1,
+            z0, z1,
+            clipmap.resolution,
+            clipmap.resolution_squared
+        );
 
-    const float c00 = sample_value(x0, y0, z0) * (1.0f - tx) + sample_value(x1, y0, z0) * tx,
-                c10 = sample_value(x0, y1, z0) * (1.0f - tx) + sample_value(x1, y1, z0) * tx,
-                c01 = sample_value(x0, y0, z1) * (1.0f - tx) + sample_value(x1, y0, z1) * tx,
-                c11 = sample_value(x0, y1, z1) * (1.0f - tx) + sample_value(x1, y1, z1) * tx,
+    const float c00 = clipmap.distance[indices.x0y0z0] * (1.0f - tx) + clipmap.distance[indices.x1y0z0] * tx,
+                c10 = clipmap.distance[indices.x0y1z0] * (1.0f - tx) + clipmap.distance[indices.x1y1z0] * tx,
+                c01 = clipmap.distance[indices.x0y0z1] * (1.0f - tx) + clipmap.distance[indices.x1y0z1] * tx,
+                c11 = clipmap.distance[indices.x0y1z1] * (1.0f - tx) + clipmap.distance[indices.x1y1z1] * tx,
                 c0 = c00 * (1.0f - ty) + c10 * ty,
                 c1 = c01 * (1.0f - ty) + c11 * ty;
 

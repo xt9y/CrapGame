@@ -1,10 +1,12 @@
 #include "Renderer/GBuffer/GBuffer.hpp"
 #include "Renderer/Lumen/ScreenTrace.hpp"
 #include "Renderer/Lumen/SphereTrace.hpp"
+#include "Renderer/Lumen/TrilinearIndex.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <array>
 #include <cassert>
+#include <cstddef>
 
 namespace
 {
@@ -15,6 +17,60 @@ void addRenderableCube(Ecs::World *world, const Ecs::TransformComponent& transfo
     world->addTransform(entity, transform);
     world->addMesh(entity, {Ecs::MeshType::Cube});
     world->addRenderable(entity, {true});
+}
+
+std::size_t legacyIndex(int x, int y, int z, int resolution)
+{
+    return static_cast<std::size_t>(z) *
+               static_cast<std::size_t>(resolution) *
+               static_cast<std::size_t>(resolution) +
+           static_cast<std::size_t>(y) *
+               static_cast<std::size_t>(resolution) +
+           static_cast<std::size_t>(x);
+}
+
+void exactTrilinearIndicesMatchLegacy()
+{
+    struct IndexCase
+    {
+        int x0, x1,
+            y0, y1,
+            z0, z1,
+            resolution;
+    };
+
+    constexpr IndexCase cases[] = {
+        {0, 1, 0, 1, 0, 1, 4},
+        {2, 3, 5, 6, 7, 8, 18},
+        {26, 27, 26, 27, 26, 27, 28},
+        {17, 17, 17, 17, 17, 17, 18},
+        {0, 0, 27, 27, 12, 13, 28},
+    };
+
+    for (const IndexCase& test : cases)
+    {
+        const std::size_t resolution_squared =
+            static_cast<std::size_t>(test.resolution) *
+            static_cast<std::size_t>(test.resolution);
+
+        const Renderer::Lumen::TrilinearIndices indices =
+            Renderer::Lumen::trilinearIndicesExact(
+                    test.x0, test.x1,
+                    test.y0, test.y1,
+                    test.z0, test.z1,
+                    test.resolution,
+                    resolution_squared
+                );
+
+        assert(indices.x0y0z0 == legacyIndex(test.x0, test.y0, test.z0, test.resolution));
+        assert(indices.x1y0z0 == legacyIndex(test.x1, test.y0, test.z0, test.resolution));
+        assert(indices.x0y1z0 == legacyIndex(test.x0, test.y1, test.z0, test.resolution));
+        assert(indices.x1y1z0 == legacyIndex(test.x1, test.y1, test.z0, test.resolution));
+        assert(indices.x0y0z1 == legacyIndex(test.x0, test.y0, test.z1, test.resolution));
+        assert(indices.x1y0z1 == legacyIndex(test.x1, test.y0, test.z1, test.resolution));
+        assert(indices.x0y1z1 == legacyIndex(test.x0, test.y1, test.z1, test.resolution));
+        assert(indices.x1y1z1 == legacyIndex(test.x1, test.y1, test.z1, test.resolution));
+    }
 }
 
 void screenDistanceMatchesFullTrace()
@@ -131,6 +187,7 @@ void sdfDistanceOnlyMatchesGenericDistance()
 
 int main()
 {
+    exactTrilinearIndicesMatchLegacy();
     screenDistanceMatchesFullTrace();
     sdfDistanceOnlyMatchesGenericDistance();
     return 0;

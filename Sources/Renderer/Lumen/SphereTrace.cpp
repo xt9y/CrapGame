@@ -176,7 +176,7 @@ void DistanceFieldScene::build (const Ecs::World& world)
 
         instances_.push_back({
             entity,
-            mesh->mesh,
+            &field,
             *transform,
             cacheInverseTransform(*transform),
             transformBounds(field.bounds, *transform),
@@ -207,8 +207,7 @@ float DistanceFieldScene::distance (
             continue;
         }
 
-        const MeshDistanceField& field =
-            fieldFor(instance.mesh);
+        const MeshDistanceField& field = *instance.field;
 
         const Math::Vec3 local_position =
             inverseTransformPointCached(
@@ -270,8 +269,7 @@ float DistanceFieldScene::distanceOnly (
             continue;
         }
 
-        const MeshDistanceField& field =
-            fieldFor(instance.mesh);
+        const MeshDistanceField& field = *instance.field;
 
         const Math::Vec3 local_position =
             inverseTransformPointCached(
