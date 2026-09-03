@@ -38,7 +38,12 @@ public:
                 int ray_count,
                 std::vector<Math::Vec3> *output,
                 ScreenProbeTimings *timings = nullptr
-        ) const;
+        );
+
+private:
+    std::vector<Math::Vec3> reconstructed_scratch_;
+    std::vector<Math::Vec3> filtered_indirect_scratch_;
+    std::vector<std::uint8_t> filtered_valid_scratch_;
 };
 
 } // namespace Lumen

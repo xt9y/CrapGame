@@ -208,7 +208,7 @@ void ScreenProbeGather::gather (
                 int ray_count,
                 std::vector<Math::Vec3> *output,
                 ScreenProbeTimings *timings
-        ) const 
+        ) 
 {
     if (!output) 
     {
@@ -220,18 +220,22 @@ void ScreenProbeGather::gather (
         *timings = {};
     }
 
-    const int probe_spacing = std::max(4, spacing),
+    const int width = gbuffer.width(),
+              height = gbuffer.height(),
+              probe_spacing = std::max(4, spacing),
               rays_per_probe = std::max(1, ray_count);
 
     const int probe_width =
-        (gbuffer.width() + probe_spacing - 1) / probe_spacing;
+        (width + probe_spacing - 1) / probe_spacing;
 
     const int probe_height =
-        (gbuffer.height() + probe_spacing - 1) / probe_spacing;
+        (height + probe_spacing - 1) / probe_spacing;
 
     const std::size_t pixel_count =
-        static_cast<std::size_t>(gbuffer.width()) *
-        static_cast<std::size_t>(gbuffer.height());
+        static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height);
+
+    const GBuffer::Pixel *pixels = gbuffer.data();
 
     std::vector<ProbeSample> probes(
             static_cast<std::size_t>(probe_width) *
@@ -242,6 +246,14 @@ void ScreenProbeGather::gather (
     {
         output->resize(pixel_count);
     }
+
+    reconstructed_scratch_.resize(pixel_count);
+    filtered_indirect_scratch_.resize(pixel_count);
+    filtered_valid_scratch_.assign(pixel_count, 0u);
+
+    std::vector<Math::Vec3>& reconstructed = reconstructed_scratch_;
+    std::vector<Math::Vec3>& filtered_indirect = filtered_indirect_scratch_;
+    std::vector<std::uint8_t>& filtered_valid = filtered_valid_scratch_;
 
     const std::vector<HemisphereSample> probe_sequence =
         buildHemisphereSequence(rays_per_probe, frame_index);
@@ -297,18 +309,16 @@ void ScreenProbeGather::gather (
     });
     const auto trace_finished = ProbeClock::now();
 
-    std::vector<Math::Vec3> reconstructed(
-            pixel_count,
-            {0.0f, 0.0f, 0.0f}
-        );
-
     const auto reconstruct_started = ProbeClock::now();
-    parallelRows(gbuffer.height(), [&](int y)
+    parallelRows(height, [&](int y)
     {
-        for (int x = 0; x < gbuffer.width(); ++x) 
+        const std::size_t row =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
+
+        for (int x = 0; x < width; ++x) 
         {
-            const GBuffer::Pixel& pixel =
-                gbuffer.pixel(x, y);
+            const std::size_t index = row + static_cast<std::size_t>(x);
+            const GBuffer::Pixel& pixel = pixels[index];
 
             if (!pixel.valid) 
             {
@@ -426,28 +436,21 @@ void ScreenProbeGather::gather (
                     );
             }
 
-            reconstructed[
-                static_cast<std::size_t>(y) *
-                static_cast<std::size_t>(gbuffer.width()) +
-                static_cast<std::size_t>(x)
-            ] = indirect;
+            reconstructed[index] = indirect;
         }
     });
     const auto reconstruct_finished = ProbeClock::now();
 
-    std::vector<Math::Vec3> filtered_indirect(
-            pixel_count,
-            {0.0f, 0.0f, 0.0f}
-        );
-    std::vector<std::uint8_t> filtered_valid(pixel_count, 0u);
-
     const auto filter_started = ProbeClock::now();
-    parallelRows(gbuffer.height(), [&](int y)
+    parallelRows(height, [&](int y)
     {
-        for (int x = 0; x < gbuffer.width(); ++x) 
+        const std::size_t row =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
+
+        for (int x = 0; x < width; ++x) 
         {
-            const GBuffer::Pixel& pixel =
-                gbuffer.pixel(x, y);
+            const std::size_t index = row + static_cast<std::size_t>(x);
+            const GBuffer::Pixel& pixel = pixels[index];
 
             if (!pixel.valid) 
             {
@@ -465,15 +468,18 @@ void ScreenProbeGather::gather (
                               sample_y = y + offset_y;
 
                     if (sample_x < 0
-                            || sample_x >= gbuffer.width()
+                            || sample_x >= width
                             || sample_y < 0
-                            || sample_y >= gbuffer.height()) 
+                            || sample_y >= height) 
                     {
                         continue;
                     }
 
-                    const GBuffer::Pixel& sample =
-                        gbuffer.pixel(sample_x, sample_y);
+                    const std::size_t sample_index =
+                        static_cast<std::size_t>(sample_y) *
+                        static_cast<std::size_t>(width) +
+                        static_cast<std::size_t>(sample_x);
+                    const GBuffer::Pixel& sample = pixels[sample_index];
 
                     if (!sample.valid
                             || sample.entity != pixel.entity) 
@@ -505,11 +511,7 @@ void ScreenProbeGather::gather (
                     filtered = Math::add(
                             filtered,
                             Math::multiply(
-                                    reconstructed[
-                                        static_cast<std::size_t>(sample_y) *
-                                        static_cast<std::size_t>(gbuffer.width()) +
-                                        static_cast<std::size_t>(sample_x)
-                                    ],
+                                    reconstructed[sample_index],
                                     weight
                                 )
                         );
@@ -523,11 +525,6 @@ void ScreenProbeGather::gather (
                 continue;
             }
 
-            const std::size_t index =
-                static_cast<std::size_t>(y) *
-                static_cast<std::size_t>(gbuffer.width()) +
-                static_cast<std::size_t>(x);
-
             filtered_indirect[index] = Math::multiply(
                     filtered,
                     1.0f / total_weight
@@ -537,16 +534,15 @@ void ScreenProbeGather::gather (
     });
     const auto filter_finished = ProbeClock::now();
 
-    const GBuffer::Pixel *pixels = gbuffer.data();
     const auto ao_started = ProbeClock::now();
-    parallelRows(gbuffer.height(), [&](int y)
+    parallelRows(height, [&](int y)
     {
-        for (int x = 0; x < gbuffer.width(); ++x) 
+        const std::size_t row =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
+
+        for (int x = 0; x < width; ++x) 
         {
-            const std::size_t index =
-                static_cast<std::size_t>(y) *
-                static_cast<std::size_t>(gbuffer.width()) +
-                static_cast<std::size_t>(x);
+            const std::size_t index = row + static_cast<std::size_t>(x);
 
             if (!filtered_valid[index])
             {
