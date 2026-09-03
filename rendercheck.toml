@@ -14,6 +14,15 @@ max_changed_percent = 0.05
 [validation]
 vulkan = false
 
+[performance]
+warmup_ms = 1000
+sample_ms = 3000
+regression_percent = 15
+min_samples = 8
+
+[[perf]]
+name = "FinalScene"
+
 # Geometry and GBuffer
 [[test]]
 name = "GeometryCube"
