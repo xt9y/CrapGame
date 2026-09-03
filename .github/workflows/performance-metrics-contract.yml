@@ -42,3 +42,12 @@ jobs:
             tests/gpu_surface_formats_contract.cpp \
             -o /tmp/gpu-surface-formats-contract
           /tmp/gpu-surface-formats-contract
+      - name: GPU resource lifecycle contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/gpu_resource_lifecycle_contract.cpp \
+            -o /tmp/gpu-resource-lifecycle-contract
+          /tmp/gpu-resource-lifecycle-contract
