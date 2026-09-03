@@ -61,12 +61,12 @@ inline BvhBenchConfig bvhBenchConfig ()
 
 inline std::size_t configuredBvhAutoThreshold (std::size_t minimum_threshold)
 {
-    /* The corrected 66-primitive benchmark is decisively in BVH territory,
-     * but we do not have enough samples yet to justify enabling tree
-     * traversal immediately above the old 8-primitive guess. Keep the normal
-     * path conservative until the crossover sweep refines this value. */
-    constexpr std::size_t CONSERVATIVE_THRESHOLD = 32u;
-    std::size_t threshold = std::max(minimum_threshold, CONSERVATIVE_THRESHOLD);
+    /* RendererCheck's corrected release sweep measured linear traversal as
+     * faster at stress 4/8 and BVH traversal as faster at 16/32/64/128/256.
+     * Lock the production crossover to that measured boundary instead of the
+     * earlier conservative 32-primitive placeholder. */
+    constexpr std::size_t MEASURED_THRESHOLD = 16u;
+    std::size_t threshold = std::max(minimum_threshold, MEASURED_THRESHOLD);
 
     if (const char *value = std::getenv("CRAPGAME_BVH_THRESHOLD"))
     {
