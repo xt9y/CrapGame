@@ -2,6 +2,7 @@
 
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/ResourceLifecycle.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 
@@ -112,20 +113,29 @@ GLenum surfacePixelType (SurfaceFormat format)
     return format == SurfaceFormat::Rgba8 ? GL_UNSIGNED_BYTE : GL_FLOAT;
 }
 
-GLuint createColorTexture (
+bool ensureColorTexture (
+            GLuint *texture,
             int width,
             int height,
             SurfaceFormat format
     )
 {
-    const GLuint texture = lwcgl_glGenTexture();
-
-    if (texture == 0)
+    if (!texture)
     {
-        return 0;
+        return false;
     }
 
-    glBindTexture(GL_TEXTURE_2D, texture);
+    if (*texture == 0)
+    {
+        *texture = lwcgl_glGenTexture();
+    }
+
+    if (*texture == 0)
+    {
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, *texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -142,19 +152,27 @@ GLuint createColorTexture (
             nullptr
         );
 
-    return texture;
+    return true;
 }
 
-GLuint createDepthTexture (int width, int height)
+bool ensureDepthTexture (GLuint *texture, int width, int height)
 {
-    const GLuint texture = lwcgl_glGenTexture();
-
-    if (texture == 0)
+    if (!texture)
     {
-        return 0;
+        return false;
     }
 
-    glBindTexture(GL_TEXTURE_2D, texture);
+    if (*texture == 0)
+    {
+        *texture = lwcgl_glGenTexture();
+    }
+
+    if (*texture == 0)
+    {
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, *texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -171,7 +189,7 @@ GLuint createDepthTexture (int width, int height)
             nullptr
         );
 
-    return texture;
+    return true;
 }
 
 void deleteTexture (GLuint *texture)
@@ -247,20 +265,14 @@ bool GBufferGpu::init (std::string *error)
 
 bool GBufferGpu::resize (int width, int height, std::string *error)
 {
-    const int new_width = std::max(1, width);
-    const int new_height = std::max(1, height);
-
-    if (new_width == width_
-            && new_height == height_
-            && framebuffer_ != 0)
+    if (!resizeStorageRequired(
+            width_, height_, framebuffer_ != 0, width, height))
     {
         return true;
     }
 
-    width_ = new_width;
-    height_ = new_height;
-
-    destroyAttachments();
+    width_ = normalizedExtent(width);
+    height_ = normalizedExtent(height);
     return createAttachments(error);
 }
 
@@ -426,7 +438,10 @@ bool GBufferGpu::uploadBatch (Batch *batch, std::string *error)
 
 bool GBufferGpu::createAttachments (std::string *error)
 {
-    GL30.glGenFramebuffers(1, &framebuffer_);
+    if (framebuffer_ == 0)
+    {
+        GL30.glGenFramebuffers(1, &framebuffer_);
+    }
 
     if (framebuffer_ == 0)
     {
@@ -434,25 +449,22 @@ bool GBufferGpu::createAttachments (std::string *error)
         return false;
     }
 
-    position_depth_ = createColorTexture(
-            width_, height_, GBUFFER_POSITION_DEPTH_FORMAT
-        );
-    normal_roughness_ = createColorTexture(
-            width_, height_, GBUFFER_NORMAL_ROUGHNESS_FORMAT
-        );
-    albedo_metallic_ = createColorTexture(
-            width_, height_, GBUFFER_ALBEDO_METALLIC_FORMAT
-        );
-    emissive_ = createColorTexture(
-            width_, height_, GBUFFER_EMISSIVE_FORMAT
-        );
-    depth_ = createDepthTexture(width_, height_);
+    const bool storage_ok =
+        ensureColorTexture(
+                &position_depth_, width_, height_, GBUFFER_POSITION_DEPTH_FORMAT
+            )
+        && ensureColorTexture(
+                &normal_roughness_, width_, height_, GBUFFER_NORMAL_ROUGHNESS_FORMAT
+            )
+        && ensureColorTexture(
+                &albedo_metallic_, width_, height_, GBUFFER_ALBEDO_METALLIC_FORMAT
+            )
+        && ensureColorTexture(
+                &emissive_, width_, height_, GBUFFER_EMISSIVE_FORMAT
+            )
+        && ensureDepthTexture(&depth_, width_, height_);
 
-    if (position_depth_ == 0
-            || normal_roughness_ == 0
-            || albedo_metallic_ == 0
-            || emissive_ == 0
-            || depth_ == 0)
+    if (!storage_ok)
     {
         setError(error, "failed to allocate GPU GBuffer textures");
         destroyAttachments();
