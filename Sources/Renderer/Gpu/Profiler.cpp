@@ -15,6 +15,7 @@ constexpr std::uint64_t SAMPLE_INTERVAL = 64u;
 constexpr std::uint64_t PRINT_CHECK_INTERVAL = 1024u;
 constexpr std::uint64_t PRINT_INTERVAL_NS = 2000000000ull;
 constexpr std::uint32_t WARMUP_SAMPLES = 1u;
+constexpr std::uint32_t PERF_FLUSH_INTERVAL = 64u;
 
 std::uint64_t monotonicNanoseconds ()
 {
@@ -39,6 +40,21 @@ const char *passName (Profiler::Pass pass)
     }
 
     return "unknown";
+}
+
+const char *metricName (Profiler::Pass pass)
+{
+    switch (pass)
+    {
+        case Profiler::Pass::Geometry:       return "geometry_ms";
+        case Profiler::Pass::DirectLighting: return "direct_ms";
+        case Profiler::Pass::LumenTrace:     return "lumen_trace_ms";
+        case Profiler::Pass::LumenComposite: return "lumen_compose_ms";
+        case Profiler::Pass::Present:        return "present_ms";
+        case Profiler::Pass::Count:          break;
+    }
+
+    return "unknown_ms";
 }
 
 } // namespace
@@ -79,12 +95,36 @@ bool Profiler::init ()
 
     milliseconds_.fill(0.0);
     sample_counts_.fill(0u);
+
+    performance_mode_ = PerformanceMetrics::requested();
+    performance_start_ns_ = monotonicNanoseconds();
+    performance_warmup_ms_ = PerformanceMetrics::warmupMilliseconds();
+    performance_duration_ms_ = PerformanceMetrics::durationMilliseconds();
+    performance_samples_since_flush_ = 0u;
+    performance_writer_ready_ =
+        !performance_mode_ || performance_writer_.open();
+
+    if (!performance_writer_ready_)
+    {
+        shutdown();
+        return false;
+    }
+
     initialized_ = true;
     return true;
 }
 
 void Profiler::shutdown ()
 {
+    if (initialized_)
+    {
+        /* Perf mode exits on a wall-clock boundary while timer-query results
+         * can still be in flight. Resolve those slots before deleting query
+         * objects so the final samples make it to RendererCheck. */
+        collect(true);
+        performance_writer_.flush();
+    }
+
     for (Slot& slot : slots_)
     {
         if (slot.begin[0] != 0)
@@ -106,9 +146,16 @@ void Profiler::shutdown ()
         slot = {};
     }
 
+    performance_writer_.close();
     milliseconds_.fill(0.0);
     sample_counts_.fill(0u);
+    performance_start_ns_ = 0;
+    performance_warmup_ms_ = 0.0;
+    performance_duration_ms_ = 0.0;
+    performance_samples_since_flush_ = 0u;
     current_slot_ = -1;
+    performance_mode_ = false;
+    performance_writer_ready_ = false;
     initialized_ = false;
 }
 
@@ -142,7 +189,129 @@ bool Profiler::slotReady (const Slot& slot) const
     return true;
 }
 
-void Profiler::collect ()
+bool Profiler::performanceSampleAllowed (const Slot& slot) const
+{
+    if (!performance_mode_
+            || !performance_writer_ready_
+            || slot.submitted_ns < performance_start_ns_)
+    {
+        return false;
+    }
+
+    const double elapsed_ms =
+        static_cast<double>(slot.submitted_ns - performance_start_ns_)
+        / 1000000.0;
+
+    if (elapsed_ms < performance_warmup_ms_)
+    {
+        return false;
+    }
+
+    if (performance_duration_ms_ > 0.0
+            && elapsed_ms > performance_duration_ms_)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void Profiler::consumeSlot (Slot& slot, bool block)
+{
+    if (!slot.pending)
+    {
+        return;
+    }
+
+    if (!block && !slotReady(slot))
+    {
+        return;
+    }
+
+    const bool record_performance = performanceSampleAllowed(slot);
+    double gpu_pipeline_ms = 0.0;
+    bool measured_any = false;
+
+    for (std::size_t pass = 0; pass < PASS_COUNT; ++pass)
+    {
+        if (!slot.measured[pass])
+        {
+            continue;
+        }
+
+        LWCGLGLuint64 begin = 0;
+        LWCGLGLuint64 end = 0;
+
+        GL33.glGetQueryObjectui64v(
+                slot.begin[pass],
+                GL_QUERY_RESULT,
+                &begin
+            );
+        GL33.glGetQueryObjectui64v(
+                slot.end[pass],
+                GL_QUERY_RESULT,
+                &end
+            );
+
+        if (end < begin)
+        {
+            continue;
+        }
+
+        const double sample_ms =
+            static_cast<double>(end - begin) / 1000000.0;
+
+        measured_any = true;
+        gpu_pipeline_ms += sample_ms;
+        ++sample_counts_[pass];
+
+        if (record_performance)
+        {
+            performance_writer_.write(
+                    metricName(static_cast<Pass>(pass)),
+                    sample_ms
+                );
+        }
+
+        /* Shader first-use/JIT and resource residency can make the first
+         * timestamp sample dramatically slower than steady state. Keep
+         * startup cost out of the interactive throughput EWMA. RendererCheck
+         * has its own explicit wall-clock warmup and receives raw samples. */
+        if (sample_counts_[pass] <= WARMUP_SAMPLES)
+        {
+            continue;
+        }
+
+        if (milliseconds_[pass] <= 0.0)
+        {
+            milliseconds_[pass] = sample_ms;
+        }
+        else
+        {
+            constexpr double HISTORY_WEIGHT = 0.90;
+            milliseconds_[pass] =
+                milliseconds_[pass] * HISTORY_WEIGHT +
+                sample_ms * (1.0 - HISTORY_WEIGHT);
+        }
+    }
+
+    if (record_performance && measured_any)
+    {
+        performance_writer_.write("gpu_pipeline_ms", gpu_pipeline_ms);
+        ++performance_samples_since_flush_;
+
+        if (performance_samples_since_flush_ >= PERF_FLUSH_INTERVAL)
+        {
+            performance_writer_.flush();
+            performance_samples_since_flush_ = 0u;
+        }
+    }
+
+    slot.pending = false;
+    slot.measured.fill(false);
+}
+
+void Profiler::collect (bool block)
 {
     if (!initialized_)
     {
@@ -151,65 +320,7 @@ void Profiler::collect ()
 
     for (Slot& slot : slots_)
     {
-        if (!slot.pending || !slotReady(slot))
-        {
-            continue;
-        }
-
-        for (std::size_t pass = 0; pass < PASS_COUNT; ++pass)
-        {
-            if (!slot.measured[pass])
-            {
-                continue;
-            }
-
-            LWCGLGLuint64 begin = 0;
-            LWCGLGLuint64 end = 0;
-
-            GL33.glGetQueryObjectui64v(
-                    slot.begin[pass],
-                    GL_QUERY_RESULT,
-                    &begin
-                );
-            GL33.glGetQueryObjectui64v(
-                    slot.end[pass],
-                    GL_QUERY_RESULT,
-                    &end
-                );
-
-            if (end < begin)
-            {
-                continue;
-            }
-
-            const double sample_ms =
-                static_cast<double>(end - begin) / 1000000.0;
-
-            ++sample_counts_[pass];
-
-            /* Shader first-use/JIT and resource residency can make the first
-             * timestamp sample dramatically slower than steady state. Keep
-             * startup cost out of the throughput EWMA. */
-            if (sample_counts_[pass] <= WARMUP_SAMPLES)
-            {
-                continue;
-            }
-
-            if (milliseconds_[pass] <= 0.0)
-            {
-                milliseconds_[pass] = sample_ms;
-            }
-            else
-            {
-                constexpr double HISTORY_WEIGHT = 0.90;
-                milliseconds_[pass] =
-                    milliseconds_[pass] * HISTORY_WEIGHT +
-                    sample_ms * (1.0 - HISTORY_WEIGHT);
-            }
-        }
-
-        slot.pending = false;
-        slot.measured.fill(false);
+        consumeSlot(slot, block);
     }
 }
 
@@ -217,15 +328,22 @@ void Profiler::beginFrame (std::uint64_t frame_index)
 {
     current_slot_ = -1;
 
-    if (!initialized_
-            || frame_index % SAMPLE_INTERVAL != 0u)
+    if (!initialized_)
     {
         return;
     }
 
-    collect();
+    const std::uint64_t interval =
+        performance_mode_ ? 1u : SAMPLE_INTERVAL;
 
-    const std::uint64_t sample_index = frame_index / SAMPLE_INTERVAL;
+    if (frame_index % interval != 0u)
+    {
+        return;
+    }
+
+    collect(false);
+
+    const std::uint64_t sample_index = frame_index / interval;
     Slot& slot = slots_[
         static_cast<std::size_t>(sample_index % SLOT_COUNT)
     ];
@@ -236,6 +354,7 @@ void Profiler::beginFrame (std::uint64_t frame_index)
     }
 
     slot.frame = frame_index;
+    slot.submitted_ns = monotonicNanoseconds();
     slot.measured.fill(false);
     current_slot_ = static_cast<int>(sample_index % SLOT_COUNT);
 }
@@ -299,6 +418,7 @@ void Profiler::printIfDue (std::uint64_t frame_index)
     static std::uint64_t last_print_ns = 0;
 
     if (!initialized_
+            || performance_mode_
             || frame_index == 0
             || frame_index % PRINT_CHECK_INTERVAL != 0u)
     {
@@ -314,7 +434,7 @@ void Profiler::printIfDue (std::uint64_t frame_index)
     }
 
     last_print_ns = now_ns;
-    collect();
+    collect(false);
 
     std::fprintf(stderr, "GPU frame");
 
