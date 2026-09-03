@@ -13,9 +13,11 @@ namespace Lumen
 struct MeshDistanceField 
 {
     Mesh::Bounds bounds;
+    Math::Vec3 extent;
     std::vector<float> distance;
 
     int resolution = 0;
+    int resolution_minus_one = 0;
     bool signed_distance = false;
 };
 

@@ -1,5 +1,7 @@
 #include "DistanceField.hpp"
 
+#include "Renderer/Lumen/DistanceFieldSamplePolicy.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -220,6 +222,7 @@ MeshDistanceField buildDistanceField (
     MeshDistanceField field;
 
     field.resolution = std::max(4, resolution);
+    field.resolution_minus_one = field.resolution - 1;
     field.signed_distance = isVolumetric(mesh.bounds);
 
     const Math::Vec3 original_extent =
@@ -251,7 +254,7 @@ MeshDistanceField buildDistanceField (
 
     field.distance.resize(voxel_count);
 
-    const Math::Vec3 extent =
+    field.extent =
         Math::subtract(field.bounds.maximum, field.bounds.minimum);
 
     for (int z = 0; z < field.resolution; ++z) 
@@ -263,13 +266,13 @@ MeshDistanceField buildDistanceField (
                 const Math::Vec3 position = {
                     field.bounds.minimum.x +
                         (static_cast<float>(x) + 0.5f) /
-                        static_cast<float>(field.resolution) * extent.x,
+                        static_cast<float>(field.resolution) * field.extent.x,
                     field.bounds.minimum.y +
                         (static_cast<float>(y) + 0.5f) /
-                        static_cast<float>(field.resolution) * extent.y,
+                        static_cast<float>(field.resolution) * field.extent.y,
                     field.bounds.minimum.z +
                         (static_cast<float>(z) + 0.5f) /
-                        static_cast<float>(field.resolution) * extent.z,
+                        static_cast<float>(field.resolution) * field.extent.z,
                 };
 
                 float minimum_distance =
@@ -320,45 +323,42 @@ float sampleDistanceField (
         return std::numeric_limits<float>::max();
     }
 
-    const Math::Vec3 extent =
-        Math::subtract(field.bounds.maximum, field.bounds.minimum);
-
-    if (extent.x <= EPSILON
-            || extent.y <= EPSILON
-            || extent.z <= EPSILON) 
+    if (field.extent.x <= EPSILON
+            || field.extent.y <= EPSILON
+            || field.extent.z <= EPSILON) 
     {
         return std::numeric_limits<float>::max();
     }
 
-    const float normalized_x = Math::clamp(
-                (position.x - field.bounds.minimum.x) / extent.x,
+    const float normalized_x = distanceFieldClampExact(
+                (position.x - field.bounds.minimum.x) / field.extent.x,
                 0.0f,
                 1.0f
             ),
-            normalized_y = Math::clamp(
-                (position.y - field.bounds.minimum.y) / extent.y,
+            normalized_y = distanceFieldClampExact(
+                (position.y - field.bounds.minimum.y) / field.extent.y,
                 0.0f,
                 1.0f
             ),
-            normalized_z = Math::clamp(
-                (position.z - field.bounds.minimum.z) / extent.z,
+            normalized_z = distanceFieldClampExact(
+                (position.z - field.bounds.minimum.z) / field.extent.z,
                 0.0f,
                 1.0f
             );
 
     const float grid_x = normalized_x *
-                static_cast<float>(field.resolution - 1),
+                static_cast<float>(field.resolution_minus_one),
                 grid_y = normalized_y *
-                static_cast<float>(field.resolution - 1),
+                static_cast<float>(field.resolution_minus_one),
                 grid_z = normalized_z *
-                static_cast<float>(field.resolution - 1);
+                static_cast<float>(field.resolution_minus_one);
 
     const int x0 = static_cast<int>(std::floor(grid_x)),
               y0 = static_cast<int>(std::floor(grid_y)),
               z0 = static_cast<int>(std::floor(grid_z)),
-              x1 = std::min(field.resolution - 1, x0 + 1),
-              y1 = std::min(field.resolution - 1, y0 + 1),
-              z1 = std::min(field.resolution - 1, z0 + 1);
+              x1 = std::min(field.resolution_minus_one, x0 + 1),
+              y1 = std::min(field.resolution_minus_one, y0 + 1),
+              z1 = std::min(field.resolution_minus_one, z0 + 1);
 
     const float tx = grid_x - static_cast<float>(x0),
                 ty = grid_y - static_cast<float>(y0),
