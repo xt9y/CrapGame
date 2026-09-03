@@ -1,4 +1,4 @@
-name: Performance metrics contract
+name: Renderer contracts
 
 on:
   push:
@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  contract:
+  contracts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile and run performance metrics contract
+      - name: Performance metrics contract
         shell: bash
         run: |
           set -euo pipefail
@@ -24,3 +24,12 @@ jobs:
             Sources/Renderer/PerformanceMetrics.cpp \
             -o /tmp/performance-metrics-contract
           /tmp/performance-metrics-contract
+      - name: GPU scheduling contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/gpu_scheduling_contract.cpp \
+            -o /tmp/gpu-scheduling-contract
+          /tmp/gpu-scheduling-contract
