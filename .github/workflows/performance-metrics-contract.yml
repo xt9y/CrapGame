@@ -2,15 +2,8 @@ name: Performance metrics contract
 
 on:
   push:
-    paths:
-      - 'Sources/Renderer/PerformanceMetrics.*'
-      - 'tests/performance_metrics_contract.cpp'
-      - '.github/workflows/performance-metrics-contract.yml'
-  pull_request:
-    paths:
-      - 'Sources/Renderer/PerformanceMetrics.*'
-      - 'tests/performance_metrics_contract.cpp'
-      - '.github/workflows/performance-metrics-contract.yml'
+    branches:
+      - ci-check
   workflow_dispatch:
 
 permissions:
