@@ -33,6 +33,7 @@ public:
 
 private:
     Temporal::HistoryBuffer history_;
+    std::vector<Math::Vec3> raw_;
 
     int width_  = 0,
         height_ = 0;
