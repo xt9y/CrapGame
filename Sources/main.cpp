@@ -249,8 +249,7 @@ int main ()
     const double performance_duration_ms =
         Renderer::PerformanceMetrics::durationMilliseconds();
 
-    const bool fixed_size_window = renderercheck_mode || performance_mode;
-    std::uint64_t last_resize_poll_ns = 0u;
+    std::uint64_t last_window_maintenance_ns = 0u;
     double simulation_accumulator = 0.0;
     std::uint64_t simulation_tick = 0;
     std::uint64_t stats_frames = 0;
@@ -261,8 +260,9 @@ int main ()
         cpu_frame_samples.reserve(16384u);
     }
 
-    while (!Display.isCloseRequested() 
-            && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
+    bool exit_requested = false;
+
+    while (!exit_requested)
     {
         const auto frame_started = Clock::now();
         const std::uint64_t frame_time_ns = static_cast<std::uint64_t>(
@@ -270,6 +270,50 @@ int main ()
                         frame_started.time_since_epoch()
                     ).count()
             );
+
+        if (renderercheck_mode)
+        {
+            if (Display.isCloseRequested()
+                    || Keyboard.isKeyDown(Keyboard.KEY_ESCAPE))
+            {
+                break;
+            }
+        }
+        else if (Renderer::Gpu::windowMaintenanceDue(
+                false,
+                frame_time_ns,
+                last_window_maintenance_ns))
+        {
+            /* Swap and OS event processing are deliberately decoupled. At
+             * uncapped frame rates glfwPollEvents is unnecessary tens of
+             * thousands of times per second; 1 kHz keeps input/window latency
+             * below one millisecond without poll-event churn. */
+            Display.processMessages();
+            last_window_maintenance_ns = frame_time_ns;
+
+            if (Display.isCloseRequested()
+                    || Keyboard.isKeyDown(Keyboard.KEY_ESCAPE))
+            {
+                exit_requested = true;
+                continue;
+            }
+
+            if (Renderer::Gpu::resizeCheckRequired(
+                    renderercheck_mode,
+                    performance_mode))
+            {
+                const int display_width = Display.getWidth(),
+                          display_height = Display.getHeight();
+
+                if (display_width != renderer_width
+                        || display_height != renderer_height)
+                {
+                    renderer_width = display_width;
+                    renderer_height = display_height;
+                    renderer.resize(renderer_width, renderer_height);
+                }
+            }
+        }
 
         if (!renderercheck_mode && !performance_static_scene)
         {
@@ -302,24 +346,6 @@ int main ()
             }
         }
 
-        if (Renderer::Gpu::resizePollDue(
-                fixed_size_window,
-                frame_time_ns,
-                last_resize_poll_ns))
-        {
-            last_resize_poll_ns = frame_time_ns;
-            const int display_width = Display.getWidth(),
-                      display_height = Display.getHeight();
-
-            if (display_width != renderer_width
-                    || display_height != renderer_height)
-            {
-                renderer_width = display_width;
-                renderer_height = display_height;
-                renderer.resize(renderer_width, renderer_height);
-            }
-        }
-
         renderer.renderCached(world, frame_time_ns);
 
         if (Renderer::Gpu::frameCaptureRequired(renderercheck_mode)
@@ -334,7 +360,16 @@ int main ()
             break;
         }
 
-        Display.update();
+        if (renderercheck_mode)
+        {
+            /* Preserve the deterministic visual-test path exactly: legacy
+             * update swaps and processes events together. */
+            Display.update();
+        }
+        else
+        {
+            lwcglDisplayUpdateNoMessages();
+        }
 
         if (Renderer::Gpu::frameEndClockRequired(performance_mode))
         {
