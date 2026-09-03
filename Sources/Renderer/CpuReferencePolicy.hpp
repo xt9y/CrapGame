@@ -44,8 +44,6 @@ struct CpuReferencePassPlan
     bool final_taa = false;
 };
 
-/* The visual reference renderer keeps one deterministic output mode per test,
- * but it does not need to execute passes whose results that mode never reads. */
 inline CpuReferencePassPlan cpuReferencePlan (CpuReferenceMode mode)
 {
     CpuReferencePassPlan plan;
@@ -84,10 +82,17 @@ inline CpuReferencePassPlan cpuReferencePlan (CpuReferenceMode mode)
             return plan;
 
         case CpuReferenceMode::SurfaceLighting:
+            /* Surface-lighting output reads SurfaceCache::radiance(), whose
+             * indirect term is advanced by radiosity using the radiance cache.
+             * Keep those exact legacy dependencies while pruning unrelated
+             * screen-probe/reflection/final passes. */
+            plan.tracer = true;
             plan.cards = true;
             plan.shadows = true;
             plan.surface_cache = true;
             plan.scene_lighting = true;
+            plan.radiosity = true;
+            plan.radiance_cache = true;
             return plan;
 
         case CpuReferenceMode::RadianceCache:
@@ -178,6 +183,19 @@ inline bool cpuDirectNeedsRefresh (
     return !valid
         || geometry_dirty
         || lighting_changed;
+}
+
+inline bool cpuMotionNeedsRefresh (
+            bool valid,
+            bool geometry_changed,
+            bool camera_changed,
+            bool settle_pending
+    )
+{
+    return !valid
+        || geometry_changed
+        || camera_changed
+        || settle_pending;
 }
 
 inline bool cpuWindowPresentationRequired (bool capture_run)

@@ -43,9 +43,19 @@ Rendering::~Rendering ()
             "cpu_render_ms",
             cpu_render_samples_
         );
+
+    /* Compatibility metric: now contains rasterization only, not motion. */
     (void)PerformanceMetrics::appendSamples(
             "cpu_geometry_ms",
             cpu_geometry_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_raster_ms",
+            cpu_raster_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_motion_ms",
+            cpu_motion_samples_
         );
     (void)PerformanceMetrics::appendSamples(
             "cpu_scene_ms",
@@ -58,6 +68,22 @@ Rendering::~Rendering ()
     (void)PerformanceMetrics::appendSamples(
             "cpu_lumen_ms",
             cpu_lumen_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_radiosity_ms",
+            cpu_radiosity_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_radiance_cache_ms",
+            cpu_radiance_cache_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_screen_probe_ms",
+            cpu_screen_probe_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_gi_taa_ms",
+            cpu_gi_taa_samples_
         );
     (void)PerformanceMetrics::appendSamples(
             "cpu_reflection_ms",
@@ -117,31 +143,62 @@ void Rendering::renderCpuReference (
             changes.camera_changed
         );
 
-    const auto geometry_started = CpuClock::now();
+    double raster_ms = 0.0;
 
     if (plan.geometry && geometry_dirty)
     {
+        const auto raster_started = CpuClock::now();
         renderGeometry(world);
+        const auto raster_finished = CpuClock::now();
+        raster_ms = milliseconds(raster_started, raster_finished);
+
         cpu_geometry_valid_ = true;
         cpu_direct_valid_ = false;
+
+        if (cpu_visual_metrics_enabled_)
+        {
+            cpu_raster_samples_.push_back(raster_ms);
+        }
+    }
+
+    if (cpu_visual_metrics_enabled_)
+    {
+        /* Preserve the existing per-frame metric contract while removing the
+         * old accidental inclusion of motion-vector work. */
+        cpu_geometry_samples_.push_back(raster_ms);
     }
 
     if (plan.motion)
     {
-        Temporal::calculateMotion(
-                &gbuffer_,
-                world,
-                frame_state_
-            );
-    }
+        const bool motion_changed =
+            changes.geometry_changed || changes.camera_changed;
 
-    const auto geometry_finished = CpuClock::now();
+        if (cpuMotionNeedsRefresh(
+                cpu_motion_valid_,
+                changes.geometry_changed,
+                changes.camera_changed,
+                cpu_motion_settle_pending_))
+        {
+            const auto motion_started = CpuClock::now();
+            Temporal::calculateMotion(
+                    &gbuffer_,
+                    world,
+                    frame_state_
+                );
+            const auto motion_finished = CpuClock::now();
 
-    if (cpu_visual_metrics_enabled_)
-    {
-        cpu_geometry_samples_.push_back(
-                milliseconds(geometry_started, geometry_finished)
-            );
+            if (cpu_visual_metrics_enabled_)
+            {
+                cpu_motion_samples_.push_back(
+                        milliseconds(motion_started, motion_finished)
+                    );
+            }
+
+            cpu_motion_valid_ = true;
+            /* After the last moving frame, run once more on the first stable
+             * frame so every cached motion vector is explicitly cleared. */
+            cpu_motion_settle_pending_ = motion_changed;
+        }
     }
 
     const auto scene_started = CpuClock::now();
@@ -227,15 +284,25 @@ void Rendering::renderCpuReference (
 
         if (plan.radiosity)
         {
+            const auto pass_started = CpuClock::now();
             Lumen::updateRadiosity(
                     &surface_cache_,
                     radiance_cache_,
                     frame_budget.radiosity_feedback
                 );
+            const auto pass_finished = CpuClock::now();
+
+            if (cpu_visual_metrics_enabled_)
+            {
+                cpu_radiosity_samples_.push_back(
+                        milliseconds(pass_started, pass_finished)
+                    );
+            }
         }
 
         if (plan.radiance_cache)
         {
+            const auto pass_started = CpuClock::now();
             radiance_cache_.update(
                     gbuffer_,
                     view_,
@@ -246,10 +313,19 @@ void Rendering::renderCpuReference (
                     frame_state_.frameIndex(),
                     frame_budget.radiance_probes_per_frame
                 );
+            const auto pass_finished = CpuClock::now();
+
+            if (cpu_visual_metrics_enabled_)
+            {
+                cpu_radiance_cache_samples_.push_back(
+                        milliseconds(pass_started, pass_finished)
+                    );
+            }
         }
 
         if (plan.screen_probes)
         {
+            const auto pass_started = CpuClock::now();
             screen_probe_gather_.gather(
                     gbuffer_,
                     view_,
@@ -262,16 +338,33 @@ void Rendering::renderCpuReference (
                     frame_budget.screen_probe_rays,
                     &indirect_color_
                 );
+            const auto pass_finished = CpuClock::now();
+
+            if (cpu_visual_metrics_enabled_)
+            {
+                cpu_screen_probe_samples_.push_back(
+                        milliseconds(pass_started, pass_finished)
+                    );
+            }
         }
 
         if (plan.gi_taa)
         {
+            const auto pass_started = CpuClock::now();
             Temporal::resolveTaa(
                     gbuffer_,
                     gi_history_,
                     indirect_color_,
                     &indirect_resolved_
                 );
+            const auto pass_finished = CpuClock::now();
+
+            if (cpu_visual_metrics_enabled_)
+            {
+                cpu_gi_taa_samples_.push_back(
+                        milliseconds(pass_started, pass_finished)
+                    );
+            }
         }
 
         const auto lumen_finished = CpuClock::now();
@@ -336,9 +429,6 @@ void Rendering::renderCpuReference (
 
     writeColorBuffer(resolved_color_);
 
-    /* RendererCheck captures color_buffer_ directly. The GL11 window upload
-     * does not contribute to the reference image and is deliberately skipped
-     * for capture runs. */
     if (cpuWindowPresentationRequired(!test_name_.empty()))
     {
         present();

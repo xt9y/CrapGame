@@ -32,6 +32,61 @@ float minimumScale (const Ecs::Vec3& scale)
         );
 }
 
+float maximumScale (const Ecs::Vec3& scale)
+{
+    return std::max(
+            0.0001f,
+            std::max(
+                    std::fabs(scale.x),
+                    std::max(
+                            std::fabs(scale.y),
+                            std::fabs(scale.z)
+                        )
+                )
+        );
+}
+
+SdfWorldBounds transformBounds (
+            const Mesh::Bounds& bounds,
+            const Ecs::TransformComponent& transform
+    )
+{
+    const Math::Mat4 model = Math::transform(
+            toVec3(transform.position),
+            toVec3(transform.rotation),
+            toVec3(transform.scale)
+        );
+
+    SdfWorldBounds result = {};
+
+    for (int corner_index = 0; corner_index < 8; ++corner_index)
+    {
+        const Math::Vec3 local = {
+            (corner_index & 1) ? bounds.maximum.x : bounds.minimum.x,
+            (corner_index & 2) ? bounds.maximum.y : bounds.minimum.y,
+            (corner_index & 4) ? bounds.maximum.z : bounds.minimum.z,
+        };
+
+        const Math::Vec3 world = Math::transformPoint(model, local);
+
+        if (corner_index == 0)
+        {
+            result.minimum = world;
+            result.maximum = world;
+            continue;
+        }
+
+        result.minimum.x = std::min(result.minimum.x, world.x);
+        result.minimum.y = std::min(result.minimum.y, world.y);
+        result.minimum.z = std::min(result.minimum.z, world.z);
+        result.maximum.x = std::max(result.maximum.x, world.x);
+        result.maximum.y = std::max(result.maximum.y, world.y);
+        result.maximum.z = std::max(result.maximum.z, world.z);
+    }
+
+    return result;
+}
+
 float distanceToBounds (
                 const Mesh::Bounds& bounds,
                 const Math::Vec3& position
@@ -115,10 +170,16 @@ void DistanceFieldScene::build (const Ecs::World& world)
             continue;
         }
 
+        const MeshDistanceField& field = fieldFor(mesh->mesh);
+        const float min_scale = minimumScale(transform->scale);
+        const float max_scale = maximumScale(transform->scale);
+
         instances_.push_back({
             entity,
             mesh->mesh,
             *transform,
+            transformBounds(field.bounds, *transform),
+            min_scale / max_scale,
         });
     }
 }
@@ -135,6 +196,19 @@ float DistanceFieldScene::distance (
 
     for (const Instance& instance : instances_) 
     {
+        /* World-AABB distance times min/max scale ratio is a conservative
+         * lower bound for the existing local-distance*minimum-scale metric.
+         * It therefore rejects only instances that cannot beat the current
+         * nearest result, preserving exact renderer semantics. */
+        const float lower_bound =
+            sdfBoundsDistance(instance.world_bounds, position) *
+            instance.broadphase_scale;
+
+        if (lower_bound > nearest_distance)
+        {
+            continue;
+        }
+
         const MeshDistanceField& field =
             fieldFor(instance.mesh);
 

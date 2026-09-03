@@ -77,6 +77,8 @@ public:
         change_tracker_.clear();
         cpu_geometry_valid_ = false;
         cpu_direct_valid_ = false;
+        cpu_motion_valid_ = false;
+        cpu_motion_settle_pending_ = false;
     }
 
     void renderCached (
@@ -104,9 +106,15 @@ public:
                 constexpr std::size_t expected_visual_frames = 64u;
                 cpu_render_samples_.reserve(expected_visual_frames);
                 cpu_geometry_samples_.reserve(expected_visual_frames);
+                cpu_raster_samples_.reserve(expected_visual_frames);
+                cpu_motion_samples_.reserve(expected_visual_frames);
                 cpu_scene_samples_.reserve(expected_visual_frames);
                 cpu_direct_samples_.reserve(expected_visual_frames);
                 cpu_lumen_samples_.reserve(expected_visual_frames);
+                cpu_radiosity_samples_.reserve(expected_visual_frames);
+                cpu_radiance_cache_samples_.reserve(expected_visual_frames);
+                cpu_screen_probe_samples_.reserve(expected_visual_frames);
+                cpu_gi_taa_samples_.reserve(expected_visual_frames);
                 cpu_reflection_samples_.reserve(expected_visual_frames);
                 cpu_resolve_samples_.reserve(expected_visual_frames);
             }
@@ -259,9 +267,15 @@ private:
 
     std::vector<double> cpu_render_samples_,
                         cpu_geometry_samples_,
+                        cpu_raster_samples_,
+                        cpu_motion_samples_,
                         cpu_scene_samples_,
                         cpu_direct_samples_,
                         cpu_lumen_samples_,
+                        cpu_radiosity_samples_,
+                        cpu_radiance_cache_samples_,
+                        cpu_screen_probe_samples_,
+                        cpu_gi_taa_samples_,
                         cpu_reflection_samples_,
                         cpu_resolve_samples_;
 
@@ -270,6 +284,8 @@ private:
     std::string gpu_error_scratch_;
     bool cpu_geometry_valid_ = false;
     bool cpu_direct_valid_ = false;
+    bool cpu_motion_valid_ = false;
+    bool cpu_motion_settle_pending_ = false;
     bool cpu_visual_metrics_enabled_ = false;
     bool gpu_pipeline_enabled_ = false;
     bool gpu_error_reported_ = false;

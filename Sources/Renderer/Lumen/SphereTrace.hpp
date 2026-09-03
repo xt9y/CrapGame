@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Lumen/DistanceField.hpp"
+#include "Renderer/Lumen/SdfBroadphase.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <vector>
@@ -49,6 +50,8 @@ private:
         Ecs::Entity entity;
         Ecs::MeshType mesh;
         Ecs::TransformComponent transform;
+        SdfWorldBounds world_bounds;
+        float broadphase_scale = 1.0f;
     };
 
     const MeshDistanceField& fieldFor (Ecs::MeshType mesh) const;

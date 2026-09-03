@@ -114,6 +114,24 @@ jobs:
             tests/cpu_reference_policy_contract.cpp \
             -o /tmp/cpu-reference-policy-contract
           /tmp/cpu-reference-policy-contract
+      - name: CPU reference Stage 38-40 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/cpu_reference_stage38_40_contract.cpp \
+            -o /tmp/cpu-reference-stage38-40-contract
+          /tmp/cpu-reference-stage38-40-contract
+      - name: SDF broadphase contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/sdf_broadphase_contract.cpp \
+            -o /tmp/sdf-broadphase-contract
+          /tmp/sdf-broadphase-contract
       - name: RendererCheck headless runtime contract
         shell: bash
         run: |
