@@ -48,6 +48,37 @@ public:
     void resize (int width, int height);
     void render (const Ecs::World& world, std::uint64_t frame_time_ns);
 
+    bool initHeadlessReference () const
+    {
+        return !test_name_.empty();
+    }
+
+    void resizeHeadlessReference (int width, int height)
+    {
+        width_ = width > 0 ? width : 1;
+        height_ = height > 0 ? height : 1;
+
+        const std::size_t pixel_count =
+            static_cast<std::size_t>(width_) *
+            static_cast<std::size_t>(height_);
+
+        direct_color_.resize(pixel_count);
+        indirect_color_.resize(pixel_count);
+        indirect_resolved_.resize(pixel_count);
+        reflection_color_.resize(pixel_count);
+        frame_color_.resize(pixel_count);
+        resolved_color_.resize(pixel_count);
+        color_buffer_.resize(pixel_count * 3u);
+        present_buffer_.clear();
+
+        gbuffer_.resize(width_, height_);
+        history_.resize(width_, height_);
+        gi_history_.resize(width_, height_);
+        change_tracker_.clear();
+        cpu_geometry_valid_ = false;
+        cpu_direct_valid_ = false;
+    }
+
     void renderCached (
                 const Ecs::World& world,
                 std::uint64_t frame_time_ns

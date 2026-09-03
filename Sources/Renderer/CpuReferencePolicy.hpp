@@ -185,6 +185,29 @@ inline bool cpuWindowPresentationRequired (bool capture_run)
     return !capture_run;
 }
 
+struct RendererRuntimePlan
+{
+    bool display_required = true;
+    bool input_required = true;
+    bool window_updates_required = true;
+    bool fixed_reference_size = false;
+};
+
+inline RendererRuntimePlan rendererRuntimePlan (
+            bool renderercheck_mode,
+            bool performance_mode
+    )
+{
+    const bool headless_visual = renderercheck_mode && !performance_mode;
+
+    RendererRuntimePlan plan;
+    plan.display_required = !headless_visual;
+    plan.input_required = !headless_visual;
+    plan.window_updates_required = !headless_visual;
+    plan.fixed_reference_size = headless_visual;
+    return plan;
+}
+
 } // namespace Renderer
 
 #endif

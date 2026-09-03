@@ -1,4 +1,5 @@
 #include "Renderer/Render.hpp"
+#include "Renderer/CpuReferencePolicy.hpp"
 #include "Renderer/PerformanceMetrics.hpp"
 #include "Renderer/Test/TestScene.hpp"
 #include "Renderer/Gpu/FrameHotPath.hpp"
@@ -72,6 +73,12 @@ int main ()
     const bool performance_mode =
         Renderer::PerformanceMetrics::requested();
 
+    const Renderer::RendererRuntimePlan runtime_plan =
+        Renderer::rendererRuntimePlan(
+                renderercheck_mode,
+                performance_mode
+            );
+
     const bool performance_static_scene =
         performance_mode && environmentFlag("CRAPGAME_PERF_STATIC_SCENE");
 
@@ -95,10 +102,10 @@ int main ()
         return 3;
     }
 
-    const int window_width = renderercheck_mode
+    const int window_width = runtime_plan.fixed_reference_size
                 ? TEST_WIDTH
                 : WINDOW_WIDTH,
-              window_height = renderercheck_mode
+              window_height = runtime_plan.fixed_reference_size
                 ? TEST_HEIGHT
                 : WINDOW_HEIGHT;
 
@@ -109,52 +116,45 @@ int main ()
     std::uint64_t frame = 0;
     int exit_code = 0;
 
-    /* Install lwcgl's optional fast runtime before Display/Keyboard creation.
-     * It chains the legacy callbacks, caches close/ESC state, and publishes
-     * the native swap-only Display.updateNoMessages entry point. */
-    lwcglInstallFastRuntime();
+    if (runtime_plan.display_required)
+    {
+        /* Install lwcgl's optional fast runtime before Display/Keyboard
+         * creation. Visual RendererCheck deliberately never enters this path. */
+        lwcglInstallFastRuntime();
 
-    Display.setDisplayMode(
-            new DisplayMode(window_width, window_height)
-        );
+        Display.setDisplayMode(
+                new DisplayMode(window_width, window_height)
+            );
 
 #if !defined(__APPLE__)
-    if (!renderercheck_mode)
-    {
-        /* LWJGL 2.9.3 exposes GL43. Interactive and performance rendering
-         * require it; visual RendererCheck intentionally stays on the legacy
-         * deterministic CPU reference. */
         lwcglSetContextVersion(4, 3);
         lwcglSetContextProfile(LWCGL_CONTEXT_COMPATIBILITY_PROFILE);
-    }
 #endif
 
-    if (Display.create() != 0)
-    {
-        ERROR("Display.create");
-        return 2;
-    }
+        if (Display.create() != 0)
+        {
+            ERROR("Display.create");
+            return 2;
+        }
 
 #if !defined(__APPLE__)
-    if (!renderercheck_mode && !lwcglModernGLAvailable())
-    {
-        std::fprintf(
-                stderr,
-                "CrapGame requires OpenGL 4.3 for the GPU renderer "
-                "(got %d.%d; missing %s)\n",
-                lwcglModernGLMajorVersion(),
-                lwcglModernGLMinorVersion(),
-                lwcglModernGLMissingFunction()
-                    ? lwcglModernGLMissingFunction()
-                    : "required GL43 capability"
-            );
-        Display.destroy();
-        return 2;
-    }
+        if (!lwcglModernGLAvailable())
+        {
+            std::fprintf(
+                    stderr,
+                    "CrapGame requires OpenGL 4.3 for the GPU renderer "
+                    "(got %d.%d; missing %s)\n",
+                    lwcglModernGLMajorVersion(),
+                    lwcglModernGLMinorVersion(),
+                    lwcglModernGLMissingFunction()
+                        ? lwcglModernGLMissingFunction()
+                        : "required GL43 capability"
+                );
+            Display.destroy();
+            return 2;
+        }
 #endif
 
-    if (!renderercheck_mode)
-    {
         /* Rendering and simulation are intentionally independent. Rendering
          * runs as fast as possible by default, while world updates are fixed
          * at 60 Hz below. */
@@ -185,8 +185,11 @@ int main ()
         }
     }
 
-    Keyboard.create();
-    Mouse.create();
+    if (runtime_plan.input_required)
+    {
+        Keyboard.create();
+        Mouse.create();
+    }
 
     Ecs::World world;
     Renderer::Test::SceneState scene_state;
@@ -202,16 +205,22 @@ int main ()
                 "Failed to create renderer test scene\n"
             );
 
-        Mouse.destroy();
-        Keyboard.destroy();
-        Display.destroy();
+        if (runtime_plan.input_required)
+        {
+            Mouse.destroy();
+            Keyboard.destroy();
+        }
+        if (runtime_plan.display_required)
+        {
+            Display.destroy();
+        }
         return 3;
     }
 
     Renderer::Rendering renderer;
 
-    /* Select the output path before init so visual RendererCheck stays on the
-     * deterministic CPU reference while gameplay/perf initializes GL43. */
+    /* Select the output path before initialization. Visual RendererCheck uses
+     * a GL-free CPU reference setup; gameplay/perf initializes GL43. */
     if (!renderer.setTestName(test_name))
     {
         std::fprintf(
@@ -222,26 +231,63 @@ int main ()
                 : "(null)"
             );
 
-        Mouse.destroy();
-        Keyboard.destroy();
-        Display.destroy();
+        if (runtime_plan.input_required)
+        {
+            Mouse.destroy();
+            Keyboard.destroy();
+        }
+        if (runtime_plan.display_required)
+        {
+            Display.destroy();
+        }
         return 3;
     }
 
-    if (!renderer.init())
-    {
-        ERROR("renderer.init");
+    const bool renderer_initialized = runtime_plan.fixed_reference_size
+        ? renderer.initHeadlessReference()
+        : renderer.init();
 
-        Mouse.destroy();
-        Keyboard.destroy();
-        Display.destroy();
+    if (!renderer_initialized)
+    {
+        if (runtime_plan.display_required)
+        {
+            ERROR("renderer.init");
+        }
+        else
+        {
+            std::fprintf(stderr, "Headless reference renderer initialization failed\n");
+        }
+
+        if (runtime_plan.input_required)
+        {
+            Mouse.destroy();
+            Keyboard.destroy();
+        }
+        if (runtime_plan.display_required)
+        {
+            Display.destroy();
+        }
         return 2;
     }
 
-    int renderer_width = Display.getWidth(),
-        renderer_height = Display.getHeight();
+    int renderer_width = runtime_plan.fixed_reference_size
+            ? TEST_WIDTH
+            : Display.getWidth(),
+        renderer_height = runtime_plan.fixed_reference_size
+            ? TEST_HEIGHT
+            : Display.getHeight();
 
-    renderer.resize(renderer_width, renderer_height);
+    if (runtime_plan.fixed_reference_size)
+    {
+        renderer.resizeHeadlessReference(
+                renderer_width,
+                renderer_height
+            );
+    }
+    else
+    {
+        renderer.resize(renderer_width, renderer_height);
+    }
 
     using Clock = std::chrono::steady_clock;
 
@@ -281,24 +327,16 @@ int main ()
                     ).count()
             );
 
-        if (renderercheck_mode)
-        {
-            if (Display.isCloseRequested()
-                    || Keyboard.isKeyDown(Keyboard.KEY_ESCAPE))
-            {
-                break;
-            }
-        }
-        else if (Renderer::Gpu::windowMaintenanceDue(
-                false,
-                frame_time_ns,
-                last_window_maintenance_ns))
+        if (runtime_plan.window_updates_required
+                && Renderer::Gpu::windowMaintenanceDue(
+                        false,
+                        frame_time_ns,
+                        last_window_maintenance_ns))
         {
             /* Swap and OS event processing are deliberately decoupled. At
              * uncapped frame rates glfwPollEvents is unnecessary tens of
              * thousands of times per second; 1 kHz keeps input/window latency
-             * below one millisecond without poll-event churn. The close and
-             * ESC checks below are cached memory reads after this event pump. */
+             * below one millisecond without poll-event churn. */
             Display.processMessages();
             last_window_maintenance_ns = frame_time_ns;
 
@@ -364,13 +402,7 @@ int main ()
             break;
         }
 
-        if (renderercheck_mode)
-        {
-            /* Preserve the deterministic visual-test path exactly: legacy
-             * update swaps and processes events together. */
-            Display.update();
-        }
-        else
+        if (runtime_plan.window_updates_required)
         {
             Display.updateNoMessages();
         }
@@ -459,9 +491,12 @@ int main ()
         ++frame;
     }
 
-    /* Profiler shutdown resolves pending GPU timer queries and closes its
-     * metrics stream before CPU samples append to the same file. */
-    renderer.shutdown();
+    /* GPU shutdown resolves pending timer queries. Headless visual runs never
+     * initialized GPU/GL resources, so they deliberately skip this call. */
+    if (runtime_plan.display_required)
+    {
+        renderer.shutdown();
+    }
 
     if (performance_mode
             && !Renderer::PerformanceMetrics::appendSamples(
@@ -476,8 +511,14 @@ int main ()
         exit_code = 2;
     }
 
-    Mouse.destroy();
-    Keyboard.destroy();
-    Display.destroy();
+    if (runtime_plan.input_required)
+    {
+        Mouse.destroy();
+        Keyboard.destroy();
+    }
+    if (runtime_plan.display_required)
+    {
+        Display.destroy();
+    }
     return exit_code;
 }

@@ -114,3 +114,12 @@ jobs:
             tests/cpu_reference_policy_contract.cpp \
             -o /tmp/cpu-reference-policy-contract
           /tmp/cpu-reference-policy-contract
+      - name: RendererCheck headless runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/renderercheck_headless_contract.cpp \
+            -o /tmp/renderercheck-headless-contract
+          /tmp/renderercheck-headless-contract
