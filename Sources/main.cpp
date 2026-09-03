@@ -29,6 +29,14 @@ static inline void ERROR (const char *operation)
         );
 }
 
+static bool environmentFlag (const char *name)
+{
+    const char *value = std::getenv(name);
+    return value
+        && *value
+        && !(value[0] == '0' && value[1] == '\0');
+}
+
 static int requestedFpsCap ()
 {
     const char *value = std::getenv("CRAPGAME_FPS");
@@ -61,6 +69,9 @@ int main ()
 
     const bool performance_mode =
         Renderer::PerformanceMetrics::requested();
+
+    const bool performance_static_scene =
+        performance_mode && environmentFlag("CRAPGAME_PERF_STATIC_SCENE");
 
     const char *test_name = renderercheck_mode
         ? std::getenv("RENDERCHECK_TEST")
@@ -146,9 +157,10 @@ int main ()
         {
             std::fprintf(
                     stderr,
-                    "RendererCheck perf: uncapped, VSync off, %.0f ms warmup, %.0f ms total\n",
+                    "RendererCheck perf: uncapped, VSync off, %.0f ms warmup, %.0f ms total%s\n",
                     Renderer::PerformanceMetrics::warmupMilliseconds(),
-                    Renderer::PerformanceMetrics::durationMilliseconds()
+                    Renderer::PerformanceMetrics::durationMilliseconds(),
+                    performance_static_scene ? ", static scene" : ""
                 );
         }
         else if (fps_cap > 0)
@@ -251,7 +263,7 @@ int main ()
     {
         const auto frame_started = Clock::now();
 
-        if (!renderercheck_mode)
+        if (!renderercheck_mode && !performance_static_scene)
         {
             const auto simulation_now = frame_started;
             double real_delta = std::chrono::duration<double>(
