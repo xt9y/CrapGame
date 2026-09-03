@@ -178,6 +178,7 @@ void DistanceFieldScene::build (const Ecs::World& world)
             entity,
             mesh->mesh,
             *transform,
+            cacheInverseTransform(*transform),
             transformBounds(field.bounds, *transform),
             min_scale / max_scale,
         });
@@ -213,11 +214,9 @@ float DistanceFieldScene::distance (
             fieldFor(instance.mesh);
 
         const Math::Vec3 local_position =
-            Math::inverseTransformPoint(
+            inverseTransformPointCached(
                     position,
-                    toVec3(instance.transform.position),
-                    toVec3(instance.transform.rotation),
-                    toVec3(instance.transform.scale)
+                    instance.inverse_transform
                 );
 
         float local_distance = 0.0f;
@@ -240,7 +239,11 @@ float DistanceFieldScene::distance (
         if (world_distance < nearest_distance) 
         {
             nearest_distance = world_distance;
-            nearest_entity = instance.entity;
+
+            if (entity)
+            {
+                nearest_entity = instance.entity;
+            }
         }
     }
 
@@ -301,6 +304,56 @@ SdfHit DistanceFieldScene::trace (
         }
 
         if (!std::isfinite(scene_distance)) 
+        {
+            break;
+        }
+
+        travelled += std::max(minimum_step, scene_distance * 0.80f);
+    }
+
+    return result;
+}
+
+SdfDistanceHit DistanceFieldScene::traceDistance (
+                const Math::Vec3& origin,
+                const Math::Vec3& direction,
+                float maximum_distance,
+                int maximum_steps,
+                float minimum_step,
+                float hit_epsilon
+        ) const
+{
+    SdfDistanceHit result;
+
+    if (maximum_distance <= 0.0f
+            || maximum_steps <= 0
+            || instances_.empty())
+    {
+        return result;
+    }
+
+    const Math::Vec3 ray_direction = Math::normalize(direction);
+    float travelled = std::max(hit_epsilon * 2.0f, minimum_step);
+
+    for (int step = 0;
+            step < maximum_steps && travelled <= maximum_distance;
+            ++step)
+    {
+        const Math::Vec3 position = Math::add(
+                origin,
+                Math::multiply(ray_direction, travelled)
+            );
+
+        const float scene_distance = distance(position, nullptr);
+
+        if (scene_distance <= hit_epsilon)
+        {
+            result.distance = travelled;
+            result.hit = true;
+            return result;
+        }
+
+        if (!std::isfinite(scene_distance))
         {
             break;
         }

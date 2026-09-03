@@ -31,6 +31,12 @@ struct UnifiedTraceHit
     bool hit = false;
 };
 
+struct VisibilityTraceHit
+{
+    float distance = 0.0f;
+    bool hit = false;
+};
+
 class Tracer 
 {
 
@@ -41,6 +47,15 @@ public:
         );
 
     UnifiedTraceHit trace (
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Math::Vec3& origin,
+                const Math::Vec3& direction,
+                float maximum_distance
+        ) const;
+
+    VisibilityTraceHit traceVisibility (
                 const GBuffer::Buffer& gbuffer,
                 const Math::Mat4& view,
                 const Math::Mat4& projection,

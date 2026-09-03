@@ -1,5 +1,6 @@
 #include "ScreenTrace.hpp"
 
+#include "Renderer/Lumen/ScreenTracePolicy.hpp"
 #include "Renderer/Lumen/TraceDirection.hpp"
 
 #include <algorithm>
@@ -135,16 +136,13 @@ TraceHit traceScreenNormalized (
             continue;
         }
 
-        const float surface_distance =
-            Math::length(
-                    Math::Vec3{
-                        sample_position.x - pixel.world_position.x,
-                        sample_position.y - pixel.world_position.y,
-                        sample_position.z - pixel.world_position.z,
-                    }
-                );
+        const Math::Vec3 surface_delta = {
+            sample_position.x - pixel.world_position.x,
+            sample_position.y - pixel.world_position.y,
+            sample_position.z - pixel.world_position.z,
+        };
 
-        if (surface_distance > thickness) 
+        if (!screenTraceWithinThicknessSquared(surface_delta, thickness))
         {
             continue;
         }

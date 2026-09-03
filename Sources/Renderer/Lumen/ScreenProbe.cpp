@@ -1,5 +1,6 @@
 #include "ScreenProbe.hpp"
 
+#include "Renderer/Lumen/ParallelRows.hpp"
 #include "Renderer/Lumen/Sampling.hpp"
 #include "Renderer/Lumen/ScreenProbePolicy.hpp"
 #include "Renderer/Lumen/ShortRangeAo.hpp"
@@ -55,50 +56,11 @@ double milliseconds(ProbeClock::time_point started,
 template <typename Function>
 void parallelRows(int row_count, Function&& function)
 {
-    if (row_count <= 0)
-    {
-        return;
-    }
-
-    const unsigned workers = screenProbeWorkerCount(
+    parallelRowsDynamic(
             row_count,
-            std::thread::hardware_concurrency()
+            std::thread::hardware_concurrency(),
+            function
         );
-
-    if (workers <= 1u)
-    {
-        for (int row = 0; row < row_count; ++row)
-        {
-            function(row);
-        }
-        return;
-    }
-
-    std::vector<std::thread> threads;
-    threads.reserve(workers);
-
-    for (unsigned worker = 0; worker < workers; ++worker)
-    {
-        const int begin = static_cast<int>(
-                static_cast<unsigned long long>(row_count) * worker / workers
-            );
-        const int end = static_cast<int>(
-                static_cast<unsigned long long>(row_count) * (worker + 1u) / workers
-            );
-
-        threads.emplace_back([begin, end, &function]()
-        {
-            for (int row = begin; row < end; ++row)
-            {
-                function(row);
-            }
-        });
-    }
-
-    for (std::thread& thread : threads)
-    {
-        thread.join();
-    }
 }
 
 bool findProbePixel (

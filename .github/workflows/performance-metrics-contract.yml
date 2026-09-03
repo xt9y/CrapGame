@@ -153,6 +153,16 @@ jobs:
             Sources/Renderer/Math/Math.cpp \
             -o /tmp/trace-direction-contract
           /tmp/trace-direction-contract
+      - name: Contact AO Stage 47-50 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
+            -ISources \
+            tests/contact_ao_stage47_50_contract.cpp \
+            Sources/Renderer/Math/Math.cpp \
+            -o /tmp/contact-ao-stage47-50-contract
+          /tmp/contact-ao-stage47-50-contract
       - name: Screen probe implementation compile
         shell: bash
         run: |
@@ -169,6 +179,9 @@ jobs:
           c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
             -ISources -c Sources/Renderer/Lumen/Tracer.cpp \
             -o /tmp/tracer.o
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources -c Sources/Renderer/Lumen/SphereTrace.cpp \
+            -o /tmp/sphere-trace.o
       - name: RendererCheck headless runtime contract
         shell: bash
         run: |

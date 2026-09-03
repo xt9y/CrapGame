@@ -105,7 +105,7 @@ float shortRangeVisibility (
 
         const Math::Vec3 direction = sampleHemisphere(basis, sample);
 
-        const UnifiedTraceHit hit = tracer.trace(
+        const VisibilityTraceHit hit = tracer.traceVisibility(
                 gbuffer,
                 view,
                 projection,
