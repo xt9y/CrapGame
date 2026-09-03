@@ -15,13 +15,88 @@ max_changed_percent = 0.05
 vulkan = false
 
 [performance]
-warmup_ms = 1000
-sample_ms = 3000
+warmup_ms = 750
+sample_ms = 1500
 regression_percent = 15
 min_samples = 8
 
+# Performance runs always use the optimized binary. Visual regression keeps
+# the project-level debug command above for deterministic reference captures.
 [[perf]]
 name = "FinalScene"
+command = "./build/release/crapgame"
+warmup_ms = 1000
+sample_ms = 3000
+
+[[perf]]
+name = "BVH4-linear"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=4 CRAPGAME_BVH_MODE=linear"
+
+[[perf]]
+name = "BVH4-bvh"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=4 CRAPGAME_BVH_MODE=bvh"
+
+[[perf]]
+name = "BVH8-linear"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=8 CRAPGAME_BVH_MODE=linear"
+
+[[perf]]
+name = "BVH8-bvh"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=8 CRAPGAME_BVH_MODE=bvh"
+
+[[perf]]
+name = "BVH16-linear"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=16 CRAPGAME_BVH_MODE=linear"
+
+[[perf]]
+name = "BVH16-bvh"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=16 CRAPGAME_BVH_MODE=bvh"
+
+[[perf]]
+name = "BVH32-linear"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=32 CRAPGAME_BVH_MODE=linear"
+
+[[perf]]
+name = "BVH32-bvh"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=32 CRAPGAME_BVH_MODE=bvh"
+
+[[perf]]
+name = "BVH64-linear"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=64 CRAPGAME_BVH_MODE=linear"
+
+[[perf]]
+name = "BVH64-bvh"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=64 CRAPGAME_BVH_MODE=bvh"
+
+[[perf]]
+name = "BVH128-linear"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=128 CRAPGAME_BVH_MODE=linear"
+
+[[perf]]
+name = "BVH128-bvh"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=128 CRAPGAME_BVH_MODE=bvh"
+
+[[perf]]
+name = "BVH256-linear"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=256 CRAPGAME_BVH_MODE=linear"
+
+[[perf]]
+name = "BVH256-bvh"
+command = "./build/release/crapgame"
+env = "CRAPGAME_BVH_STRESS=256 CRAPGAME_BVH_MODE=bvh"
 
 # Geometry and GBuffer
 [[test]]
