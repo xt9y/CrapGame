@@ -1,4 +1,5 @@
 #include "Renderer/Render.hpp"
+#include "Renderer/PerformanceMetrics.hpp"
 #include "Renderer/Test/TestScene.hpp"
 #include "Ecs/Ecs.hpp"
 
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 870
@@ -57,6 +59,9 @@ int main ()
     const bool renderercheck_mode = 
         rendercheck_capture_requested() != 0;
 
+    const bool performance_mode =
+        Renderer::PerformanceMetrics::requested();
+
     const char *test_name = renderercheck_mode
         ? std::getenv("RENDERCHECK_TEST")
         : nullptr;
@@ -84,7 +89,7 @@ int main ()
                 ? TEST_HEIGHT
                 : WINDOW_HEIGHT;
 
-    const int fps_cap = renderercheck_mode
+    const int fps_cap = renderercheck_mode || performance_mode
         ? 0
         : requestedFpsCap();
 
@@ -98,8 +103,9 @@ int main ()
 #if !defined(__APPLE__)
     if (!renderercheck_mode)
     {
-        /* LWJGL 2.9.3 exposes GL43. Interactive rendering requires it;
-         * RendererCheck intentionally stays on the legacy CPU reference. */
+        /* LWJGL 2.9.3 exposes GL43. Interactive and performance rendering
+         * require it; visual RendererCheck intentionally stays on the legacy
+         * deterministic CPU reference. */
         lwcglSetContextVersion(4, 3);
         lwcglSetContextProfile(LWCGL_CONTEXT_COMPATIBILITY_PROFILE);
     }
@@ -136,7 +142,16 @@ int main ()
          * at 60 Hz below. */
         Display.setVSyncEnabled(LWCGL_FALSE);
 
-        if (fps_cap > 0)
+        if (performance_mode)
+        {
+            std::fprintf(
+                    stderr,
+                    "RendererCheck perf: uncapped, VSync off, %.0f ms warmup, %.0f ms total\n",
+                    Renderer::PerformanceMetrics::warmupMilliseconds(),
+                    Renderer::PerformanceMetrics::durationMilliseconds()
+                );
+        }
+        else if (fps_cap > 0)
         {
             std::fprintf(stderr, "Frame pacing: %d FPS cap, VSync off\n", fps_cap);
         }
@@ -145,7 +160,10 @@ int main ()
             std::fprintf(stderr, "Frame pacing: uncapped, VSync off\n");
         }
 
-        std::fprintf(stderr, "Simulation: fixed 60 Hz, render-rate independent\n");
+        if (!performance_mode)
+        {
+            std::fprintf(stderr, "Simulation: fixed 60 Hz, render-rate independent\n");
+        }
     }
 
     Keyboard.create();
@@ -173,8 +191,8 @@ int main ()
 
     Renderer::Rendering renderer;
 
-    /* Select the output path before init so RendererCheck stays on the
-     * deterministic CPU reference while normal gameplay initializes GL43. */
+    /* Select the output path before init so visual RendererCheck stays on the
+     * deterministic CPU reference while gameplay/perf initializes GL43. */
     if (!renderer.setTestName(test_name))
     {
         std::fprintf(
@@ -212,16 +230,30 @@ int main ()
 
     auto stats_start = Clock::now();
     auto simulation_previous = stats_start;
+    const auto performance_start = stats_start;
+    const double performance_warmup_ms =
+        Renderer::PerformanceMetrics::warmupMilliseconds();
+    const double performance_duration_ms =
+        Renderer::PerformanceMetrics::durationMilliseconds();
+
     double simulation_accumulator = 0.0;
     std::uint64_t simulation_tick = 0;
     std::uint64_t stats_frames = 0;
+    std::vector<double> cpu_frame_samples;
+
+    if (performance_mode)
+    {
+        cpu_frame_samples.reserve(16384u);
+    }
 
     while (!Display.isCloseRequested() 
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
     {
+        const auto frame_started = Clock::now();
+
         if (!renderercheck_mode)
         {
-            const auto simulation_now = Clock::now();
+            const auto simulation_now = frame_started;
             double real_delta = std::chrono::duration<double>(
                     simulation_now - simulation_previous
                 ).count();
@@ -277,6 +309,33 @@ int main ()
 
         Display.update();
 
+        const auto frame_finished = Clock::now();
+
+        if (performance_mode)
+        {
+            const double elapsed_ms =
+                std::chrono::duration<double, std::milli>(
+                        frame_finished - performance_start
+                    ).count();
+
+            if (elapsed_ms >= performance_warmup_ms
+                    && (performance_duration_ms <= 0.0
+                        || elapsed_ms <= performance_duration_ms))
+            {
+                cpu_frame_samples.push_back(
+                        std::chrono::duration<double, std::milli>(
+                                frame_finished - frame_started
+                            ).count()
+                    );
+            }
+
+            if (performance_duration_ms > 0.0
+                    && elapsed_ms >= performance_duration_ms)
+            {
+                break;
+            }
+        }
+
         /* RendererCheck intentionally advances exactly once per captured
          * frame so all existing deterministic references remain unchanged. */
         if (renderercheck_mode)
@@ -294,7 +353,7 @@ int main ()
             break;
         }
         
-        if (!renderercheck_mode)
+        if (!renderercheck_mode && !performance_mode)
         {
             if (fps_cap > 0)
             {
@@ -329,7 +388,23 @@ int main ()
         ++frame;
     }
 
+    /* Profiler shutdown resolves pending GPU timer queries and closes its
+     * metrics stream before CPU samples append to the same file. */
     renderer.shutdown();
+
+    if (performance_mode
+            && !Renderer::PerformanceMetrics::appendSamples(
+                    "cpu_frame_ms",
+                    cpu_frame_samples
+                ))
+    {
+        std::fprintf(
+                stderr,
+                "RendererCheck perf: failed to write cpu_frame_ms samples\n"
+            );
+        exit_code = 2;
+    }
+
     Mouse.destroy();
     Keyboard.destroy();
     Display.destroy();
