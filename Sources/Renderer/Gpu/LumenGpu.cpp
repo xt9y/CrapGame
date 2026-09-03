@@ -1,6 +1,7 @@
 #include "LumenGpu.hpp"
 
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/ResourceLifecycle.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
 
 #include <algorithm>
@@ -555,21 +556,30 @@ GLenum surfacePixelType (SurfaceFormat format)
     return format == SurfaceFormat::Rgba8 ? GL_UNSIGNED_BYTE : GL_FLOAT;
 }
 
-GLuint createTexture (
+bool ensureTexture (
+            GLuint *texture,
             int width,
             int height,
             GLint filter,
             SurfaceFormat format
     )
 {
-    const GLuint texture = lwcgl_glGenTexture();
-
-    if (texture == 0)
+    if (!texture)
     {
-        return 0;
+        return false;
     }
 
-    glBindTexture(GL_TEXTURE_2D, texture);
+    if (*texture == 0)
+    {
+        *texture = lwcgl_glGenTexture();
+    }
+
+    if (*texture == 0)
+    {
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, *texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -585,7 +595,7 @@ GLuint createTexture (
             surfacePixelType(format),
             nullptr
         );
-    return texture;
+    return true;
 }
 
 void deleteTexture (GLuint *texture)
@@ -670,56 +680,50 @@ bool LumenGpu::init (std::string *error)
 
 bool LumenGpu::resize (int width, int height, std::string *error)
 {
-    const int new_width = std::max(1, width);
-    const int new_height = std::max(1, height);
-    const int new_trace_width = (new_width + 1) / 2;
-    const int new_trace_height = (new_height + 1) / 2;
+    const bool resources_ready =
+        indirect_history_[0] != 0
+        && indirect_history_[1] != 0
+        && reflection_history_[0] != 0
+        && reflection_history_[1] != 0
+        && position_history_[0] != 0
+        && position_history_[1] != 0
+        && final_color_ != 0;
 
-    if (new_width == width_
-            && new_height == height_
-            && indirect_history_[0] != 0
-            && indirect_history_[1] != 0
-            && reflection_history_[0] != 0
-            && reflection_history_[1] != 0
-            && position_history_[0] != 0
-            && position_history_[1] != 0
-            && final_color_ != 0)
+    if (!resizeStorageRequired(
+            width_, height_, resources_ready, width, height))
     {
         return true;
     }
 
-    width_ = new_width;
-    height_ = new_height;
-    trace_width_ = new_trace_width;
-    trace_height_ = new_trace_height;
+    width_ = normalizedExtent(width);
+    height_ = normalizedExtent(height);
+    trace_width_ = (width_ + 1) / 2;
+    trace_height_ = (height_ + 1) / 2;
 
-    destroyTextures();
+    bool storage_ok = true;
 
     for (int index = 0; index < 2; ++index)
     {
-        indirect_history_[index] = createTexture(
+        storage_ok = storage_ok && ensureTexture(
+                &indirect_history_[index],
                 trace_width_, trace_height_, GL_LINEAR, LUMEN_HISTORY_FORMAT
             );
-        reflection_history_[index] = createTexture(
+        storage_ok = storage_ok && ensureTexture(
+                &reflection_history_[index],
                 trace_width_, trace_height_, GL_LINEAR, LUMEN_HISTORY_FORMAT
             );
-        position_history_[index] = createTexture(
+        storage_ok = storage_ok && ensureTexture(
+                &position_history_[index],
                 trace_width_, trace_height_, GL_NEAREST, LUMEN_POSITION_HISTORY_FORMAT
             );
     }
 
-    final_color_ = createTexture(
-            width_, height_, GL_LINEAR, LUMEN_FINAL_FORMAT
+    storage_ok = storage_ok && ensureTexture(
+            &final_color_, width_, height_, GL_LINEAR, LUMEN_FINAL_FORMAT
         );
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (indirect_history_[0] == 0
-            || indirect_history_[1] == 0
-            || reflection_history_[0] == 0
-            || reflection_history_[1] == 0
-            || position_history_[0] == 0
-            || position_history_[1] == 0
-            || final_color_ == 0)
+    if (!storage_ok)
     {
         setError(error, "failed to allocate GPU Lumen temporal textures");
         destroyTextures();
