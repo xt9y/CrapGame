@@ -1,6 +1,7 @@
 #include "LumenGpu.hpp"
 
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/SurfaceFormats.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -462,7 +463,7 @@ layout(binding = 2) uniform sampler2D sDirect;
 layout(binding = 3) uniform sampler2D sIndirect;
 layout(binding = 4) uniform sampler2D sReflection;
 
-layout(rgba16f, binding = 0) writeonly uniform image2D oFinal;
+layout(rgba8, binding = 0) writeonly uniform image2D oFinal;
 
 vec3 toneMap (vec3 colorValue)
 {
@@ -544,7 +545,22 @@ void main ()
 }
 )GLSL";
 
-GLuint createTexture (int width, int height, GLint filter)
+GLint surfaceInternalFormat (SurfaceFormat format)
+{
+    return format == SurfaceFormat::Rgba8 ? GL_RGBA8 : GL_RGBA16F;
+}
+
+GLenum surfacePixelType (SurfaceFormat format)
+{
+    return format == SurfaceFormat::Rgba8 ? GL_UNSIGNED_BYTE : GL_FLOAT;
+}
+
+GLuint createTexture (
+            int width,
+            int height,
+            GLint filter,
+            SurfaceFormat format
+    )
 {
     const GLuint texture = lwcgl_glGenTexture();
 
@@ -561,31 +577,15 @@ GLuint createTexture (int width, int height, GLint filter)
     glTexImage2D(
             GL_TEXTURE_2D,
             0,
-            GL_RGBA16F,
+            surfaceInternalFormat(format),
             width,
             height,
             0,
             GL_RGBA,
-            GL_FLOAT,
+            surfacePixelType(format),
             nullptr
         );
     return texture;
-}
-
-void bindTextureUnit (GLuint unit, GLuint texture)
-{
-    GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
-    glBindTexture(GL_TEXTURE_2D, texture);
-}
-
-void unbindTextureUnits (GLuint count)
-{
-    for (GLuint unit = 0; unit < count; ++unit)
-    {
-        bindTextureUnit(unit, 0);
-    }
-
-    GLModern.glActiveTexture(GL_TEXTURE0);
 }
 
 void deleteTexture (GLuint *texture)
@@ -660,15 +660,6 @@ bool LumenGpu::init (std::string *error)
         return false;
     }
 
-    GL15.glGenBuffers(1, &primitive_buffer_);
-
-    if (primitive_buffer_ == 0)
-    {
-        setError(error, "failed to allocate GPU Lumen primitive buffer");
-        shutdown();
-        return false;
-    }
-
     if (error)
     {
         error->clear();
@@ -706,12 +697,20 @@ bool LumenGpu::resize (int width, int height, std::string *error)
 
     for (int index = 0; index < 2; ++index)
     {
-        indirect_history_[index] = createTexture(trace_width_, trace_height_, GL_LINEAR);
-        reflection_history_[index] = createTexture(trace_width_, trace_height_, GL_LINEAR);
-        position_history_[index] = createTexture(trace_width_, trace_height_, GL_NEAREST);
+        indirect_history_[index] = createTexture(
+                trace_width_, trace_height_, GL_LINEAR, LUMEN_HISTORY_FORMAT
+            );
+        reflection_history_[index] = createTexture(
+                trace_width_, trace_height_, GL_LINEAR, LUMEN_HISTORY_FORMAT
+            );
+        position_history_[index] = createTexture(
+                trace_width_, trace_height_, GL_NEAREST, LUMEN_POSITION_HISTORY_FORMAT
+            );
     }
 
-    final_color_ = createTexture(width_, height_, GL_LINEAR);
+    final_color_ = createTexture(
+            width_, height_, GL_LINEAR, LUMEN_FINAL_FORMAT
+        );
     glBindTexture(GL_TEXTURE_2D, 0);
 
     if (indirect_history_[0] == 0
@@ -729,221 +728,6 @@ bool LumenGpu::resize (int width, int height, std::string *error)
 
     history_index_ = 0;
     history_valid_ = false;
-
-    if (error)
-    {
-        error->clear();
-    }
-
-    return true;
-}
-
-bool LumenGpu::uploadPrimitives (
-                const Ecs::World& world,
-                std::string *error
-        )
-{
-    primitives_.clear();
-
-    for (const Ecs::Entity entity : world.entities())
-    {
-        const Ecs::TransformComponent *transform = world.getTransform(entity);
-        const Ecs::MeshComponent *mesh = world.getMesh(entity);
-        const Ecs::RenderableComponent *renderable = world.getRenderable(entity);
-        const Ecs::MaterialComponent *material = world.getMaterial(entity);
-
-        if (!transform
-                || !mesh
-                || !renderable
-                || !renderable->visible
-                || !material)
-        {
-            continue;
-        }
-
-        PrimitiveGpu primitive = {};
-        primitive.position_type[0] = transform->position.x;
-        primitive.position_type[1] = transform->position.y;
-        primitive.position_type[2] = transform->position.z;
-        primitive.position_type[3] = mesh->mesh == Ecs::MeshType::Cube ? 0.0f : 1.0f;
-
-        primitive.rotation[0] = transform->rotation.x;
-        primitive.rotation[1] = transform->rotation.y;
-        primitive.rotation[2] = transform->rotation.z;
-
-        primitive.scale[0] = transform->scale.x;
-        primitive.scale[1] = transform->scale.y;
-        primitive.scale[2] = transform->scale.z;
-        primitive.scale[3] = 1.0f;
-
-        primitive.albedo_metallic[0] = material->albedo.x;
-        primitive.albedo_metallic[1] = material->albedo.y;
-        primitive.albedo_metallic[2] = material->albedo.z;
-        primitive.albedo_metallic[3] = material->metallic;
-
-        primitive.emissive_roughness[0] = material->emissive.x * material->emissive_strength;
-        primitive.emissive_roughness[1] = material->emissive.y * material->emissive_strength;
-        primitive.emissive_roughness[2] = material->emissive.z * material->emissive_strength;
-        primitive.emissive_roughness[3] = material->roughness;
-
-        primitives_.push_back(primitive);
-    }
-
-    const std::size_t required = primitives_.size() * sizeof(PrimitiveGpu);
-    GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, primitive_buffer_);
-
-    if (required == 0)
-    {
-        if (primitive_capacity_ == 0)
-        {
-            GL15.glBufferData(
-                    GL_SHADER_STORAGE_BUFFER,
-                    16,
-                    nullptr,
-                    GL_DYNAMIC_DRAW
-                );
-            primitive_capacity_ = 16;
-        }
-        return true;
-    }
-
-    if (required > primitive_capacity_)
-    {
-        std::size_t capacity = std::max<std::size_t>(512u, primitive_capacity_);
-
-        while (capacity < required)
-        {
-            capacity *= 2u;
-        }
-
-        GL15.glBufferData(
-                GL_SHADER_STORAGE_BUFFER,
-                static_cast<LWCGLsizeiptr>(capacity),
-                nullptr,
-                GL_DYNAMIC_DRAW
-            );
-        primitive_capacity_ = capacity;
-    }
-
-    GL15.glBufferSubData(
-            GL_SHADER_STORAGE_BUFFER,
-            0,
-            static_cast<LWCGLsizeiptr>(required),
-            primitives_.data()
-        );
-
-    if (error)
-    {
-        error->clear();
-    }
-
-    return true;
-}
-
-bool LumenGpu::render (
-                const Ecs::World& world,
-                const GBufferGpu& gbuffer,
-                const DirectLightingGpu& direct,
-                const Math::Mat4& view,
-                const Math::Mat4& projection,
-                const Math::Vec3& camera_position,
-                std::uint64_t frame_index,
-                std::string *error
-        )
-{
-    if (!ready()
-            || !gbuffer.ready()
-            || !direct.ready()
-            || gbuffer.width() != width_
-            || gbuffer.height() != height_)
-    {
-        setError(error, "GPU Lumen resources are not ready for this frame");
-        return false;
-    }
-
-    if (!uploadPrimitives(world, error))
-    {
-        return false;
-    }
-
-    const Math::Mat4 view_projection = Math::multiply(projection, view);
-    const int read_index = history_index_;
-    const int write_index = 1 - history_index_;
-
-    bindTextureUnit(0, gbuffer.positionDepthTexture());
-    bindTextureUnit(1, gbuffer.normalRoughnessTexture());
-    bindTextureUnit(2, gbuffer.albedoMetallicTexture());
-    bindTextureUnit(3, direct.directTexture());
-    bindTextureUnit(4, indirect_history_[read_index]);
-    bindTextureUnit(5, reflection_history_[read_index]);
-    bindTextureUnit(6, position_history_[read_index]);
-
-    GL20.glUseProgram(trace_program_);
-    GL20.glUniformMatrix4fv(
-            trace_view_projection_location_,
-            1,
-            GL_FALSE,
-            view_projection.value
-        );
-    GL20.glUniform3f(
-            trace_camera_location_,
-            camera_position.x,
-            camera_position.y,
-            camera_position.z
-        );
-    GL20.glUniform1i(
-            trace_primitive_count_location_,
-            static_cast<GLint>(primitives_.size())
-        );
-    GL20.glUniform1i(
-            trace_frame_location_,
-            static_cast<GLint>(frame_index & 0x7fffffffu)
-        );
-    GL20.glUniform1i(
-            trace_history_valid_location_,
-            history_valid_ ? 1 : 0
-        );
-
-    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, primitive_buffer_);
-    GL42.glBindImageTexture(0, indirect_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(1, reflection_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-    GL42.glBindImageTexture(2, position_history_[write_index], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-
-    GL43.glDispatchCompute(
-            static_cast<GLuint>((trace_width_ + 7) / 8),
-            static_cast<GLuint>((trace_height_ + 7) / 8),
-            1
-        );
-
-    GL42.glMemoryBarrier(
-            GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
-            GL_TEXTURE_FETCH_BARRIER_BIT
-        );
-
-    bindTextureUnit(0, gbuffer.positionDepthTexture());
-    bindTextureUnit(1, gbuffer.normalRoughnessTexture());
-    bindTextureUnit(2, direct.directTexture());
-    bindTextureUnit(3, indirect_history_[write_index]);
-    bindTextureUnit(4, reflection_history_[write_index]);
-
-    GL20.glUseProgram(composite_program_);
-    GL42.glBindImageTexture(0, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-
-    GL43.glDispatchCompute(
-            static_cast<GLuint>((width_ + 7) / 8),
-            static_cast<GLuint>((height_ + 7) / 8),
-            1
-        );
-
-    GL42.glMemoryBarrier(
-            GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
-            GL_TEXTURE_FETCH_BARRIER_BIT
-        );
-    GL20.glUseProgram(0);
-    unbindTextureUnits(7);
-
-    history_index_ = write_index;
-    history_valid_ = true;
 
     if (error)
     {
@@ -971,23 +755,17 @@ void LumenGpu::shutdown ()
 {
     destroyTextures();
 
-    if (primitive_buffer_ != 0)
-    {
-        GL15.glDeleteBuffers(1, &primitive_buffer_);
-        primitive_buffer_ = 0;
-    }
-
     destroyProgram(&trace_program_);
     destroyProgram(&composite_program_);
-
-    primitive_capacity_ = 0;
-    primitives_.clear();
 
     trace_view_projection_location_ = -1;
     trace_camera_location_ = -1;
     trace_primitive_count_location_ = -1;
+    trace_bvh_node_count_location_ = -1;
     trace_frame_location_ = -1;
     trace_history_valid_location_ = -1;
+    bvh_shader_validated_ = false;
+    bvh_trace_active_ = false;
 
     width_ = 0;
     height_ = 0;
@@ -999,7 +777,6 @@ bool LumenGpu::ready () const
 {
     return trace_program_ != 0
         && composite_program_ != 0
-        && primitive_buffer_ != 0
         && indirect_history_[0] != 0
         && indirect_history_[1] != 0
         && reflection_history_[0] != 0
