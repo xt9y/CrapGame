@@ -1,5 +1,7 @@
 #include "ScreenTrace.hpp"
 
+#include "Renderer/Lumen/TraceDirection.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -59,12 +61,12 @@ bool projectPoint (
 
 } // namespace
 
-TraceHit traceScreen (
+TraceHit traceScreenNormalized (
                 const GBuffer::Buffer& gbuffer,
                 const Math::Mat4& view,
                 const Math::Mat4& projection,
                 const Math::Vec3& origin,
-                const Math::Vec3& direction,
+                const Math::Vec3& normalized_direction,
                 float maximum_distance,
                 float step_size,
                 float thickness
@@ -81,9 +83,6 @@ TraceHit traceScreen (
         return result;
     }
 
-    const Math::Vec3 ray_direction =
-        Math::normalize(direction);
-
     for (float distance = step_size;
             distance <= maximum_distance;
             distance += step_size) 
@@ -91,7 +90,7 @@ TraceHit traceScreen (
         const Math::Vec3 sample_position =
             Math::add(
                     origin,
-                    Math::multiply(ray_direction, distance)
+                    Math::multiply(normalized_direction, distance)
                 );
 
         float screen_x = 0.0f,
@@ -161,6 +160,29 @@ TraceHit traceScreen (
     }
 
     return result;
+}
+
+TraceHit traceScreen (
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Math::Vec3& origin,
+                const Math::Vec3& direction,
+                float maximum_distance,
+                float step_size,
+                float thickness
+        ) 
+{
+    return traceScreenNormalized(
+            gbuffer,
+            view,
+            projection,
+            origin,
+            normalizedTraceDirection(direction),
+            maximum_distance,
+            step_size,
+            thickness
+        );
 }
 
 } // namespace Lumen

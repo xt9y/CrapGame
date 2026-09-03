@@ -1,11 +1,14 @@
 #include "ScreenProbe.hpp"
 
 #include "Renderer/Lumen/Sampling.hpp"
+#include "Renderer/Lumen/ScreenProbePolicy.hpp"
 #include "Renderer/Lumen/ShortRangeAo.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
+#include <thread>
 
 namespace Renderer 
 {
@@ -13,6 +16,8 @@ namespace Lumen
 {
 namespace 
 {
+
+using ProbeClock = std::chrono::steady_clock;
 
 struct ProbeSample 
 {
@@ -37,6 +42,63 @@ std::size_t probeIndex (
     return static_cast<std::size_t>(y) *
            static_cast<std::size_t>(width) +
            static_cast<std::size_t>(x);
+}
+
+double milliseconds(ProbeClock::time_point started,
+                    ProbeClock::time_point finished)
+{
+    return std::chrono::duration<double, std::milli>(
+            finished - started
+        ).count();
+}
+
+template <typename Function>
+void parallelRows(int row_count, Function&& function)
+{
+    if (row_count <= 0)
+    {
+        return;
+    }
+
+    const unsigned workers = screenProbeWorkerCount(
+            row_count,
+            std::thread::hardware_concurrency()
+        );
+
+    if (workers <= 1u)
+    {
+        for (int row = 0; row < row_count; ++row)
+        {
+            function(row);
+        }
+        return;
+    }
+
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+
+    for (unsigned worker = 0; worker < workers; ++worker)
+    {
+        const int begin = static_cast<int>(
+                static_cast<unsigned long long>(row_count) * worker / workers
+            );
+        const int end = static_cast<int>(
+                static_cast<unsigned long long>(row_count) * (worker + 1u) / workers
+            );
+
+        threads.emplace_back([begin, end, &function]()
+        {
+            for (int row = begin; row < end; ++row)
+            {
+                function(row);
+            }
+        });
+    }
+
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
 }
 
 bool findProbePixel (
@@ -115,8 +177,7 @@ Math::Vec3 gatherProbe (
                 const SurfaceCache& surface_cache,
                 const RadianceCache& radiance_cache,
                 const GBuffer::Pixel& pixel,
-                std::uint64_t frame_index,
-                int ray_count
+                const std::vector<HemisphereSample>& sequence
         ) 
 {
     const Math::Vec3 origin = Math::add(
@@ -124,16 +185,12 @@ Math::Vec3 gatherProbe (
             Math::multiply(pixel.normal, 0.04f)
         );
 
+    const HemisphereBasis basis = hemisphereBasis(pixel.normal);
     Math::Vec3 incoming = {0.0f, 0.0f, 0.0f};
 
-    for (int ray = 0; ray < ray_count; ++ray) 
+    for (const HemisphereSample& sample : sequence)
     {
-        const Math::Vec3 direction = sampleHemisphere(
-                pixel.normal,
-                ray,
-                ray_count,
-                frame_index
-            );
+        const Math::Vec3 direction = sampleHemisphere(basis, sample);
 
         const UnifiedTraceHit hit = tracer.trace(
                 gbuffer,
@@ -165,7 +222,7 @@ Math::Vec3 gatherProbe (
 
     incoming = Math::multiply(
             incoming,
-            1.0f / static_cast<float>(ray_count)
+            1.0f / static_cast<float>(sequence.size())
         );
 
     return Math::multiply(
@@ -186,12 +243,18 @@ void ScreenProbeGather::gather (
                 std::uint64_t frame_index,
                 int spacing,
                 int ray_count,
-                std::vector<Math::Vec3> *output
+                std::vector<Math::Vec3> *output,
+                ScreenProbeTimings *timings
         ) const 
 {
     if (!output) 
     {
         return;
+    }
+
+    if (timings)
+    {
+        *timings = {};
     }
 
     const int probe_spacing = std::max(4, spacing),
@@ -214,7 +277,13 @@ void ScreenProbeGather::gather (
 
     output->assign(pixel_count, {0.0f, 0.0f, 0.0f});
 
-    for (int probe_y = 0; probe_y < probe_height; ++probe_y) 
+    const std::vector<HemisphereSample> probe_sequence =
+        buildHemisphereSequence(rays_per_probe, frame_index);
+    const std::vector<HemisphereSample> ao_sequence =
+        buildHemisphereSequence(4, frame_index + 31u);
+
+    const auto trace_started = ProbeClock::now();
+    parallelRows(probe_height, [&](int probe_y)
     {
         for (int probe_x = 0; probe_x < probe_width; ++probe_x) 
         {
@@ -252,22 +321,23 @@ void ScreenProbeGather::gather (
                     surface_cache,
                     radiance_cache,
                     pixel,
-                    frame_index,
-                    rays_per_probe
+                    probe_sequence
                 );
             probe.entity = pixel.entity;
             probe.x = sample_x;
             probe.y = sample_y;
             probe.valid = true;
         }
-    }
+    });
+    const auto trace_finished = ProbeClock::now();
 
     std::vector<Math::Vec3> reconstructed(
             pixel_count,
             {0.0f, 0.0f, 0.0f}
         );
 
-    for (int y = 0; y < gbuffer.height(); ++y) 
+    const auto reconstruct_started = ProbeClock::now();
+    parallelRows(gbuffer.height(), [&](int y)
     {
         for (int x = 0; x < gbuffer.width(); ++x) 
         {
@@ -396,9 +466,17 @@ void ScreenProbeGather::gather (
                 static_cast<std::size_t>(x)
             ] = indirect;
         }
-    }
+    });
+    const auto reconstruct_finished = ProbeClock::now();
 
-    for (int y = 0; y < gbuffer.height(); ++y) 
+    std::vector<Math::Vec3> filtered_indirect(
+            pixel_count,
+            {0.0f, 0.0f, 0.0f}
+        );
+    std::vector<std::uint8_t> filtered_valid(pixel_count, 0u);
+
+    const auto filter_started = ProbeClock::now();
+    parallelRows(gbuffer.height(), [&](int y)
     {
         for (int x = 0; x < gbuffer.width(); ++x) 
         {
@@ -479,11 +557,36 @@ void ScreenProbeGather::gather (
                 continue;
             }
 
-            const Math::Vec3 indirect = Math::multiply(
+            const std::size_t index =
+                static_cast<std::size_t>(y) *
+                static_cast<std::size_t>(gbuffer.width()) +
+                static_cast<std::size_t>(x);
+
+            filtered_indirect[index] = Math::multiply(
                     filtered,
                     1.0f / total_weight
                 );
+            filtered_valid[index] = 1u;
+        }
+    });
+    const auto filter_finished = ProbeClock::now();
 
+    const auto ao_started = ProbeClock::now();
+    parallelRows(gbuffer.height(), [&](int y)
+    {
+        for (int x = 0; x < gbuffer.width(); ++x) 
+        {
+            const std::size_t index =
+                static_cast<std::size_t>(y) *
+                static_cast<std::size_t>(gbuffer.width()) +
+                static_cast<std::size_t>(x);
+
+            if (!filtered_valid[index])
+            {
+                continue;
+            }
+
+            const GBuffer::Pixel& pixel = gbuffer.pixel(x, y);
             const float visibility = shortRangeVisibility(
                     gbuffer,
                     view,
@@ -492,21 +595,30 @@ void ScreenProbeGather::gather (
                     pixel,
                     frame_index,
                     4,
-                    0.80f
+                    0.80f,
+                    &ao_sequence
                 );
 
             const float contact_weight =
                 0.35f + visibility * 0.65f;
 
-            (*output)[
-                static_cast<std::size_t>(y) *
-                static_cast<std::size_t>(gbuffer.width()) +
-                static_cast<std::size_t>(x)
-            ] = Math::multiply(
-                    indirect,
+            (*output)[index] = Math::multiply(
+                    filtered_indirect[index],
                     contact_weight
                 );
         }
+    });
+    const auto ao_finished = ProbeClock::now();
+
+    if (timings)
+    {
+        timings->trace_ms = milliseconds(trace_started, trace_finished);
+        timings->reconstruct_ms = milliseconds(
+                reconstruct_started,
+                reconstruct_finished
+            );
+        timings->filter_ms = milliseconds(filter_started, filter_finished);
+        timings->contact_ao_ms = milliseconds(ao_started, ao_finished);
     }
 }
 

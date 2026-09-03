@@ -14,6 +14,14 @@ namespace Renderer
 namespace Lumen 
 {
 
+struct ScreenProbeTimings
+{
+    double trace_ms = 0.0;
+    double reconstruct_ms = 0.0;
+    double filter_ms = 0.0;
+    double contact_ao_ms = 0.0;
+};
+
 class ScreenProbeGather 
 {
 
@@ -28,7 +36,8 @@ public:
                 std::uint64_t frame_index,
                 int spacing,
                 int ray_count,
-                std::vector<Math::Vec3> *output
+                std::vector<Math::Vec3> *output,
+                ScreenProbeTimings *timings = nullptr
         ) const;
 };
 

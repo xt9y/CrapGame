@@ -82,6 +82,22 @@ Rendering::~Rendering ()
             cpu_screen_probe_samples_
         );
     (void)PerformanceMetrics::appendSamples(
+            "cpu_probe_trace_ms",
+            cpu_probe_trace_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_probe_reconstruct_ms",
+            cpu_probe_reconstruct_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_probe_filter_ms",
+            cpu_probe_filter_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
+            "cpu_contact_ao_ms",
+            cpu_contact_ao_samples_
+        );
+    (void)PerformanceMetrics::appendSamples(
             "cpu_gi_taa_ms",
             cpu_gi_taa_samples_
         );
@@ -125,8 +141,6 @@ void Rendering::renderCpuReference (
         camera_transform->position.z,
     };
 
-    /* Keep visual-test camera semantics identical to the old deterministic
-     * path: matrices are rebuilt for every captured reference frame. */
     applyCamera(*camera_transform, *camera);
 
     const CpuReferencePassPlan plan = cpuReferencePlan(render_mode_);
@@ -163,8 +177,6 @@ void Rendering::renderCpuReference (
 
     if (cpu_visual_metrics_enabled_)
     {
-        /* Preserve the existing per-frame metric contract while removing the
-         * old accidental inclusion of motion-vector work. */
         cpu_geometry_samples_.push_back(raster_ms);
     }
 
@@ -195,8 +207,6 @@ void Rendering::renderCpuReference (
             }
 
             cpu_motion_valid_ = true;
-            /* After the last moving frame, run once more on the first stable
-             * frame so every cached motion vector is explicitly cleared. */
             cpu_motion_settle_pending_ = motion_changed;
         }
     }
@@ -326,6 +336,7 @@ void Rendering::renderCpuReference (
         if (plan.screen_probes)
         {
             const auto pass_started = CpuClock::now();
+            Lumen::ScreenProbeTimings probe_timings;
             screen_probe_gather_.gather(
                     gbuffer_,
                     view_,
@@ -336,7 +347,8 @@ void Rendering::renderCpuReference (
                     frame_state_.frameIndex(),
                     frame_budget.screen_probe_spacing,
                     frame_budget.screen_probe_rays,
-                    &indirect_color_
+                    &indirect_color_,
+                    cpu_visual_metrics_enabled_ ? &probe_timings : nullptr
                 );
             const auto pass_finished = CpuClock::now();
 
@@ -345,6 +357,12 @@ void Rendering::renderCpuReference (
                 cpu_screen_probe_samples_.push_back(
                         milliseconds(pass_started, pass_finished)
                     );
+                cpu_probe_trace_samples_.push_back(probe_timings.trace_ms);
+                cpu_probe_reconstruct_samples_.push_back(
+                        probe_timings.reconstruct_ms
+                    );
+                cpu_probe_filter_samples_.push_back(probe_timings.filter_ms);
+                cpu_contact_ao_samples_.push_back(probe_timings.contact_ao_ms);
             }
         }
 
@@ -408,8 +426,6 @@ void Rendering::renderCpuReference (
     if (render_mode_ == RenderMode::Final)
     {
         composeFinal();
-
-        /* Final-mode tests intentionally retain the exact old TAA resolve. */
         Temporal::resolveTaa(
                 gbuffer_,
                 history_,
@@ -444,8 +460,6 @@ void Rendering::renderCpuReference (
         history_.store(gbuffer_, resolved_color_);
     }
 
-    /* Preserve the original frame-index progression for all visual tests,
-     * including diagnostic modes that use it for sampling/convergence. */
     frame_state_.capture(world, view_, projection_);
 
     const auto resolve_finished = CpuClock::now();

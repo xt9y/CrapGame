@@ -114,6 +114,10 @@ public:
                 cpu_radiosity_samples_.reserve(expected_visual_frames);
                 cpu_radiance_cache_samples_.reserve(expected_visual_frames);
                 cpu_screen_probe_samples_.reserve(expected_visual_frames);
+                cpu_probe_trace_samples_.reserve(expected_visual_frames);
+                cpu_probe_reconstruct_samples_.reserve(expected_visual_frames);
+                cpu_probe_filter_samples_.reserve(expected_visual_frames);
+                cpu_contact_ao_samples_.reserve(expected_visual_frames);
                 cpu_gi_taa_samples_.reserve(expected_visual_frames);
                 cpu_reflection_samples_.reserve(expected_visual_frames);
                 cpu_resolve_samples_.reserve(expected_visual_frames);
@@ -275,6 +279,10 @@ private:
                         cpu_radiosity_samples_,
                         cpu_radiance_cache_samples_,
                         cpu_screen_probe_samples_,
+                        cpu_probe_trace_samples_,
+                        cpu_probe_reconstruct_samples_,
+                        cpu_probe_filter_samples_,
+                        cpu_contact_ao_samples_,
                         cpu_gi_taa_samples_,
                         cpu_reflection_samples_,
                         cpu_resolve_samples_;

@@ -1,5 +1,7 @@
 #include "Tracer.hpp"
 
+#include "Renderer/Lumen/TraceDirection.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -36,12 +38,15 @@ UnifiedTraceHit Tracer::trace (
         return result;
     }
 
-    const TraceHit screen_hit = traceScreen(
+    const Math::Vec3 ray_direction =
+        normalizedTraceDirection(direction);
+
+    const TraceHit screen_hit = traceScreenNormalized(
             gbuffer,
             view,
             projection,
             origin,
-            direction,
+            ray_direction,
             maximum_distance,
             0.12f,
             0.18f
@@ -57,9 +62,6 @@ UnifiedTraceHit Tracer::trace (
         result.hit = true;
         return result;
     }
-
-    const Math::Vec3 ray_direction =
-        Math::normalize(direction);
 
     float travelled = 0.05f;
 

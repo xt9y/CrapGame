@@ -132,6 +132,43 @@ jobs:
             tests/sdf_broadphase_contract.cpp \
             -o /tmp/sdf-broadphase-contract
           /tmp/sdf-broadphase-contract
+      - name: Screen probe Stage 43-45 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/screen_probe_stage43_45_contract.cpp \
+            Sources/Renderer/Lumen/Sampling.cpp \
+            Sources/Renderer/Math/Math.cpp \
+            -o /tmp/screen-probe-stage43-45-contract
+          /tmp/screen-probe-stage43-45-contract
+      - name: Trace direction contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/trace_direction_contract.cpp \
+            Sources/Renderer/Math/Math.cpp \
+            -o /tmp/trace-direction-contract
+          /tmp/trace-direction-contract
+      - name: Screen probe implementation compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
+            -ISources -c Sources/Renderer/Lumen/ScreenProbe.cpp \
+            -o /tmp/screen-probe.o
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources -c Sources/Renderer/Lumen/ShortRangeAo.cpp \
+            -o /tmp/short-range-ao.o
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources -c Sources/Renderer/Lumen/ScreenTrace.cpp \
+            -o /tmp/screen-trace.o
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources -c Sources/Renderer/Lumen/Tracer.cpp \
+            -o /tmp/tracer.o
       - name: RendererCheck headless runtime contract
         shell: bash
         run: |

@@ -40,7 +40,8 @@ float shortRangeVisibility (
                 const GBuffer::Pixel& pixel,
                 std::uint64_t frame_index,
                 int ray_count,
-                float maximum_distance
+                float maximum_distance,
+                const std::vector<HemisphereSample> *sequence
         ) 
 {
     if (!pixel.valid) 
@@ -90,16 +91,19 @@ float shortRangeVisibility (
             Math::multiply(pixel.normal, 0.025f)
         );
 
+    const HemisphereBasis basis = hemisphereBasis(pixel.normal);
+    const bool cached_sequence =
+        sequence && sequence->size() >= static_cast<std::size_t>(rays);
+
     float occlusion = 0.0f;
 
     for (int ray = 0; ray < rays; ++ray) 
     {
-        const Math::Vec3 direction = sampleHemisphere(
-                pixel.normal,
-                ray,
-                rays,
-                frame_index + 31u
-            );
+        const HemisphereSample sample = cached_sequence
+            ? (*sequence)[static_cast<std::size_t>(ray)]
+            : hemisphereSequenceSample(ray, rays, frame_index + 31u);
+
+        const Math::Vec3 direction = sampleHemisphere(basis, sample);
 
         const UnifiedTraceHit hit = tracer.trace(
                 gbuffer,
