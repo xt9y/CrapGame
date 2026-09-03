@@ -1,6 +1,7 @@
 #include "Renderer/Render.hpp"
 #include "Renderer/PerformanceMetrics.hpp"
 #include "Renderer/Test/TestScene.hpp"
+#include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Ecs/Ecs.hpp"
 
 #include <lwcgl/context.h>
@@ -262,14 +263,18 @@ int main ()
             && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) 
     {
         const auto frame_started = Clock::now();
+        const std::uint64_t frame_time_ns = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        frame_started.time_since_epoch()
+                    ).count()
+            );
 
         if (!renderercheck_mode && !performance_static_scene)
         {
-            const auto simulation_now = frame_started;
             double real_delta = std::chrono::duration<double>(
-                    simulation_now - simulation_previous
+                    frame_started - simulation_previous
                 ).count();
-            simulation_previous = simulation_now;
+            simulation_previous = frame_started;
 
             if (real_delta < 0.0)
             {
@@ -306,9 +311,10 @@ int main ()
             renderer.resize(renderer_width, renderer_height);
         }
 
-        renderer.render(world);
+        renderer.render(world, frame_time_ns);
 
-        if (renderer.captureFrame(frame) != 0) 
+        if (Renderer::Gpu::frameCaptureRequired(renderercheck_mode)
+                && renderer.captureFrame(frame) != 0) 
         {
             std::fprintf(
                     stderr, 
@@ -321,10 +327,9 @@ int main ()
 
         Display.update();
 
-        const auto frame_finished = Clock::now();
-
-        if (performance_mode)
+        if (Renderer::Gpu::frameEndClockRequired(performance_mode))
         {
+            const auto frame_finished = Clock::now();
             const double elapsed_ms =
                 std::chrono::duration<double, std::milli>(
                         frame_finished - performance_start
@@ -373,9 +378,8 @@ int main ()
             }
 
             ++stats_frames;
-            const auto now = Clock::now();
             const double elapsed = std::chrono::duration<double>(
-                    now - stats_start
+                    frame_started - stats_start
                 ).count();
 
             if (elapsed >= 2.0)
@@ -392,7 +396,7 @@ int main ()
                         renderer_height
                     );
 
-                stats_start = now;
+                stats_start = frame_started;
                 stats_frames = 0;
             }
         }
