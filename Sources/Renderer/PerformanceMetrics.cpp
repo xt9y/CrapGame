@@ -82,6 +82,16 @@ bool metricNameValid (const char *name)
     return true;
 }
 
+bool metricShouldPersist (const char *name)
+{
+    /* The GPU passes intentionally run at different cadences. Summing only
+     * the passes that happened on a particular uncapped render frame makes
+     * the median collapse to present-only cost, so this old aggregate is not
+     * a meaningful performance metric. Keep the internal profiler aggregate
+     * available for diagnostics, but do not export it to RendererCheck. */
+    return std::string_view(name) != "gpu_pipeline_ms";
+}
+
 } // namespace
 
 bool requested ()
@@ -130,8 +140,17 @@ bool Writer::write (const char *name, double value)
 {
     if (!metricNameValid(name)
             || !std::isfinite(value)
-            || value < 0.0
-            || (!stream_.is_open() && !open()))
+            || value < 0.0)
+    {
+        return false;
+    }
+
+    if (!metricShouldPersist(name))
+    {
+        return true;
+    }
+
+    if (!stream_.is_open() && !open())
     {
         return false;
     }
