@@ -1,8 +1,10 @@
 #include "Profiler.hpp"
+#include "RuntimeHotPath.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 
 namespace Renderer
 {
@@ -25,6 +27,14 @@ std::uint64_t monotonicNanoseconds ()
                     Clock::now().time_since_epoch()
                 ).count()
         );
+}
+
+bool environmentFlag (const char *name)
+{
+    const char *value = std::getenv(name);
+    return value
+        && *value
+        && !(value[0] == '0' && value[1] == '\0');
 }
 
 const char *passName (Profiler::Pass pass)
@@ -63,6 +73,15 @@ bool Profiler::init ()
 {
     shutdown();
 
+    performance_mode_ = PerformanceMetrics::requested();
+
+    if (!gpuProfilerRequested(
+            performance_mode_,
+            environmentFlag("CRAPGAME_GPU_PROFILE")))
+    {
+        return true;
+    }
+
     if (!GL33.glGenQueries
             || !GL33.glDeleteQueries
             || !GL33.glQueryCounter
@@ -96,7 +115,6 @@ bool Profiler::init ()
     milliseconds_.fill(0.0);
     sample_counts_.fill(0u);
 
-    performance_mode_ = PerformanceMetrics::requested();
     performance_start_ns_ = monotonicNanoseconds();
     performance_warmup_ms_ = PerformanceMetrics::warmupMilliseconds();
     performance_duration_ms_ = PerformanceMetrics::durationMilliseconds();
@@ -341,12 +359,15 @@ void Profiler::beginFrame (std::uint64_t frame_index)
         return;
     }
 
-    collect(false);
-
     const std::uint64_t sample_index = frame_index / interval;
-    Slot& slot = slots_[
-        static_cast<std::size_t>(sample_index % SLOT_COUNT)
-    ];
+    const std::size_t slot_index = static_cast<std::size_t>(
+            sample_index % SLOT_COUNT
+        );
+    Slot& slot = slots_[slot_index];
+
+    /* Only the query slot about to be reused matters on this frame. This
+     * replaces the old eight-slot scan that ran for every perf frame. */
+    consumeSlot(slot, false);
 
     if (slot.pending)
     {
@@ -356,7 +377,7 @@ void Profiler::beginFrame (std::uint64_t frame_index)
     slot.frame = frame_index;
     slot.submitted_ns = monotonicNanoseconds();
     slot.measured.fill(false);
-    current_slot_ = static_cast<int>(sample_index % SLOT_COUNT);
+    current_slot_ = static_cast<int>(slot_index);
 }
 
 void Profiler::begin (Pass pass)
@@ -374,6 +395,13 @@ void Profiler::begin (Pass pass)
     }
 
     Slot& slot = slots_[static_cast<std::size_t>(current_slot_)];
+
+    if (pass == Pass::Present
+            && !presentTimerQueryDue(performance_mode_, slot.frame))
+    {
+        return;
+    }
+
     GL33.glQueryCounter(slot.begin[index], GL_TIMESTAMP);
     slot.measured[index] = true;
 }
@@ -409,7 +437,20 @@ void Profiler::endFrame ()
         return;
     }
 
-    slots_[static_cast<std::size_t>(current_slot_)].pending = true;
+    Slot& slot = slots_[static_cast<std::size_t>(current_slot_)];
+    const bool measured_any = std::any_of(
+            slot.measured.begin(),
+            slot.measured.end(),
+            [](bool measured) { return measured; }
+        );
+
+    slot.pending = profilerSlotShouldPend(measured_any);
+
+    if (!slot.pending)
+    {
+        slot.measured.fill(false);
+    }
+
     current_slot_ = -1;
 }
 
