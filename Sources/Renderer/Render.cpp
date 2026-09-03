@@ -16,9 +16,6 @@ namespace Renderer
 namespace 
 {
 
-constexpr std::uint64_t LUMEN_UPDATE_HZ = 240u;
-constexpr std::uint64_t LUMEN_UPDATE_NS = 1000000000ull / LUMEN_UPDATE_HZ;
-
 std::uint64_t monotonicNanoseconds ()
 {
     using Clock = std::chrono::steady_clock;
@@ -111,7 +108,7 @@ bool Rendering::init ()
             );
     }
 
-    gpu_lumen_next_update_ns_ = 0;
+    gpu_lumen_schedule_.reset();
     gpu_lumen_sample_index_ = 0;
     gpu_pipeline_enabled_ = true;
     return true;
@@ -175,7 +172,7 @@ void Rendering::resize (int width, int height)
         /* New attachments have no valid scene data. Force the next GPU frame
          * to repopulate geometry/direct textures and restart Lumen history. */
         change_tracker_.clear();
-        gpu_lumen_next_update_ns_ = 0;
+        gpu_lumen_schedule_.reset();
         gpu_lumen_sample_index_ = 0;
 
         direct_color_.clear();
@@ -299,10 +296,7 @@ bool Rendering::renderGpuFrame (
         || changes.lighting_changed;
 
     const std::uint64_t now_ns = monotonicNanoseconds();
-    const bool lumen_due =
-        direct_dirty
-        || gpu_lumen_next_update_ns_ == 0
-        || now_ns >= gpu_lumen_next_update_ns_;
+    const bool lumen_due = gpu_lumen_schedule_.due(now_ns, direct_dirty);
 
     std::string error;
     gpu_profiler_.beginFrame(gpu_frame_index_);
@@ -425,9 +419,10 @@ bool Rendering::renderGpuFrame (
             return false;
         }
 
-        /* Do not build a backlog after a stall. One fresh update is enough;
-         * the next sample is scheduled from real time, not render-frame count. */
-        gpu_lumen_next_update_ns_ = now_ns + LUMEN_UPDATE_NS;
+        /* Schedule from real time so a stall never creates catch-up work. The
+         * scheduler immediately returns to 240 Hz on a scene/camera/light
+         * change, then relaxes through 120/60/30 Hz as history stabilizes. */
+        gpu_lumen_schedule_.markUpdated(now_ns);
     }
 
     gpu_profiler_.begin(Gpu::Profiler::Pass::Present);
@@ -831,7 +826,7 @@ void Rendering::shutdown ()
     gpu_error_reported_ = false;
     gpu_frame_index_ = 0;
     gpu_lumen_sample_index_ = 0;
-    gpu_lumen_next_update_ns_ = 0;
+    gpu_lumen_schedule_.reset();
 
     direct_color_.clear();
     indirect_color_.clear();
