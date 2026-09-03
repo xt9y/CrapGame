@@ -2,6 +2,7 @@
 
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/SurfaceFormats.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 
 #include <algorithm>
@@ -101,7 +102,21 @@ float safeInverse (float value)
     return 1.0f / value;
 }
 
-GLuint createColorTexture (int width, int height)
+GLint surfaceInternalFormat (SurfaceFormat format)
+{
+    return format == SurfaceFormat::Rgba8 ? GL_RGBA8 : GL_RGBA16F;
+}
+
+GLenum surfacePixelType (SurfaceFormat format)
+{
+    return format == SurfaceFormat::Rgba8 ? GL_UNSIGNED_BYTE : GL_FLOAT;
+}
+
+GLuint createColorTexture (
+            int width,
+            int height,
+            SurfaceFormat format
+    )
 {
     const GLuint texture = lwcgl_glGenTexture();
 
@@ -118,12 +133,12 @@ GLuint createColorTexture (int width, int height)
     glTexImage2D(
             GL_TEXTURE_2D,
             0,
-            GL_RGBA16F,
+            surfaceInternalFormat(format),
             width,
             height,
             0,
             GL_RGBA,
-            GL_FLOAT,
+            surfacePixelType(format),
             nullptr
         );
 
@@ -419,10 +434,18 @@ bool GBufferGpu::createAttachments (std::string *error)
         return false;
     }
 
-    position_depth_ = createColorTexture(width_, height_);
-    normal_roughness_ = createColorTexture(width_, height_);
-    albedo_metallic_ = createColorTexture(width_, height_);
-    emissive_ = createColorTexture(width_, height_);
+    position_depth_ = createColorTexture(
+            width_, height_, GBUFFER_POSITION_DEPTH_FORMAT
+        );
+    normal_roughness_ = createColorTexture(
+            width_, height_, GBUFFER_NORMAL_ROUGHNESS_FORMAT
+        );
+    albedo_metallic_ = createColorTexture(
+            width_, height_, GBUFFER_ALBEDO_METALLIC_FORMAT
+        );
+    emissive_ = createColorTexture(
+            width_, height_, GBUFFER_EMISSIVE_FORMAT
+        );
     depth_ = createDepthTexture(width_, height_);
 
     if (position_depth_ == 0
