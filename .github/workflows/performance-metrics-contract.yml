@@ -1,0 +1,33 @@
+name: Performance metrics contract
+
+on:
+  push:
+    paths:
+      - 'Sources/Renderer/PerformanceMetrics.*'
+      - 'tests/performance_metrics_contract.cpp'
+      - '.github/workflows/performance-metrics-contract.yml'
+  pull_request:
+    paths:
+      - 'Sources/Renderer/PerformanceMetrics.*'
+      - 'tests/performance_metrics_contract.cpp'
+      - '.github/workflows/performance-metrics-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run performance metrics contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/performance_metrics_contract.cpp \
+            Sources/Renderer/PerformanceMetrics.cpp \
+            -o /tmp/performance-metrics-contract
+          /tmp/performance-metrics-contract
