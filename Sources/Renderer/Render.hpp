@@ -131,6 +131,7 @@ private:
     std::string test_name_;
     bool gpu_pipeline_enabled_ = false;
     bool gpu_error_reported_ = false;
+    bool gpu_camera_matrices_valid_ = false;
     std::uint64_t gpu_frame_index_ = 0;
     std::uint64_t gpu_lumen_sample_index_ = 0;
 
