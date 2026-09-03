@@ -79,6 +79,31 @@ std::vector<HemisphereSample> buildHemisphereSequence(
     return sequence;
 }
 
+void fillHemisphereSequence(
+                int sample_count,
+                std::uint64_t frame_index,
+                std::vector<HemisphereSample> *sequence
+        )
+{
+    if (!sequence)
+    {
+        return;
+    }
+
+    const int count = std::max(1, sample_count);
+    sequence->resize(static_cast<std::size_t>(count));
+
+    for (int sample_index = 0; sample_index < count; ++sample_index)
+    {
+        (*sequence)[static_cast<std::size_t>(sample_index)] =
+            hemisphereSequenceSample(
+                    sample_index,
+                    count,
+                    frame_index
+                );
+    }
+}
+
 Math::Vec3 sampleHemisphere(
                 const HemisphereBasis& basis,
                 const HemisphereSample& sample

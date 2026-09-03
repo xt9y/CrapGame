@@ -38,6 +38,12 @@ std::vector<HemisphereSample> buildHemisphereSequence(
                 std::uint64_t frame_index
         );
 
+void fillHemisphereSequence(
+                int sample_count,
+                std::uint64_t frame_index,
+                std::vector<HemisphereSample> *sequence
+        );
+
 Math::Vec3 sampleHemisphere(
                 const HemisphereBasis& basis,
                 const HemisphereSample& sample

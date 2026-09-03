@@ -21,20 +21,6 @@ namespace
 
 using ProbeClock = std::chrono::steady_clock;
 
-struct ProbeSample 
-{
-    Math::Vec3 position,
-               normal,
-               indirect;
-
-    Ecs::Entity entity = Ecs::INVALID_ENTITY;
-
-    int x = 0,
-        y = 0;
-
-    bool valid = false;
-};
-
 std::size_t probeIndex (
                 int x,
                 int y,
@@ -55,11 +41,15 @@ double milliseconds(ProbeClock::time_point started,
 }
 
 template <typename Function>
-void parallelRows(int row_count, Function&& function)
+void parallelRows(
+            int row_count,
+            unsigned hardware_threads,
+            Function&& function
+    )
 {
     parallelRowsDynamic(
             row_count,
-            std::thread::hardware_concurrency(),
+            hardware_threads,
             function
         );
 }
@@ -220,6 +210,8 @@ void ScreenProbeGather::gather (
         *timings = {};
     }
 
+    const unsigned hardware_threads = std::thread::hardware_concurrency();
+
     const int width = gbuffer.width(),
               height = gbuffer.height(),
               probe_spacing = std::max(4, spacing),
@@ -235,12 +227,14 @@ void ScreenProbeGather::gather (
         static_cast<std::size_t>(width) *
         static_cast<std::size_t>(height);
 
+    const std::size_t probe_count =
+        static_cast<std::size_t>(probe_width) *
+        static_cast<std::size_t>(probe_height);
+
     const GBuffer::Pixel *pixels = gbuffer.data();
 
-    std::vector<ProbeSample> probes(
-            static_cast<std::size_t>(probe_width) *
-            static_cast<std::size_t>(probe_height)
-        );
+    probes_scratch_.assign(probe_count, ScreenProbeSample{});
+    std::vector<ScreenProbeSample>& probes = probes_scratch_;
 
     if (output->size() != pixel_count)
     {
@@ -255,13 +249,24 @@ void ScreenProbeGather::gather (
     std::vector<Math::Vec3>& filtered_indirect = filtered_indirect_scratch_;
     std::vector<std::uint8_t>& filtered_valid = filtered_valid_scratch_;
 
-    const std::vector<HemisphereSample> probe_sequence =
-        buildHemisphereSequence(rays_per_probe, frame_index);
-    const std::vector<HemisphereSample> ao_sequence =
-        buildHemisphereSequence(4, frame_index + 31u);
+    fillHemisphereSequence(
+            rays_per_probe,
+            frame_index,
+            &probe_sequence_scratch_
+        );
+    fillHemisphereSequence(
+            4,
+            frame_index + 31u,
+            &ao_sequence_scratch_
+        );
+
+    const std::vector<HemisphereSample>& probe_sequence =
+        probe_sequence_scratch_;
+    const std::vector<HemisphereSample>& ao_sequence =
+        ao_sequence_scratch_;
 
     const auto trace_started = ProbeClock::now();
-    parallelRows(probe_height, [&](int probe_y)
+    parallelRows(probe_height, hardware_threads, [&](int probe_y)
     {
         for (int probe_x = 0; probe_x < probe_width; ++probe_x) 
         {
@@ -286,7 +291,7 @@ void ScreenProbeGather::gather (
             const GBuffer::Pixel& pixel =
                 gbuffer.pixel(sample_x, sample_y);
 
-            ProbeSample& probe =
+            ScreenProbeSample& probe =
                 probes[probeIndex(probe_x, probe_y, probe_width)];
 
             probe.position = pixel.world_position;
@@ -310,7 +315,7 @@ void ScreenProbeGather::gather (
     const auto trace_finished = ProbeClock::now();
 
     const auto reconstruct_started = ProbeClock::now();
-    parallelRows(height, [&](int y)
+    parallelRows(height, hardware_threads, [&](int y)
     {
         const std::size_t row =
             static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
@@ -359,7 +364,7 @@ void ScreenProbeGather::gather (
                         continue;
                     }
 
-                    const ProbeSample& probe = probes[
+                    const ScreenProbeSample& probe = probes[
                         probeIndex(probe_x, probe_y, probe_width)
                     ];
 
@@ -442,7 +447,7 @@ void ScreenProbeGather::gather (
     const auto reconstruct_finished = ProbeClock::now();
 
     const auto filter_started = ProbeClock::now();
-    parallelRows(height, [&](int y)
+    parallelRows(height, hardware_threads, [&](int y)
     {
         const std::size_t row =
             static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
@@ -535,7 +540,7 @@ void ScreenProbeGather::gather (
     const auto filter_finished = ProbeClock::now();
 
     const auto ao_started = ProbeClock::now();
-    parallelRows(height, [&](int y)
+    parallelRows(height, hardware_threads, [&](int y)
     {
         const std::size_t row =
             static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
