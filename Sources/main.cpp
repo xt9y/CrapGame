@@ -249,6 +249,8 @@ int main ()
     const double performance_duration_ms =
         Renderer::PerformanceMetrics::durationMilliseconds();
 
+    const bool fixed_size_window = renderercheck_mode || performance_mode;
+    std::uint64_t last_resize_poll_ns = 0u;
     double simulation_accumulator = 0.0;
     std::uint64_t simulation_tick = 0;
     std::uint64_t stats_frames = 0;
@@ -300,18 +302,25 @@ int main ()
             }
         }
 
-        const int display_width = Display.getWidth(),
-                  display_height = Display.getHeight();
-
-        if (display_width != renderer_width
-                || display_height != renderer_height)
+        if (Renderer::Gpu::resizePollDue(
+                fixed_size_window,
+                frame_time_ns,
+                last_resize_poll_ns))
         {
-            renderer_width = display_width;
-            renderer_height = display_height;
-            renderer.resize(renderer_width, renderer_height);
+            last_resize_poll_ns = frame_time_ns;
+            const int display_width = Display.getWidth(),
+                      display_height = Display.getHeight();
+
+            if (display_width != renderer_width
+                    || display_height != renderer_height)
+            {
+                renderer_width = display_width;
+                renderer_height = display_height;
+                renderer.resize(renderer_width, renderer_height);
+            }
         }
 
-        renderer.render(world, frame_time_ns);
+        renderer.renderCached(world, frame_time_ns);
 
         if (Renderer::Gpu::frameCaptureRequired(renderercheck_mode)
                 && renderer.captureFrame(frame) != 0) 
