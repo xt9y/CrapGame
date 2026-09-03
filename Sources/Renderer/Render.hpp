@@ -37,7 +37,7 @@ class Rendering
 public:
     bool init ();
     void resize (int width, int height);
-    void render (const Ecs::World& world);
+    void render (const Ecs::World& world, std::uint64_t frame_time_ns);
     void shutdown ();
 
     bool setTestName (const char *test_name);
@@ -74,7 +74,8 @@ private:
     bool renderGpuFrame (
                 const Ecs::World& world,
                 const Math::Vec3& camera_position,
-                const Lumen::ChangeSet& changes
+                const Lumen::ChangeSet& changes,
+                std::uint64_t frame_time_ns
         );
 
     void renderGeometry (const Ecs::World& world);
