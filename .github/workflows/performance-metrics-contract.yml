@@ -51,3 +51,12 @@ jobs:
             tests/gpu_resource_lifecycle_contract.cpp \
             -o /tmp/gpu-resource-lifecycle-contract
           /tmp/gpu-resource-lifecycle-contract
+      - name: GPU camera cache contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/gpu_camera_cache_contract.cpp \
+            -o /tmp/gpu-camera-cache-contract
+          /tmp/gpu-camera-cache-contract
