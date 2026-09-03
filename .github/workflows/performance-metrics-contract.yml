@@ -60,3 +60,12 @@ jobs:
             tests/gpu_camera_cache_contract.cpp \
             -o /tmp/gpu-camera-cache-contract
           /tmp/gpu-camera-cache-contract
+      - name: GPU presenter policy contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/gpu_presenter_policy_contract.cpp \
+            -o /tmp/gpu-presenter-policy-contract
+          /tmp/gpu-presenter-policy-contract
