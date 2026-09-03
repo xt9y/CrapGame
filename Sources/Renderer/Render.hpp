@@ -9,6 +9,7 @@
 #include "Renderer/Gpu/LumenSchedule.hpp"
 #include "Renderer/Gpu/Presenter.hpp"
 #include "Renderer/Gpu/Profiler.hpp"
+#include "Renderer/Gpu/RuntimeHotPath.hpp"
 #include "Renderer/Lumen/Budget.hpp"
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
@@ -38,6 +39,63 @@ public:
     bool init ();
     void resize (int width, int height);
     void render (const Ecs::World& world, std::uint64_t frame_time_ns);
+
+    void renderCached (
+                const Ecs::World& world,
+                std::uint64_t frame_time_ns
+        )
+    {
+        if (!test_name_.empty())
+        {
+            render(world, frame_time_ns);
+            return;
+        }
+
+        const Lumen::ChangeSet changes = change_tracker_.update(world);
+        const bool refresh_camera = Gpu::cameraDataNeedsRefresh(
+                gpu_camera_data_valid_ && gpu_camera_matrices_valid_,
+                changes.camera_changed
+            );
+
+        if (refresh_camera)
+        {
+            const Ecs::Entity camera_entity = world.activeCamera();
+
+            if (camera_entity == Ecs::INVALID_ENTITY)
+            {
+                gpu_camera_data_valid_ = false;
+                return;
+            }
+
+            const Ecs::TransformComponent *camera_transform =
+                world.getTransform(camera_entity);
+            const Ecs::CameraComponent *camera =
+                world.getCamera(camera_entity);
+
+            if (!camera_transform || !camera)
+            {
+                gpu_camera_data_valid_ = false;
+                return;
+            }
+
+            gpu_camera_position_ = {
+                camera_transform->position.x,
+                camera_transform->position.y,
+                camera_transform->position.z,
+            };
+            applyCamera(*camera_transform, *camera);
+            gpu_camera_data_valid_ = true;
+            gpu_camera_matrices_valid_ = true;
+        }
+
+        renderGpuFrame(
+                world,
+                gpu_camera_position_,
+                changes,
+                frame_time_ns
+            );
+    }
+
     void shutdown ();
 
     bool setTestName (const char *test_name);
@@ -117,6 +175,7 @@ private:
 
     Math::Mat4 view_       = Math::identity(),
                projection_ = Math::identity();
+    Math::Vec3 gpu_camera_position_ = {0.0f, 0.0f, 0.0f};
 
     std::vector<Math::Vec3> direct_color_,
                             indirect_color_,
@@ -133,6 +192,7 @@ private:
     bool gpu_pipeline_enabled_ = false;
     bool gpu_error_reported_ = false;
     bool gpu_camera_matrices_valid_ = false;
+    bool gpu_camera_data_valid_ = false;
     std::uint64_t gpu_frame_index_ = 0;
     std::uint64_t gpu_lumen_sample_index_ = 0;
 
