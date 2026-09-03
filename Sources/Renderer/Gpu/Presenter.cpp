@@ -123,9 +123,6 @@ bool Presenter::init (std::string *error)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    /* The sampler never changes. Set it once rather than once per presented
-     * frame. Flip state is cached separately because CPU RendererCheck frames
-     * use the same program with vertical inversion. */
     GL20.glUseProgram(program_);
 
     if (texture_location_ >= 0)
@@ -306,6 +303,10 @@ bool Presenter::presentTexture (
                 std::string *error
         )
 {
+    /* Other renderer passes can alter program/VAO/texture state. Until the
+     * renderer explicitly publishes a state-dirty bit, conservatively rebind
+     * the minimal presentation state on each GPU frame. */
+    invalidateGpuState();
     return drawTexture(texture, false, false, error);
 }
 
