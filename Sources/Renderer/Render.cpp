@@ -2,15 +2,18 @@
 
 #include "Renderer/Gpu/CameraCache.hpp"
 #include "Renderer/Gpu/FrameHotPath.hpp"
+#include "Renderer/Lighting/DirectLightPolicy.hpp"
 #include "Renderer/Lighting/Lighting.hpp"
 #include "Renderer/Lumen/Radiosity.hpp"
 #include "Renderer/Lumen/SceneLighting.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
+#include "Renderer/ParallelRows.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <thread>
 
 namespace Renderer 
 {
@@ -33,6 +36,8 @@ struct ActiveLight
 {
     const Ecs::TransformComponent *transform;
     const Ecs::LightComponent *light;
+    Lighting::LightSample constant_sample = {};
+    bool position_independent = false;
 };
 
 } // namespace
@@ -94,9 +99,9 @@ bool Rendering::init ()
     if (!gpu_profiler_.init())
     {
         std::fprintf(
-                stderr,
-                "GPU timer queries unavailable; renderer will continue without pass timings\n"
-            );
+            stderr,
+            "GPU timer queries unavailable; renderer will continue without pass timings\n"
+        );
     }
 
     gpu_profiler_enabled_ = gpu_profiler_.enabled();
@@ -164,8 +169,6 @@ void Rendering::resize (int width, int height)
         }
 #endif
 
-        /* New attachments have no valid scene data. Force the next GPU frame
-         * to repopulate geometry/direct textures and restart Lumen history. */
         change_tracker_.clear();
         gpu_lumen_schedule_.reset();
         gpu_lumen_sample_index_ = 0;
@@ -468,8 +471,6 @@ bool Rendering::renderGpuFrame (
             return false;
         }
 
-        /* Schedule from the frame-start timestamp so a stall never creates
-         * catch-up work and the render hot path needs no second clock read. */
         gpu_lumen_schedule_.markUpdated(frame_time_ns);
     }
 
@@ -553,6 +554,7 @@ void Rendering::composeLighting (
 {
     const Math::Vec3 clear_color = {0.055f, 0.070f, 0.105f};
     std::vector<ActiveLight> lights;
+    lights.reserve(world.entities().size());
 
     for (const Ecs::Entity entity : world.entities()) 
     {
@@ -564,90 +566,122 @@ void Rendering::composeLighting (
             continue;
         }
 
-        lights.push_back({transform, light});
+        ActiveLight active_light;
+        active_light.transform = transform;
+        active_light.light = light;
+        active_light.position_independent =
+            Lighting::directLightSampleIsPositionIndependent(light->type);
+
+        if (active_light.position_independent)
+        {
+            active_light.constant_sample = Lighting::sampleLight(
+                    *light,
+                    *transform,
+                    {0.0f, 0.0f, 0.0f}
+                );
+        }
+
+        lights.push_back(active_light);
     }
 
-    for (int y = 0; y < height_; ++y) 
-    {
-        for (int x = 0; x < width_; ++x) 
-        {
-            const GBuffer::Pixel& pixel = gbuffer_.pixel(x, y);
-            Math::Vec3 color = clear_color;
+    const GBuffer::Pixel *pixels = gbuffer_.data();
 
-            if (pixel.valid) 
+    parallelRowsDynamic(
+            height_,
+            std::thread::hardware_concurrency(),
+            [&](int y)
             {
-                color = pixel.emissive;
-
-                for (const ActiveLight& active_light : lights) 
+                for (int x = 0; x < width_; ++x) 
                 {
-                    const Lighting::LightSample light_sample = 
-                        Lighting::sampleLight(
-                                *active_light.light,
-                                *active_light.transform,
-                                pixel.world_position
-                            );
+                    const std::size_t index =
+                        static_cast<std::size_t>(y) *
+                        static_cast<std::size_t>(width_) +
+                        static_cast<std::size_t>(x);
 
-                    float visibility = 1.0f;
+                    const GBuffer::Pixel& pixel = pixels[index];
+                    Math::Vec3 color = clear_color;
 
-                    if (active_light.light->casts_shadows
-                            && light_sample.valid) 
+                    if (pixel.valid) 
                     {
-                        visibility = shadows_.visibility(
-                                pixel.world_position,
-                                pixel.normal,
-                                light_sample
-                            );
+                        color = pixel.emissive;
+
+                        for (const ActiveLight& active_light : lights) 
+                        {
+                            const Lighting::LightSample light_sample =
+                                active_light.position_independent
+                                ? active_light.constant_sample
+                                : Lighting::sampleLight(
+                                        *active_light.light,
+                                        *active_light.transform,
+                                        pixel.world_position
+                                    );
+
+                            float visibility = 1.0f;
+
+                            if (active_light.light->casts_shadows
+                                    && light_sample.valid) 
+                            {
+                                visibility = shadows_.visibility(
+                                        pixel.world_position,
+                                        pixel.normal,
+                                        light_sample
+                                    );
+                            }
+
+                            color = Math::add(
+                                    color,
+                                    Lighting::evaluateDirect(
+                                            pixel,
+                                            camera_position,
+                                            light_sample,
+                                            visibility
+                                        )
+                                );
+                        }
                     }
 
-                    color = Math::add(
-                            color,
-                            Lighting::evaluateDirect(
-                                    pixel,
-                                    camera_position,
-                                    light_sample,
-                                    visibility
-                                )
-                        );
+                    direct_color_[index] = color;
                 }
             }
-
-            direct_color_[
-                static_cast<std::size_t>(y) *
-                static_cast<std::size_t>(width_) +
-                static_cast<std::size_t>(x)
-            ] = color;
-        }
-    }
+        );
 }
 
 void Rendering::composeFinal () 
 {
-    const std::size_t pixel_count =
-        static_cast<std::size_t>(width_) *
-        static_cast<std::size_t>(height_);
+    const GBuffer::Pixel *pixels = gbuffer_.data();
 
-    for (std::size_t index = 0; index < pixel_count; ++index) 
-    {
-        const int x = static_cast<int>(index % static_cast<std::size_t>(width_)),
-                  y = static_cast<int>(index / static_cast<std::size_t>(width_));
+    parallelRowsDynamic(
+            height_,
+            std::thread::hardware_concurrency(),
+            [&](int y)
+            {
+                const std::size_t row =
+                    static_cast<std::size_t>(y) *
+                    static_cast<std::size_t>(width_);
 
-        Math::Vec3 color = direct_color_[index];
+                for (int x = 0; x < width_; ++x) 
+                {
+                    const std::size_t index = row +
+                        static_cast<std::size_t>(x);
+                    Math::Vec3 color = direct_color_[index];
 
-        if (gbuffer_.pixel(x, y).valid) 
-        {
-            color = Lighting::toneMap(
-                    Math::add(
-                            Math::add(
-                                    direct_color_[index],
-                                    indirect_resolved_[index]
-                                ),
-                            reflection_color_[index]
-                        )
-                );
-        }
+                    if (pixels[index].valid) 
+                    {
+                        color = Lighting::toneMap(
+                                Math::add(
+                                        Math::add(
+                                                direct_color_[index],
+                                                indirect_resolved_[index]
+                                            ),
+                                        reflection_color_[index]
+                                    )
+                            );
+                    }
 
-        frame_color_[index] = color;
-    }
+                    frame_color_[index] = color;
+                }
+            }
+        );
 }
 
 void Rendering::writeColorBuffer (const std::vector<Math::Vec3>& color) 
@@ -661,14 +695,27 @@ void Rendering::writeColorBuffer (const std::vector<Math::Vec3>& color)
         return;
     }
 
-    for (std::size_t index = 0; index < pixel_count; ++index) 
-    {
-        const std::size_t offset = index * 3u;
+    parallelRowsDynamic(
+            height_,
+            std::thread::hardware_concurrency(),
+            [&](int y)
+            {
+                const std::size_t row =
+                    static_cast<std::size_t>(y) *
+                    static_cast<std::size_t>(width_);
 
-        color_buffer_[offset + 0u] = toByte(color[index].x);
-        color_buffer_[offset + 1u] = toByte(color[index].y);
-        color_buffer_[offset + 2u] = toByte(color[index].z);
-    }
+                for (int x = 0; x < width_; ++x)
+                {
+                    const std::size_t index = row +
+                        static_cast<std::size_t>(x);
+                    const std::size_t offset = index * 3u;
+
+                    color_buffer_[offset + 0u] = toByte(color[index].x);
+                    color_buffer_[offset + 1u] = toByte(color[index].y);
+                    color_buffer_[offset + 2u] = toByte(color[index].z);
+                }
+            }
+        );
 }
 
 void Rendering::present () 
@@ -771,8 +818,6 @@ void Rendering::render (
         return;
     }
 
-    /* RendererCheck's deterministic CPU reference path intentionally keeps
-     * rebuilding camera matrices per captured frame. */
     applyCamera(*camera_transform, *camera);
 
     renderGeometry(world);

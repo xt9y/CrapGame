@@ -195,6 +195,15 @@ jobs:
             tests/contact_ao_stage63_66_contract.cpp \
             -o /tmp/contact-ao-stage63-66-contract
           /tmp/contact-ao-stage63-66-contract
+      - name: CPU compose Stage 67-70 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
+            -ISources \
+            tests/cpu_compose_stage67_70_contract.cpp \
+            -o /tmp/cpu-compose-stage67-70-contract
+          /tmp/cpu-compose-stage67-70-contract
       - name: Screen probe implementation compile
         shell: bash
         run: |
