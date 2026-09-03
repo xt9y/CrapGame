@@ -19,18 +19,29 @@ public:
     bool resize (int width, int height, std::string *error = nullptr);
     bool present (const std::vector<std::uint8_t>& rgb, std::string *error = nullptr);
     bool presentTexture (GLuint texture, std::string *error = nullptr);
+    void invalidateGpuState ();
     void shutdown ();
 
     bool ready () const;
 
 private:
-    bool drawTexture (GLuint texture, bool flip_y, std::string *error);
+    bool drawTexture (
+                GLuint texture,
+                bool flip_y,
+                bool conservative_cleanup,
+                std::string *error
+        );
 
     GLuint program_ = 0;
     GLuint texture_ = 0;
     GLuint vao_ = 0;
+    GLuint cached_texture_ = 0;
     GLint texture_location_ = -1;
     GLint flip_y_location_ = -1;
+
+    bool gpu_state_valid_ = false;
+    bool cached_flip_y_ = false;
+    bool validate_gl_ = false;
 
     int width_ = 0;
     int height_ = 0;
