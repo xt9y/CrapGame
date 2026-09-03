@@ -6,6 +6,7 @@
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/LumenGpu.hpp"
+#include "Renderer/Gpu/LumenSchedule.hpp"
 #include "Renderer/Gpu/Presenter.hpp"
 #include "Renderer/Gpu/Profiler.hpp"
 #include "Renderer/Lumen/Budget.hpp"
@@ -109,6 +110,7 @@ private:
     Gpu::GBufferGpu gpu_gbuffer_;
     Gpu::DirectLightingGpu gpu_direct_lighting_;
     Gpu::LumenGpu gpu_lumen_;
+    Gpu::LumenSchedule gpu_lumen_schedule_;
     Gpu::Presenter presenter_;
     Gpu::Profiler gpu_profiler_;
 
@@ -131,7 +133,6 @@ private:
     bool gpu_error_reported_ = false;
     std::uint64_t gpu_frame_index_ = 0;
     std::uint64_t gpu_lumen_sample_index_ = 0;
-    std::uint64_t gpu_lumen_next_update_ns_ = 0;
 
     int width_  = 1,
         height_ = 1;
