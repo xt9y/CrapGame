@@ -99,9 +99,12 @@ bool Rendering::init ()
             );
     }
 
+    gpu_profiler_enabled_ = gpu_profiler_.enabled();
+    gpu_error_scratch_.clear();
     gpu_lumen_schedule_.reset();
     gpu_lumen_sample_index_ = 0;
     gpu_camera_matrices_valid_ = false;
+    gpu_camera_data_valid_ = false;
     gpu_pipeline_enabled_ = true;
     return true;
 #endif
@@ -295,14 +298,24 @@ bool Rendering::renderGpuFrame (
             direct_dirty
         );
 
-    std::string error;
-    gpu_profiler_.beginFrame(gpu_frame_index_);
+    const bool profile_frame =
+        Gpu::profilerCallChainRequired(gpu_profiler_enabled_);
+    std::string& error = gpu_error_scratch_;
+    error.clear();
+
+    if (profile_frame)
+    {
+        gpu_profiler_.beginFrame(gpu_frame_index_);
+    }
 
     if (scene_geometry_dirty)
     {
         if (!gpu_gbuffer_.updateScene(world, &error))
         {
-            gpu_profiler_.endFrame();
+            if (profile_frame)
+            {
+                gpu_profiler_.endFrame();
+            }
             if (!gpu_error_reported_)
             {
                 std::fprintf(stderr, "GPU GBuffer scene update failed: %s\n", error.c_str());
@@ -314,17 +327,26 @@ bool Rendering::renderGpuFrame (
 
     if (geometry_dirty)
     {
-        gpu_profiler_.begin(Gpu::Profiler::Pass::Geometry);
+        if (profile_frame)
+        {
+            gpu_profiler_.begin(Gpu::Profiler::Pass::Geometry);
+        }
         const bool geometry_ok = gpu_gbuffer_.draw(
                 view_,
                 projection_,
                 &error
             );
-        gpu_profiler_.end(Gpu::Profiler::Pass::Geometry);
+        if (profile_frame)
+        {
+            gpu_profiler_.end(Gpu::Profiler::Pass::Geometry);
+        }
 
         if (!geometry_ok)
         {
-            gpu_profiler_.endFrame();
+            if (profile_frame)
+            {
+                gpu_profiler_.endFrame();
+            }
             if (!gpu_error_reported_)
             {
                 std::fprintf(stderr, "GPU GBuffer draw failed: %s\n", error.c_str());
@@ -338,7 +360,10 @@ bool Rendering::renderGpuFrame (
     {
         if (!gpu_direct_lighting_.updateScene(world, &error))
         {
-            gpu_profiler_.endFrame();
+            if (profile_frame)
+            {
+                gpu_profiler_.endFrame();
+            }
             if (!gpu_error_reported_)
             {
                 std::fprintf(stderr, "GPU lighting scene update failed: %s\n", error.c_str());
@@ -350,17 +375,26 @@ bool Rendering::renderGpuFrame (
 
     if (direct_dirty)
     {
-        gpu_profiler_.begin(Gpu::Profiler::Pass::DirectLighting);
+        if (profile_frame)
+        {
+            gpu_profiler_.begin(Gpu::Profiler::Pass::DirectLighting);
+        }
         const bool direct_ok = gpu_direct_lighting_.dispatch(
                 gpu_gbuffer_,
                 camera_position,
                 &error
             );
-        gpu_profiler_.end(Gpu::Profiler::Pass::DirectLighting);
+        if (profile_frame)
+        {
+            gpu_profiler_.end(Gpu::Profiler::Pass::DirectLighting);
+        }
 
         if (!direct_ok)
         {
-            gpu_profiler_.endFrame();
+            if (profile_frame)
+            {
+                gpu_profiler_.endFrame();
+            }
             if (!gpu_error_reported_)
             {
                 std::fprintf(stderr, "GPU direct-light dispatch failed: %s\n", error.c_str());
@@ -372,7 +406,10 @@ bool Rendering::renderGpuFrame (
 
     if (lumen_due)
     {
-        gpu_profiler_.begin(Gpu::Profiler::Pass::LumenTrace);
+        if (profile_frame)
+        {
+            gpu_profiler_.begin(Gpu::Profiler::Pass::LumenTrace);
+        }
         const bool trace_ok = gpu_lumen_.traceShared(
                 gpu_gbuffer_,
                 gpu_direct_lighting_,
@@ -382,11 +419,17 @@ bool Rendering::renderGpuFrame (
                 gpu_lumen_sample_index_,
                 &error
             );
-        gpu_profiler_.end(Gpu::Profiler::Pass::LumenTrace);
+        if (profile_frame)
+        {
+            gpu_profiler_.end(Gpu::Profiler::Pass::LumenTrace);
+        }
 
         if (!trace_ok)
         {
-            gpu_profiler_.endFrame();
+            if (profile_frame)
+            {
+                gpu_profiler_.endFrame();
+            }
             if (!gpu_error_reported_)
             {
                 std::fprintf(stderr, "GPU Lumen trace failed: %s\n", error.c_str());
@@ -397,17 +440,26 @@ bool Rendering::renderGpuFrame (
 
         ++gpu_lumen_sample_index_;
 
-        gpu_profiler_.begin(Gpu::Profiler::Pass::LumenComposite);
+        if (profile_frame)
+        {
+            gpu_profiler_.begin(Gpu::Profiler::Pass::LumenComposite);
+        }
         const bool composite_ok = gpu_lumen_.composite(
                 gpu_gbuffer_,
                 gpu_direct_lighting_,
                 &error
             );
-        gpu_profiler_.end(Gpu::Profiler::Pass::LumenComposite);
+        if (profile_frame)
+        {
+            gpu_profiler_.end(Gpu::Profiler::Pass::LumenComposite);
+        }
 
         if (!composite_ok)
         {
-            gpu_profiler_.endFrame();
+            if (profile_frame)
+            {
+                gpu_profiler_.endFrame();
+            }
             if (!gpu_error_reported_)
             {
                 std::fprintf(stderr, "GPU Lumen composite failed: %s\n", error.c_str());
@@ -429,13 +481,19 @@ bool Rendering::renderGpuFrame (
         presenter_.invalidateGpuState();
     }
 
-    gpu_profiler_.begin(Gpu::Profiler::Pass::Present);
+    if (profile_frame)
+    {
+        gpu_profiler_.begin(Gpu::Profiler::Pass::Present);
+    }
     const bool present_ok = presenter_.presentTexture(
             gpu_lumen_.finalTexture(),
             &error
         );
-    gpu_profiler_.end(Gpu::Profiler::Pass::Present);
-    gpu_profiler_.endFrame();
+    if (profile_frame)
+    {
+        gpu_profiler_.end(Gpu::Profiler::Pass::Present);
+        gpu_profiler_.endFrame();
+    }
 
     if (!present_ok)
     {
@@ -447,7 +505,10 @@ bool Rendering::renderGpuFrame (
         return false;
     }
 
-    gpu_profiler_.printIfDue(gpu_frame_index_);
+    if (profile_frame)
+    {
+        gpu_profiler_.printIfDue(gpu_frame_index_);
+    }
     ++gpu_frame_index_;
     gpu_error_reported_ = false;
     return true;
@@ -850,9 +911,12 @@ void Rendering::shutdown ()
     gpu_pipeline_enabled_ = false;
     gpu_error_reported_ = false;
     gpu_camera_matrices_valid_ = false;
+    gpu_camera_data_valid_ = false;
+    gpu_profiler_enabled_ = false;
     gpu_frame_index_ = 0;
     gpu_lumen_sample_index_ = 0;
     gpu_lumen_schedule_.reset();
+    gpu_error_scratch_.clear();
 
     direct_color_.clear();
     indirect_color_.clear();
