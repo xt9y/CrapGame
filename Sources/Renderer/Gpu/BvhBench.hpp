@@ -1,6 +1,7 @@
 #ifndef CRAPGAME_RENDERER_GPU_BVHBENCH_HPP
 #define CRAPGAME_RENDERER_GPU_BVHBENCH_HPP
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -58,6 +59,29 @@ inline BvhBenchConfig bvhBenchConfig ()
     return config;
 }
 
+inline std::size_t configuredBvhAutoThreshold (std::size_t minimum_threshold)
+{
+    /* The corrected 66-primitive benchmark is decisively in BVH territory,
+     * but we do not have enough samples yet to justify enabling tree
+     * traversal immediately above the old 8-primitive guess. Keep the normal
+     * path conservative until the crossover sweep refines this value. */
+    constexpr std::size_t CONSERVATIVE_THRESHOLD = 32u;
+    std::size_t threshold = std::max(minimum_threshold, CONSERVATIVE_THRESHOLD);
+
+    if (const char *value = std::getenv("CRAPGAME_BVH_THRESHOLD"))
+    {
+        char *end = nullptr;
+        const unsigned long long parsed = std::strtoull(value, &end, 10);
+
+        if (end != value && *end == '\0' && parsed <= 100000ull)
+        {
+            threshold = static_cast<std::size_t>(parsed);
+        }
+    }
+
+    return threshold;
+}
+
 inline bool shouldUseBvh (
             BvhMode mode,
             std::size_t primitive_count,
@@ -74,7 +98,7 @@ inline bool shouldUseBvh (
         return primitive_count > 0u;
     }
 
-    return primitive_count > threshold;
+    return primitive_count > configuredBvhAutoThreshold(threshold);
 }
 
 inline const char *bvhModeName (BvhMode mode)
