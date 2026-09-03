@@ -47,7 +47,7 @@ int main ()
         std::istreambuf_iterator<char>()
     );
 
-    assert(text.find("gpu_pipeline_ms=1.250000000") != std::string::npos);
+    assert(text.find("gpu_pipeline_ms=") == std::string::npos);
     assert(text.find("lumen_trace_ms=0.750000000") != std::string::npos);
     assert(text.find("cpu_frame_ms=2.000000000") != std::string::npos);
     assert(text.find("cpu_frame_ms=2.500000000") != std::string::npos);
