@@ -73,14 +73,22 @@ TraceHit traceScreenNormalized (
 {
     TraceHit result;
 
-    if (gbuffer.width() <= 0
-            || gbuffer.height() <= 0
+    const int width = gbuffer.width(),
+              height = gbuffer.height();
+
+    if (width <= 0
+            || height <= 0
             || maximum_distance <= 0.0f
             || step_size <= 0.0f
             || thickness <= 0.0f) 
     {
         return result;
     }
+
+    const float width_float = static_cast<float>(width),
+                height_float = static_cast<float>(height);
+
+    const GBuffer::Pixel *pixels = gbuffer.data();
 
     for (float distance = step_size;
             distance <= maximum_distance;
@@ -110,25 +118,23 @@ TraceHit traceScreenNormalized (
         const int x = std::max(
                 0,
                 std::min(
-                        gbuffer.width() - 1,
-                        static_cast<int>(
-                                screen_x * static_cast<float>(gbuffer.width())
-                            )
+                        width - 1,
+                        static_cast<int>(screen_x * width_float)
                     )
             );
 
         const int y = std::max(
                 0,
                 std::min(
-                        gbuffer.height() - 1,
-                        static_cast<int>(
-                                screen_y * static_cast<float>(gbuffer.height())
-                            )
+                        height - 1,
+                        static_cast<int>(screen_y * height_float)
                     )
             );
 
-        const GBuffer::Pixel& pixel =
-            gbuffer.pixel(x, y);
+        const GBuffer::Pixel& pixel = pixels[
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+            static_cast<std::size_t>(x)
+        ];
 
         if (!pixel.valid) 
         {

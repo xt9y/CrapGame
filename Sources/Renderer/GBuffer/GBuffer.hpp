@@ -53,6 +53,9 @@ public:
     const Pixel& pixel (int x, int y) const;
     Pixel& pixel (int x, int y);
 
+    const Pixel *data () const { return pixels_.data(); }
+    Pixel *data () { return pixels_.data(); }
+
 private:
     std::size_t index (int x, int y) const;
 

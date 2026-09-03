@@ -181,6 +181,7 @@ void DistanceFieldScene::build (const Ecs::World& world)
             cacheInverseTransform(*transform),
             transformBounds(field.bounds, *transform),
             min_scale / max_scale,
+            min_scale,
         });
     }
 }
@@ -197,10 +198,6 @@ float DistanceFieldScene::distance (
 
     for (const Instance& instance : instances_) 
     {
-        /* World-AABB distance times min/max scale ratio is a conservative
-         * lower bound for the existing local-distance*minimum-scale metric.
-         * It therefore rejects only instances that cannot beat the current
-         * nearest result, preserving exact renderer semantics. */
         const float lower_bound =
             sdfBoundsDistance(instance.world_bounds, position) *
             instance.broadphase_scale;
@@ -234,7 +231,7 @@ float DistanceFieldScene::distance (
         }
 
         const float world_distance =
-            local_distance * minimumScale(instance.transform.scale);
+            local_distance * instance.minimum_scale;
 
         if (world_distance < nearest_distance) 
         {
@@ -264,6 +261,25 @@ SdfHit DistanceFieldScene::trace (
                 float hit_epsilon
         ) const 
 {
+    return traceNormalized(
+            origin,
+            Math::normalize(direction),
+            maximum_distance,
+            maximum_steps,
+            minimum_step,
+            hit_epsilon
+        );
+}
+
+SdfHit DistanceFieldScene::traceNormalized (
+                const Math::Vec3& origin,
+                const Math::Vec3& normalized_direction,
+                float maximum_distance,
+                int maximum_steps,
+                float minimum_step,
+                float hit_epsilon
+        ) const 
+{
     SdfHit result;
 
     if (maximum_distance <= 0.0f
@@ -272,9 +288,6 @@ SdfHit DistanceFieldScene::trace (
     {
         return result;
     }
-
-    const Math::Vec3 ray_direction =
-        Math::normalize(direction);
 
     float travelled = std::max(hit_epsilon * 2.0f, minimum_step);
 
@@ -285,7 +298,7 @@ SdfHit DistanceFieldScene::trace (
         const Math::Vec3 position =
             Math::add(
                     origin,
-                    Math::multiply(ray_direction, travelled)
+                    Math::multiply(normalized_direction, travelled)
                 );
 
         Ecs::Entity entity = Ecs::INVALID_ENTITY;
@@ -323,6 +336,25 @@ SdfDistanceHit DistanceFieldScene::traceDistance (
                 float hit_epsilon
         ) const
 {
+    return traceDistanceNormalized(
+            origin,
+            Math::normalize(direction),
+            maximum_distance,
+            maximum_steps,
+            minimum_step,
+            hit_epsilon
+        );
+}
+
+SdfDistanceHit DistanceFieldScene::traceDistanceNormalized (
+                const Math::Vec3& origin,
+                const Math::Vec3& normalized_direction,
+                float maximum_distance,
+                int maximum_steps,
+                float minimum_step,
+                float hit_epsilon
+        ) const
+{
     SdfDistanceHit result;
 
     if (maximum_distance <= 0.0f
@@ -332,7 +364,6 @@ SdfDistanceHit DistanceFieldScene::traceDistance (
         return result;
     }
 
-    const Math::Vec3 ray_direction = Math::normalize(direction);
     float travelled = std::max(hit_epsilon * 2.0f, minimum_step);
 
     for (int step = 0;
@@ -341,7 +372,7 @@ SdfDistanceHit DistanceFieldScene::traceDistance (
     {
         const Math::Vec3 position = Math::add(
                 origin,
-                Math::multiply(ray_direction, travelled)
+                Math::multiply(normalized_direction, travelled)
             );
 
         const float scene_distance = distance(position, nullptr);

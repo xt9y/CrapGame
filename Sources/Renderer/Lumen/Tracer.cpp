@@ -63,6 +63,7 @@ UnifiedTraceHit Tracer::trace (
         return result;
     }
 
+    const Math::Vec3 sdf_direction = Math::normalize(ray_direction);
     float travelled = 0.05f;
 
     for (int step = 0;
@@ -89,9 +90,9 @@ UnifiedTraceHit Tracer::trace (
                 maximum_distance - travelled;
 
             const SdfHit sdf_hit =
-                distance_field_scene_.trace(
+                distance_field_scene_.traceNormalized(
                         position,
-                        ray_direction,
+                        sdf_direction,
                         std::min(2.0f, remaining),
                         64,
                         0.01f,
@@ -114,9 +115,9 @@ UnifiedTraceHit Tracer::trace (
     }
 
     const SdfHit fallback =
-        distance_field_scene_.trace(
+        distance_field_scene_.traceNormalized(
                 origin,
-                ray_direction,
+                sdf_direction,
                 maximum_distance
             );
 
@@ -168,6 +169,7 @@ VisibilityTraceHit Tracer::traceVisibility (
         return result;
     }
 
+    const Math::Vec3 sdf_direction = Math::normalize(ray_direction);
     float travelled = 0.05f;
 
     for (int step = 0;
@@ -189,14 +191,15 @@ VisibilityTraceHit Tracer::traceVisibility (
         if (global_distance <= 0.18f)
         {
             const float remaining = maximum_distance - travelled;
-            const SdfDistanceHit sdf_hit = distance_field_scene_.traceDistance(
-                    position,
-                    ray_direction,
-                    std::min(2.0f, remaining),
-                    64,
-                    0.01f,
-                    0.035f
-                );
+            const SdfDistanceHit sdf_hit =
+                distance_field_scene_.traceDistanceNormalized(
+                        position,
+                        sdf_direction,
+                        std::min(2.0f, remaining),
+                        64,
+                        0.01f,
+                        0.035f
+                    );
 
             if (sdf_hit.hit)
             {
@@ -209,11 +212,12 @@ VisibilityTraceHit Tracer::traceVisibility (
         travelled += std::max(0.04f, global_distance * 0.75f);
     }
 
-    const SdfDistanceHit fallback = distance_field_scene_.traceDistance(
-            origin,
-            ray_direction,
-            maximum_distance
-        );
+    const SdfDistanceHit fallback =
+        distance_field_scene_.traceDistanceNormalized(
+                origin,
+                sdf_direction,
+                maximum_distance
+            );
 
     if (fallback.hit)
     {

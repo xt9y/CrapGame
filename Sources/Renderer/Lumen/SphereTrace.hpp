@@ -51,9 +51,27 @@ public:
                 float hit_epsilon = 0.025f
         ) const;
 
+    SdfHit traceNormalized (
+                const Math::Vec3& origin,
+                const Math::Vec3& normalized_direction,
+                float maximum_distance,
+                int maximum_steps = 96,
+                float minimum_step = 0.01f,
+                float hit_epsilon = 0.025f
+        ) const;
+
     SdfDistanceHit traceDistance (
                 const Math::Vec3& origin,
                 const Math::Vec3& direction,
+                float maximum_distance,
+                int maximum_steps = 96,
+                float minimum_step = 0.01f,
+                float hit_epsilon = 0.025f
+        ) const;
+
+    SdfDistanceHit traceDistanceNormalized (
+                const Math::Vec3& origin,
+                const Math::Vec3& normalized_direction,
                 float maximum_distance,
                 int maximum_steps = 96,
                 float minimum_step = 0.01f,
@@ -69,6 +87,7 @@ private:
         CachedInverseTransform inverse_transform;
         SdfWorldBounds world_bounds;
         float broadphase_scale = 1.0f;
+        float minimum_scale = 1.0f;
     };
 
     const MeshDistanceField& fieldFor (Ecs::MeshType mesh) const;
