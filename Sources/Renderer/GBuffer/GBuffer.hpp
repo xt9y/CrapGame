@@ -55,6 +55,11 @@ public:
 
     const Pixel *data () const { return pixels_.data(); }
     Pixel *data () { return pixels_.data(); }
+    std::size_t pixelCount () const
+    {
+        return static_cast<std::size_t>(width_) *
+               static_cast<std::size_t>(height_);
+    }
 
 private:
     std::size_t index (int x, int y) const;

@@ -11,6 +11,63 @@ namespace Renderer
 {
 namespace Lumen 
 {
+namespace
+{
+
+template <typename SampleProvider>
+float traceShortRangeVisibilityExact(
+                const GBuffer::Buffer& gbuffer,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Tracer& tracer,
+                const GBuffer::Pixel& pixel,
+                int rays,
+                float trace_distance,
+                SampleProvider&& sample_for_ray
+        )
+{
+    const Math::Vec3 origin = aoOffsetOriginExact(
+            pixel.world_position,
+            pixel.normal,
+            0.025f
+        );
+
+    const HemisphereBasis basis = aoHemisphereBasisExact(pixel.normal);
+    float occlusion = 0.0f;
+
+    for (int ray = 0; ray < rays; ++ray)
+    {
+        const HemisphereSample sample = sample_for_ray(ray);
+        const Math::Vec3 direction = aoSampleHemisphereExact(basis, sample);
+
+        const VisibilityTraceHit hit = tracer.traceVisibility(
+                gbuffer,
+                view,
+                projection,
+                origin,
+                direction,
+                trace_distance
+            );
+
+        if (!hit.hit)
+        {
+            continue;
+        }
+
+        occlusion += shortRangeWeight(
+                hit.distance,
+                trace_distance
+            );
+    }
+
+    return aoClampExact(
+            1.0f - occlusion / static_cast<float>(rays),
+            0.0f,
+            1.0f
+        );
+}
+
+} // namespace
 
 float shortRangeWeight (
                 float distance,
@@ -56,9 +113,7 @@ float shortRangeVisibility (
         return 1.0f;
     }
 
-    const std::size_t pixel_count =
-        static_cast<std::size_t>(gbuffer.width()) *
-        static_cast<std::size_t>(gbuffer.height());
+    const std::size_t pixel_count = gbuffer.pixelCount();
 
     if (pixel_count > 640u * 360u)
     {
@@ -69,11 +124,12 @@ float shortRangeVisibility (
 
         if (index >= 0 && index < count)
         {
+            const int width = gbuffer.width();
             const int x = static_cast<int>(
-                    index % static_cast<std::ptrdiff_t>(gbuffer.width())
+                    index % static_cast<std::ptrdiff_t>(width)
                 );
             const int y = static_cast<int>(
-                    index / static_cast<std::ptrdiff_t>(gbuffer.width())
+                    index / static_cast<std::ptrdiff_t>(width)
                 );
 
             return shortRangeScreenVisibility(
@@ -85,52 +141,66 @@ float shortRangeVisibility (
         }
     }
 
-    const int rays = std::max(1, ray_count);
-    const float trace_distance = std::max(0.05f, maximum_distance);
-
-    const Math::Vec3 origin = Math::add(
-            pixel.world_position,
-            Math::multiply(pixel.normal, 0.025f)
-        );
-
-    const HemisphereBasis basis = aoHemisphereBasisExact(pixel.normal);
-    const bool cached_sequence =
-        sequence && sequence->size() >= static_cast<std::size_t>(rays);
-
-    float occlusion = 0.0f;
-
-    for (int ray = 0; ray < rays; ++ray) 
+    if (ray_count == 4
+            && maximum_distance == 0.80f
+            && sequence
+            && sequence->size() >= 4u)
     {
-        const HemisphereSample sample = cached_sequence
-            ? (*sequence)[static_cast<std::size_t>(ray)]
-            : hemisphereSequenceSample(ray, rays, frame_index + 31u);
-
-        const Math::Vec3 direction = aoSampleHemisphereExact(basis, sample);
-
-        const VisibilityTraceHit hit = tracer.traceVisibility(
+        const HemisphereSample *cached = sequence->data();
+        return traceShortRangeVisibilityExact(
                 gbuffer,
                 view,
                 projection,
-                origin,
-                direction,
-                trace_distance
-            );
-
-        if (!hit.hit) 
-        {
-            continue;
-        }
-
-        occlusion += shortRangeWeight(
-                hit.distance,
-                trace_distance
+                tracer,
+                pixel,
+                4,
+                0.80f,
+                [cached] (int ray)
+                {
+                    return cached[static_cast<std::size_t>(ray)];
+                }
             );
     }
 
-    return Math::clamp(
-            1.0f - occlusion / static_cast<float>(rays),
-            0.0f,
-            1.0f
+    const int rays = std::max(1, ray_count);
+    const float trace_distance = std::max(0.05f, maximum_distance);
+    const bool cached_sequence =
+        sequence && sequence->size() >= static_cast<std::size_t>(rays);
+
+    if (cached_sequence)
+    {
+        const HemisphereSample *cached = sequence->data();
+        return traceShortRangeVisibilityExact(
+                gbuffer,
+                view,
+                projection,
+                tracer,
+                pixel,
+                rays,
+                trace_distance,
+                [cached] (int ray)
+                {
+                    return cached[static_cast<std::size_t>(ray)];
+                }
+            );
+    }
+
+    return traceShortRangeVisibilityExact(
+            gbuffer,
+            view,
+            projection,
+            tracer,
+            pixel,
+            rays,
+            trace_distance,
+            [rays, frame_index] (int ray)
+            {
+                return hemisphereSequenceSample(
+                        ray,
+                        rays,
+                        frame_index + 31u
+                    );
+            }
         );
 }
 

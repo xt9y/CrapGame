@@ -93,6 +93,40 @@ inline Math::Vec3 aoSampleHemisphereExact(
     });
 }
 
+inline Math::Vec3 aoOffsetOriginExact(
+            const Math::Vec3& position,
+            const Math::Vec3& normal,
+            float offset
+    )
+{
+    const Math::Vec3 scaled = {
+        normal.x * offset,
+        normal.y * offset,
+        normal.z * offset,
+    };
+
+    return {
+        position.x + scaled.x,
+        position.y + scaled.y,
+        position.z + scaled.z,
+    };
+}
+
+inline float aoClampExact(float value, float minimum, float maximum)
+{
+    if (value < minimum)
+    {
+        return minimum;
+    }
+
+    if (value > maximum)
+    {
+        return maximum;
+    }
+
+    return value;
+}
+
 inline bool aoRadianceIsExactlyZero(const Math::Vec3& value)
 {
     return value.x == 0.0f
