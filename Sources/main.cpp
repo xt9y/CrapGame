@@ -2,6 +2,7 @@
 #include "Renderer/PerformanceMetrics.hpp"
 #include "Renderer/Test/TestScene.hpp"
 #include "Renderer/Gpu/FrameHotPath.hpp"
+#include "Renderer/Gpu/RuntimeHotPathV3.hpp"
 #include "Ecs/Ecs.hpp"
 
 #include <lwcgl/context.h>
@@ -107,6 +108,11 @@ int main ()
 
     std::uint64_t frame = 0;
     int exit_code = 0;
+
+    /* Install lwcgl's optional fast runtime before Display/Keyboard creation.
+     * It chains the legacy callbacks, caches close/ESC state, and publishes
+     * the native swap-only Display.updateNoMessages entry point. */
+    lwcglInstallFastRuntime();
 
     Display.setDisplayMode(
             new DisplayMode(window_width, window_height)
@@ -238,21 +244,25 @@ int main ()
     renderer.resize(renderer_width, renderer_height);
 
     using Clock = std::chrono::steady_clock;
-    constexpr double SIMULATION_STEP_SECONDS = 1.0 / 60.0;
-    constexpr double MAX_SIMULATION_DELTA_SECONDS = 0.25;
 
-    auto stats_start = Clock::now();
-    auto simulation_previous = stats_start;
-    const auto performance_start = stats_start;
+    const auto runtime_start = Clock::now();
+    const std::uint64_t runtime_start_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    runtime_start.time_since_epoch()
+                ).count()
+        );
+    const auto performance_start = runtime_start;
     const double performance_warmup_ms =
         Renderer::PerformanceMetrics::warmupMilliseconds();
     const double performance_duration_ms =
         Renderer::PerformanceMetrics::durationMilliseconds();
 
     std::uint64_t last_window_maintenance_ns = 0u;
-    double simulation_accumulator = 0.0;
-    std::uint64_t simulation_tick = 0;
-    std::uint64_t stats_frames = 0;
+    std::uint64_t simulation_previous_ns = runtime_start_ns;
+    std::uint64_t simulation_phase = 0u;
+    std::uint64_t simulation_tick = 0u;
+    std::uint64_t stats_window_start_ns = runtime_start_ns;
+    std::uint64_t stats_frames = 0u;
     std::vector<double> cpu_frame_samples;
 
     if (performance_mode)
@@ -287,7 +297,8 @@ int main ()
             /* Swap and OS event processing are deliberately decoupled. At
              * uncapped frame rates glfwPollEvents is unnecessary tens of
              * thousands of times per second; 1 kHz keeps input/window latency
-             * below one millisecond without poll-event churn. */
+             * below one millisecond without poll-event churn. The close and
+             * ESC checks below are cached memory reads after this event pump. */
             Display.processMessages();
             last_window_maintenance_ns = frame_time_ns;
 
@@ -317,32 +328,25 @@ int main ()
 
         if (!renderercheck_mode && !performance_static_scene)
         {
-            double real_delta = std::chrono::duration<double>(
-                    frame_started - simulation_previous
-                ).count();
-            simulation_previous = frame_started;
+            const std::uint64_t delta_ns = frame_time_ns >= simulation_previous_ns
+                ? frame_time_ns - simulation_previous_ns
+                : 0u;
+            simulation_previous_ns = frame_time_ns;
 
-            if (real_delta < 0.0)
-            {
-                real_delta = 0.0;
-            }
-            else if (real_delta > MAX_SIMULATION_DELTA_SECONDS)
-            {
-                real_delta = MAX_SIMULATION_DELTA_SECONDS;
-            }
+            const std::uint32_t simulation_ticks =
+                Renderer::Gpu::simulationTicksDue(
+                        delta_ns,
+                        &simulation_phase
+                    );
 
-            simulation_accumulator += real_delta;
-
-            while (simulation_accumulator >= SIMULATION_STEP_SECONDS)
+            for (std::uint32_t tick = 0; tick < simulation_ticks; ++tick)
             {
                 Renderer::Test::updateScene(
                         &world,
                         &scene_state,
                         simulation_tick
                     );
-
                 ++simulation_tick;
-                simulation_accumulator -= SIMULATION_STEP_SECONDS;
             }
         }
 
@@ -368,7 +372,7 @@ int main ()
         }
         else
         {
-            lwcglDisplayUpdateNoMessages();
+            Display.updateNoMessages();
         }
 
         if (Renderer::Gpu::frameEndClockRequired(performance_mode))
@@ -422,13 +426,20 @@ int main ()
             }
 
             ++stats_frames;
-            const double elapsed = std::chrono::duration<double>(
-                    frame_started - stats_start
-                ).count();
 
-            if (elapsed >= 2.0)
+            if (Renderer::Gpu::statsReportDue(
+                    frame_time_ns,
+                    stats_window_start_ns))
             {
-                const double fps = static_cast<double>(stats_frames) / elapsed;
+                const std::uint64_t elapsed_ns =
+                    frame_time_ns >= stats_window_start_ns
+                    ? frame_time_ns - stats_window_start_ns
+                    : 0u;
+                const double elapsed =
+                    static_cast<double>(elapsed_ns) / 1000000000.0;
+                const double fps = elapsed > 0.0
+                    ? static_cast<double>(stats_frames) / elapsed
+                    : 0.0;
                 const double frame_ms = fps > 0.0 ? 1000.0 / fps : 0.0;
 
                 std::fprintf(
@@ -440,8 +451,8 @@ int main ()
                         renderer_height
                     );
 
-                stats_start = frame_started;
-                stats_frames = 0;
+                stats_window_start_ns = frame_time_ns;
+                stats_frames = 0u;
             }
         }
 
