@@ -1,6 +1,7 @@
 #include "DirectLightingGpu.hpp"
 
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/ResourceLifecycle.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
 
 #include <algorithm>
@@ -406,20 +407,29 @@ GLenum surfacePixelType (SurfaceFormat format)
     return format == SurfaceFormat::Rgba8 ? GL_UNSIGNED_BYTE : GL_FLOAT;
 }
 
-GLuint createTexture (
+bool ensureTexture (
+            GLuint *texture,
             int width,
             int height,
             SurfaceFormat format
     )
 {
-    const GLuint texture = lwcgl_glGenTexture();
-
-    if (texture == 0)
+    if (!texture)
     {
-        return 0;
+        return false;
     }
 
-    glBindTexture(GL_TEXTURE_2D, texture);
+    if (*texture == 0)
+    {
+        *texture = lwcgl_glGenTexture();
+    }
+
+    if (*texture == 0)
+    {
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, *texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -435,7 +445,7 @@ GLuint createTexture (
             surfacePixelType(format),
             nullptr
         );
-    return texture;
+    return true;
 }
 
 void deleteTexture (GLuint *texture)
@@ -503,29 +513,22 @@ bool DirectLightingGpu::init (std::string *error)
 
 bool DirectLightingGpu::resize (int width, int height, std::string *error)
 {
-    const int new_width = std::max(1, width);
-    const int new_height = std::max(1, height);
-
-    if (new_width == width_
-            && new_height == height_
-            && direct_color_ != 0)
+    if (!resizeStorageRequired(
+            width_, height_, direct_color_ != 0, width, height))
     {
         return true;
     }
 
-    width_ = new_width;
-    height_ = new_height;
-    destroyTextures();
+    width_ = normalizedExtent(width);
+    height_ = normalizedExtent(height);
 
-    direct_color_ = createTexture(width_, height_, DIRECT_COLOR_FORMAT);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    if (direct_color_ == 0)
+    if (!ensureTexture(&direct_color_, width_, height_, DIRECT_COLOR_FORMAT))
     {
         setError(error, "failed to allocate GPU direct lighting texture");
-        destroyTextures();
         return false;
     }
+
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     if (error)
     {
@@ -612,6 +615,7 @@ void DirectLightingGpu::destroyTextures ()
 
 void DirectLightingGpu::shutdown ()
 {
+    releaseAcceleration();
     destroyTextures();
 
     if (light_buffer_ != 0)
@@ -634,9 +638,20 @@ void DirectLightingGpu::shutdown ()
     primitives_.clear();
     uploaded_lights_.clear();
     uploaded_primitives_.clear();
+    primitive_bounds_.clear();
+
     camera_location_ = -1;
     light_count_location_ = -1;
     primitive_count_location_ = -1;
+    bvh_node_count_location_ = -1;
+
+    bench_config_ = {};
+    bench_config_initialized_ = false;
+    bench_reported_ = false;
+    use_bvh_ = false;
+    bvh_shader_validated_ = false;
+    bvh_program_active_ = false;
+
     width_ = 0;
     height_ = 0;
 }
