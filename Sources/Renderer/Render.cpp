@@ -1,6 +1,7 @@
 #include "Render.hpp"
 
 #include "Renderer/Gpu/CameraCache.hpp"
+#include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Renderer/Lighting/Lighting.hpp"
 #include "Renderer/Lumen/Radiosity.hpp"
 #include "Renderer/Lumen/SceneLighting.hpp"
@@ -8,7 +9,6 @@
 #include "Renderer/Shadows/Shadows.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -16,16 +16,6 @@ namespace Renderer
 {
 namespace 
 {
-
-std::uint64_t monotonicNanoseconds ()
-{
-    using Clock = std::chrono::steady_clock;
-    return static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    Clock::now().time_since_epoch()
-                ).count()
-        );
-}
 
 Math::Vec3 toVec3 (const Ecs::Vec3& value) 
 {
@@ -260,13 +250,15 @@ void Rendering::applyCamera (
 bool Rendering::renderGpuFrame (
                 const Ecs::World& world,
                 const Math::Vec3& camera_position,
-                const Lumen::ChangeSet& changes
+                const Lumen::ChangeSet& changes,
+                std::uint64_t frame_time_ns
         )
 {
 #if defined(__APPLE__)
     (void)world;
     (void)camera_position;
     (void)changes;
+    (void)frame_time_ns;
     return false;
 #else
     if (!gpu_pipeline_enabled_)
@@ -298,8 +290,10 @@ bool Rendering::renderGpuFrame (
         geometry_dirty
         || changes.lighting_changed;
 
-    const std::uint64_t now_ns = monotonicNanoseconds();
-    const bool lumen_due = gpu_lumen_schedule_.due(now_ns, direct_dirty);
+    const bool lumen_due = gpu_lumen_schedule_.due(
+            frame_time_ns,
+            direct_dirty
+        );
 
     std::string error;
     gpu_profiler_.beginFrame(gpu_frame_index_);
@@ -422,10 +416,17 @@ bool Rendering::renderGpuFrame (
             return false;
         }
 
-        /* Schedule from real time so a stall never creates catch-up work. The
-         * scheduler immediately returns to 240 Hz on a scene/camera/light
-         * change, then relaxes through 120/60/30 Hz as history stabilizes. */
-        gpu_lumen_schedule_.markUpdated(now_ns);
+        /* Schedule from the frame-start timestamp so a stall never creates
+         * catch-up work and the render hot path needs no second clock read. */
+        gpu_lumen_schedule_.markUpdated(frame_time_ns);
+    }
+
+    if (Gpu::gpuWorkInvalidatesPresenter(
+            geometry_dirty,
+            direct_dirty,
+            lumen_due))
+    {
+        presenter_.invalidateGpuState();
     }
 
     gpu_profiler_.begin(Gpu::Profiler::Pass::Present);
@@ -665,7 +666,10 @@ void Rendering::present ()
         );
 }
 
-void Rendering::render (const Ecs::World& world) 
+void Rendering::render (
+                const Ecs::World& world,
+                std::uint64_t frame_time_ns
+        )
 {
     const Ecs::Entity camera_entity = world.activeCamera();
 
@@ -697,7 +701,12 @@ void Rendering::render (const Ecs::World& world)
             gpu_camera_matrices_valid_ = true;
         }
 
-        renderGpuFrame(world, camera_position, changes);
+        renderGpuFrame(
+                world,
+                camera_position,
+                changes,
+                frame_time_ns
+            );
         return;
     }
 
