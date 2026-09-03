@@ -78,3 +78,12 @@ jobs:
             tests/gpu_frame_hot_path_contract.cpp \
             -o /tmp/gpu-frame-hot-path-contract
           /tmp/gpu-frame-hot-path-contract
+      - name: GPU runtime hot path contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/gpu_runtime_hot_path_contract.cpp \
+            -o /tmp/gpu-runtime-hot-path-contract
+          /tmp/gpu-runtime-hot-path-contract
