@@ -18,7 +18,12 @@ inline bool screenTraceWithinThicknessSquared(
         return false;
     }
 
-    return Math::lengthSquared(delta) <= thickness * thickness;
+    const float distance_squared =
+        delta.x * delta.x +
+        delta.y * delta.y +
+        delta.z * delta.z;
+
+    return distance_squared <= thickness * thickness;
 }
 
 } // namespace Lumen

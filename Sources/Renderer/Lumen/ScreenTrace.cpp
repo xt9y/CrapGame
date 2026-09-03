@@ -1,5 +1,6 @@
 #include "ScreenTrace.hpp"
 
+#include "Renderer/Lumen/ScreenTraceMath.hpp"
 #include "Renderer/Lumen/ScreenTracePolicy.hpp"
 #include "Renderer/Lumen/TraceDirection.hpp"
 
@@ -22,13 +23,10 @@ bool projectPoint (
         ) 
 {
     const Math::Vec4 view_position =
-        Math::transform(
-                view,
-                {position.x, position.y, position.z, 1.0f}
-            );
+        screenTraceTransformPoint(view, position);
 
     const Math::Vec4 clip_position =
-        Math::transform(projection, view_position);
+        screenTraceTransform(projection, view_position);
 
     if (clip_position.w <= 0.00001f) 
     {
@@ -89,9 +87,10 @@ TraceHit traceScreenNormalized (
             distance += step_size) 
     {
         const Math::Vec3 sample_position =
-            Math::add(
+            screenTraceSamplePosition(
                     origin,
-                    Math::multiply(normalized_direction, distance)
+                    normalized_direction,
+                    distance
                 );
 
         float screen_x = 0.0f,

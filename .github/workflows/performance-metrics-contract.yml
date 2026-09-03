@@ -176,6 +176,16 @@ jobs:
           c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -pthread \
             -ISources -c Sources/Renderer/Temporal/Temporal.cpp \
             -o /tmp/temporal.o
+      - name: Contact AO Stage 59-62 exact math contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -ISources \
+            tests/contact_ao_stage59_62_contract.cpp \
+            Sources/Renderer/Math/Math.cpp \
+            -o /tmp/contact-ao-stage59-62-contract
+          /tmp/contact-ao-stage59-62-contract
       - name: Screen probe implementation compile
         shell: bash
         run: |
