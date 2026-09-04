@@ -1,4 +1,5 @@
 #include "Mesh.hpp"
+#include "Renderer/Mesh/Tangent.hpp"
 
 #include <algorithm>
 #include <deque>
@@ -78,6 +79,7 @@ MeshData createCube ()
     addFace(&mesh, {-h, -h, -h}, { h, -h, -h}, { h, -h,  h}, {-h, -h,  h}, { 0.0f, -1.0f,  0.0f});
 
     mesh.bounds = calculateBounds(mesh.vertices);
+    generateTangents(&mesh);
     return mesh;
 }
 
@@ -93,6 +95,7 @@ MeshData createPlane ()
             {0.0f, 1.0f, 0.0f}
         );
     mesh.bounds = calculateBounds(mesh.vertices);
+    generateTangents(&mesh);
     return mesh;
 }
 

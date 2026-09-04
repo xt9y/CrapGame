@@ -18,6 +18,7 @@ struct Vertex
                normal;
 
     Math::Vec2 uv;
+    Math::Vec4 tangent = {1.0f, 0.0f, 0.0f, 1.0f};
 };
 
 struct Bounds 

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <string>
 
 namespace Models
@@ -230,6 +231,19 @@ Renderer::Material::Resource resolveMaterial(
             static_cast<Slot>(i),
             warnings
         );
+    }
+
+    if (!material.displacement_texture.path.empty())
+    {
+        std::string stem = std::filesystem::path(material.displacement_texture.path).stem().string();
+        for (char& c : stem) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (stem.size() >= 4u && stem.compare(stem.size() - 4u, 4u, "_ddn") == 0)
+        {
+            const std::size_t normal = Renderer::Material::slotIndex(Slot::Normal);
+            const std::size_t displacement = Renderer::Material::slotIndex(Slot::Displacement);
+            if (out.textures[normal].texture == INVALID_TEXTURE) out.textures[normal] = out.textures[displacement];
+            out.textures[displacement] = Renderer::Material::TextureBinding{};
+        }
     }
 
     const bool transmission = out.transmission > 0.0001f

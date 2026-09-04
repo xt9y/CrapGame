@@ -5,6 +5,7 @@
 #include "Models/Texture.hpp"
 #include "Renderer/Material/Material.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
+#include "Renderer/Mesh/Tangent.hpp"
 
 #include <deque>
 #include <filesystem>
@@ -161,6 +162,40 @@ ModelHandle load (const std::string& path, std::string *error)
 
     for (Obj::Submesh& submesh : document.submeshes)
     {
+        const bool material_available =
+            submesh.material_index != UINT32_MAX
+            && submesh.material_index < resolved_materials.size();
+
+        if (material_available)
+        {
+            const Renderer::Material::Resource *resource =
+                Renderer::Material::get(resolved_materials[submesh.material_index]);
+            if (resource)
+            {
+                const auto& displacement = resource->textures[
+                    Renderer::Material::slotIndex(Renderer::Material::Slot::Displacement)
+                ];
+                if (displacement.texture != Models::INVALID_TEXTURE)
+                {
+                    std::string preprocessing_error;
+                    if (!Renderer::Mesh::applyDisplacement(
+                            &submesh.mesh, displacement, 1.0f, &preprocessing_error))
+                    {
+                        if (error) *error = preprocessing_error;
+                        return INVALID_MODEL;
+                    }
+                }
+                else
+                {
+                    Renderer::Mesh::generateTangents(&submesh.mesh);
+                }
+            }
+        }
+        else
+        {
+            Renderer::Mesh::generateTangents(&submesh.mesh);
+        }
+
         const std::uint32_t mesh =
             Renderer::Mesh::registerLoadedMesh(std::move(submesh.mesh));
 
