@@ -86,6 +86,17 @@ bool traceAabb(vec3 ro,vec3 rd,vec3 mn,vec3 mx,float maximumDistance){
     float nearT=max(max(lo.x,lo.y),lo.z),farT=min(min(hi.x,hi.y),hi.z);
     return farT>=max(nearT,0.0)&&nearT<maximumDistance;
 }
+bool traceTriangleAny(ImportedTriangle triangle,vec3 ro,vec3 rd,float maximumDistance){
+    vec3 e1=triangle.p1.xyz-triangle.p0.xyz;
+    vec3 e2=triangle.p2.xyz-triangle.p0.xyz;
+    vec3 p=cross(rd,e2);float det=dot(e1,p);
+    if(abs(det)<1e-8)return false;
+    float invDet=1.0/det;vec3 s=ro-triangle.p0.xyz;
+    float u=dot(s,p)*invDet;if(u<0.0||u>1.0)return false;
+    vec3 q=cross(s,e1);float v=dot(rd,q)*invDet;if(v<0.0||u+v>1.0)return false;
+    float t=dot(e2,q)*invDet;
+    return t>0.00002&&t<maximumDistance;
+}
 bool traceTriangleRaw(ImportedTriangle triangle,vec3 ro,vec3 rd,float maximumDistance,
                       out float distanceValue,out vec2 uv,out vec3 localNormal){
     vec3 e1=triangle.p1.xyz-triangle.p0.xyz;
@@ -101,6 +112,30 @@ bool traceTriangleRaw(ImportedTriangle triangle,vec3 ro,vec3 rd,float maximumDis
     uv=uv0*w+uv1*u+uv2*v;
     localNormal=normalize(triangle.n0.xyz*w+triangle.n1.xyz*u+triangle.n2.xyz*v);
     distanceValue=t;return true;
+}
+
+bool traceImportedInstanceAny(int instanceIndex,vec3 worldOrigin,vec3 worldDirection,float maximumDistance){
+    if(instanceIndex<0||instanceIndex>=uImportedInstanceCount)return false;
+    ImportedInstance instance=importedInstances[instanceIndex];
+    ImportedMesh mesh=importedMeshes[instance.meshIndex];
+    if(mesh.nodeCount==0u)return false;
+    vec3 ro=(instance.inverseModel*vec4(worldOrigin,1.0)).xyz;
+    vec3 rd=(instance.inverseModel*vec4(worldDirection,0.0)).xyz;
+    int stack[64];int stackSize=1;stack[0]=int(mesh.nodeOffset);
+    while(stackSize>0){
+        int nodeIndex=stack[--stackSize];
+        if(nodeIndex<int(mesh.nodeOffset)||nodeIndex>=int(mesh.nodeOffset+mesh.nodeCount))continue;
+        TraceBvhNode node=importedBlasNodes[nodeIndex];
+        if(!traceAabb(ro,rd,node.boundsMinimum.xyz,node.boundsMaximum.xyz,maximumDistance))continue;
+        if(node.meta.w>0){
+            for(int j=0;j<node.meta.w;++j){
+                int localTriangle=j==0?node.meta.x:(j==1?node.meta.y:node.meta.z);
+                if(localTriangle<0||localTriangle>=int(mesh.triangleCount))continue;
+                if(traceTriangleAny(importedTriangles[int(mesh.triangleOffset)+localTriangle],ro,rd,maximumDistance))return true;
+            }
+        }else if(stackSize<=61){stack[stackSize++]=node.meta.x;stack[stackSize++]=node.meta.y;}
+    }
+    return false;
 }
 
 bool traceImportedInstance(int instanceIndex,vec3 worldOrigin,vec3 worldDirection,float maximumDistance,
@@ -133,6 +168,27 @@ bool traceImportedInstance(int instanceIndex,vec3 worldOrigin,vec3 worldDirectio
     }
     if(!found)return false;
     hitDistance=best;hitUv=bestUv;hitNormal=bestNormal;materialHandle=int(instance.materialHandle);return true;
+}
+
+bool traceImportedOpaqueAny(vec3 ro,vec3 rd,float maximumDistance){
+    if(uImportedTlasNodeCount<=0||uImportedInstanceCount<=0)return false;
+    int stack[64];int stackSize=1;stack[0]=0;
+    while(stackSize>0){
+        int nodeIndex=stack[--stackSize];if(nodeIndex<0||nodeIndex>=uImportedTlasNodeCount)continue;
+        TraceBvhNode node=importedTlasNodes[nodeIndex];
+        if(!traceAabb(ro,rd,node.boundsMinimum.xyz,node.boundsMaximum.xyz,maximumDistance))continue;
+        if(node.meta.w>0){
+            for(int j=0;j<node.meta.w;++j){
+                int ii=j==0?node.meta.x:(j==1?node.meta.y:node.meta.z);
+                if(ii<0||ii>=uImportedInstanceCount)continue;
+                int material=int(importedInstances[ii].materialHandle);
+                bool opaque=material<0||material>=uTraceMaterialCount
+                    || int(traceRecords[material].extra.w+0.5)==0;
+                if(opaque&&traceImportedInstanceAny(ii,ro,rd,maximumDistance))return true;
+            }
+        }else if(stackSize<=61){stack[stackSize++]=node.meta.x;stack[stackSize++]=node.meta.y;}
+    }
+    return false;
 }
 
 bool traceImportedNearest(vec3 ro,vec3 rd,float maximumDistance,
@@ -175,10 +231,11 @@ bool traceMaterialRejectsHit(int materialHandle,vec2 uv){
     return renderClass==1&&traceResolvedOpacity(materialHandle,uv)<material.advanced.w;
 }
 
-/* Alpha-aware visibility through all imported intersections. Mask holes do not
- * terminate a ray. Opaque/covered-mask hits terminate; transparent and
- * transmissive hits attenuate and allow the ray to continue. */
+/* Opaque imported geometry can terminate visibility with a true any-hit walk;
+ * only masked/transmissive layers need the substantially more expensive
+ * nearest-hit continuation path below. */
 float importedShadowVisibility(vec3 ro,vec3 rd,float maximumDistance){
+    if(traceImportedOpaqueAny(ro,rd,maximumDistance))return 0.0;
     float visibility=1.0;vec3 origin=ro;float remaining=maximumDistance;
     for(int layer=0;layer<24&&remaining>0.0001;++layer){
         float t;vec2 uv;vec3 n;int material,instanceIndex;
