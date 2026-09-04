@@ -113,16 +113,10 @@ void Camera::update (Ecs::World& world, float delta_seconds)
         (keyDown(Keyboard.KEY_D) ? 1.0f : 0.0f)
         - (keyDown(Keyboard.KEY_A) ? 1.0f : 0.0f);
 
-    const float up_input =
-        (keyDown(Keyboard.KEY_SPACE) ? 1.0f : 0.0f)
-        - ((keyDown(Keyboard.KEY_LCONTROL)
-                || keyDown(Keyboard.KEY_RCONTROL)) ? 1.0f : 0.0f);
-
     const bool look_changed = mouse_dx != 0 || mouse_dy != 0;
     const bool movement_requested =
         forward_input != 0.0f
-        || right_input != 0.0f
-        || up_input != 0.0f;
+        || right_input != 0.0f;
 
     if (!look_changed && !movement_requested)
     {
@@ -186,7 +180,6 @@ void Camera::update (Ecs::World& world, float delta_seconds)
         Ecs::Vec3 movement = {0.0f, 0.0f, 0.0f};
         add(&movement, forward, forward_input);
         add(&movement, right, right_input);
-        movement.y += up_input;
 
         const float movement_length_squared = lengthSquared(movement);
 
