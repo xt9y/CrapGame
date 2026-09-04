@@ -122,7 +122,6 @@ jobs:
           CXX='c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -ISources -I/usr/local/include'
 
           $CXX tests/gpu_material_contract.cpp Sources/Renderer/Gpu/MaterialGpu.cpp \
-            Sources/Models/Texture.cpp Sources/Models/Tga.cpp \
             -o /tmp/gpu_material_contract
           /tmp/gpu_material_contract
 

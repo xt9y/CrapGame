@@ -15,6 +15,7 @@ GLModernAPI GLModern{};
 namespace Models {
 static TextureAsset asset{"x",{2,2,{128,128,255,255,128,128,255,255,128,128,255,255,128,128,255,255},false}};
 const TextureAsset* texture(TextureHandle h){return h==1?&asset:nullptr;}
+bool normalMapUsesNegativeY(const std::string&){return false;}
 }
 namespace Renderer { namespace Material {
 static Resource res;
