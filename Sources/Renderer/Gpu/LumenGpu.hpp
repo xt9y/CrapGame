@@ -36,6 +36,10 @@ class LumenGpu
 public:
     bool init (std::string *error = nullptr);
     bool resize (int width, int height, std::string *error = nullptr);
+    bool prewarmImportedTrace (std::string *error = nullptr)
+    {
+        return ensureImportedTraceShader(error);
+    }
 
     bool traceShared (
                 const GBufferGpu& gbuffer,
