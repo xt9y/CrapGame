@@ -17,6 +17,9 @@ int main()
     require(!stationary.geometry&&!stationary.shadow&&!stationary.static_diffuse&&!stationary.view_specular,"converged static frame scheduled direct work");
     require(!stationary.lumen_trace&&!stationary.composite&&!stationary.transparent&&stationary.present,"converged static frame must only present");
 
+    FrameWork transparent=decideFrameWork(r,r,true,false,true);
+    require(transparent.transparent&&transparent.composite,"dynamic transparency must force composition");
+
     RevisionState camera=r;camera.camera=1u;
     FrameWork moving=decideFrameWork(r,camera,false,true,false);
     require(moving.geometry&&moving.reprojection&&moving.dirty_tiles&&moving.view_specular,"camera motion must schedule view/reprojection work");
