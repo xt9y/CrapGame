@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: final-material-verification
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -132,13 +136,62 @@ jobs:
           set -euo pipefail
           c build
 
-      - name: RendererCheck smoke suite
+      - name: RendererCheck capture smoke suite
         run: |
           set -euo pipefail
-          cp rendercheck.toml /tmp/rendercheck.toml
-          trap 'cp /tmp/rendercheck.toml rendercheck.toml' EXIT
-          sed -i 's/^capture = true$/capture = false/' rendercheck.toml
-          xvfb-run -a renderercheck run
+          status=0
+          xvfb-run -a renderercheck run || status=$?
+          if [ "$status" -gt 1 ]; then
+            echo "RendererCheck infrastructure failed with exit code $status" >&2
+            exit "$status"
+          fi
+          python3 - <<'PY'
+          import json
+          import tomllib
+
+          with open('rendercheck.toml', 'rb') as config_file:
+              config = tomllib.load(config_file)
+          with open('.rendercheck/results.json', encoding='utf-8') as result_file:
+              results = json.load(result_file)
+
+          expected = [
+              test['name'] for test in config.get('test', [])
+              if test.get('enabled', True)
+          ]
+          tests = results.get('tests', [])
+          actual = [test.get('name') for test in tests]
+          problems = []
+
+          if actual != expected:
+              problems.append(
+                  f'test coverage mismatch: expected {len(expected)} cases, got {len(actual)}'
+              )
+
+          for test in tests:
+              name = test.get('name', '<unnamed>')
+              if test.get('exit_code') != 0:
+                  problems.append(f'{name}: process exit {test.get("exit_code")}')
+              if test.get('signal') != 0:
+                  problems.append(f'{name}: signal {test.get("signal")}')
+              if test.get('timed_out'):
+                  problems.append(f'{name}: timed out')
+              validation = test.get('validation', {})
+              if validation.get('checked') and validation.get('errors', 0) != 0:
+                  problems.append(f'{name}: validation errors')
+              visual = test.get('visual', {})
+              if not visual.get('checked'):
+                  problems.append(f'{name}: capture was not checked')
+              if not test.get('paths', {}).get('actual'):
+                  problems.append(f'{name}: capture path missing')
+              for failure in test.get('failures', []):
+                  if 'baseline' not in failure.lower():
+                      problems.append(f'{name}: {failure}')
+
+          if problems:
+              raise SystemExit('\n'.join(problems))
+
+          print(f'RendererCheck smoke: {len(tests)} capture cases completed; only unapproved-baseline failures were ignored')
+          PY
 
       - name: Dependency and tree audit
         run: |
