@@ -6,43 +6,35 @@ Date: 2026-09-04
 
 Make imported OBJ/MTL assets render with their actual material appearance instead of merely parsing and retaining metadata.
 
-For imported models, material support is considered complete only when supported MTL scalar values, texture maps, alpha/transparency behavior, normal/detail maps, displacement, advanced BRDF terms, emissive contribution, reflections, and imported-geometry ray visibility propagate from file parsing through ECS into the GPU renderer and visibly affect the final frame.
+For imported models, material support is complete only when every currently supported MTL scalar and texture semantic either visibly affects rendering or is explicitly converted/preprocessed into another renderer input. Parsing a value without using it does not count as support.
 
-The implementation remains self-contained: no Assimp, tinyobjloader, stb_image, or other third-party asset/image dependency.
+The implementation remains fully self-contained: no Assimp, tinyobjloader, stb_image, or other third-party asset/image dependency.
 
-The current public model-facing API remains minimal. Existing procedural ECS scenes and RendererCheck fixtures remain valid.
+The public model-facing API remains minimal and existing procedural ECS/RendererCheck scenes remain valid.
 
 ## Current gap
 
-The OBJ/MTL parser already stores a broad `Models::MaterialData`, including texture references and advanced scalar properties. `Models::spawn()` copies many scalar values into `Ecs::MaterialComponent`.
+`Models::MaterialData` already stores a broad set of scalar properties and texture references, and `Models::spawn()` copies many scalar values into `Ecs::MaterialComponent`.
 
-The interactive GPU path does not consume most of that data. `GBufferGpu` currently uploads only:
+The interactive GPU path currently drops most of that information. `GBufferGpu` uploads only albedo, metallic, emissive and roughness. UVs exist in mesh vertices but are not forwarded to the fragment shader, and no imported texture is decoded, bound or sampled.
 
-- albedo
-- metallic
-- emissive
-- roughness
+That is why the current Sponza render is essentially grayscale despite its MTL referencing many TGA textures.
 
-The mesh UV attribute exists, but the current GBuffer shader does not pass UVs to its fragment stage and does not bind or sample imported textures.
-
-The consequence is the current Sponza result: geometry loads, but the scene is effectively shaded from uniform gray scalar values.
-
-There is a second architectural gap: imported meshes are rasterized but deliberately excluded from the existing analytic cube/plane GPU acceleration structure, so imported triangles do not correctly participate in the GPU shadow/Lumen ray scene.
+Imported meshes are also currently rasterized but excluded from the analytic cube/plane GPU trace structure, so their triangles do not correctly participate in GPU shadow/Lumen/reflection rays.
 
 This design closes both gaps.
 
 ## Non-goals
 
-- No generic editor/material GUI.
-- No desktop asset authoring tool.
-- No third-party image library.
-- No new public model-loader complexity for ordinary callers.
-- No change to named RendererCheck procedural fixture construction unless a dedicated new material test explicitly requires it.
-- No requirement to support arbitrary image formats in this phase; TGA is the native image format required by the first imported asset and is implemented thoroughly.
+- No material editor GUI.
+- No desktop asset-authoring tool.
+- No third-party model/image library.
+- No arbitrary image-format support in this phase; TGA is implemented thoroughly because it is the first imported asset format required by Sponza.
+- No change to existing named RendererCheck fixture construction except dedicated new material tests.
 
-## External model API
+## External API
 
-The existing model API remains the normal entry point:
+Normal callers continue to use:
 
 ```cpp
 Models::ModelHandle model = Models::load(path, &error);
@@ -55,47 +47,40 @@ or:
 Models::loadInto(world, path, options, &error);
 ```
 
-Callers do not manually decode textures, create GPU materials, bind texture units, classify transparency, or build ray acceleration structures.
+Callers never manually decode images, create GPU materials, bind textures, classify transparency or build ray acceleration structures.
 
-## End-to-end data flow
+## End-to-end flow
 
 ```text
-OBJ
- |
- +-- geometry: positions / normals / UVs
- |
- +-- mtllib / usemtl
+OBJ geometry + mtllib/usemtl
         |
         v
-      MTL
-        |
-        +-- scalar properties
-        +-- texture references/options
+MTL scalars + texture references/options
         |
         v
 Models::MaterialData
         |
         +-- native TGA decode/cache
-        +-- texture semantic classification
+        +-- semantic resolution
         +-- tangent generation
-        +-- displacement preprocessing where applicable
+        +-- genuine displacement preprocessing
         |
         v
 renderer material resource
         |
         v
-ECS material resource handle
+ECS material-resource handle
         |
-        +-----------------------------+
-        |                             |
-        v                             v
-opaque / masked                 transparent / transmissive
-        |                             |
-        v                             v
-GBuffer + material textures      forward transparent pass
-        |                             ^
-        v                             |
-direct PBR ---------------------------+
+        +------------------------------+
+        |                              |
+        v                              v
+Opaque / Masked                 Transparent / Transmissive
+        |                              |
+        v                              v
+GBuffer + textured material      forward transparent pass
+        |                              ^
+        v                              |
+advanced direct PBR ------------------+
         |
         v
 Lumen / reflections
@@ -110,7 +95,7 @@ transparent composite
 present
 ```
 
-## Native TGA decoder
+## Native TGA subsystem
 
 Add:
 
@@ -119,58 +104,41 @@ Add:
 - `Sources/Models/Texture.hpp`
 - `Sources/Models/Texture.cpp`
 
-### Supported TGA forms
-
-The decoder must support:
+The decoder supports:
 
 - uncompressed true-color
 - RLE true-color
 - uncompressed grayscale
 - RLE grayscale
 - color-mapped TGA
-- 8-bit where valid for grayscale/index data
-- 15-bit / 16-bit color
+- valid 8-bit grayscale/index data
+- 15/16-bit color
 - 24-bit color
 - 32-bit color
 - alpha channels
 - top/bottom origin
 - left/right origin
-- BGR/BGRA conversion to normalized internal RGBA8
-- strict bounds checking
-- truncated-file rejection
-- malformed RLE rejection
-- invalid dimensions/type/depth rejection
+- BGR/BGRA conversion to internal RGBA8
+- strict dimensions/type/depth validation
+- strict truncated-data rejection
+- strict RLE packet validation
 
-The decoded representation is a CPU image resource containing:
+Decoded images contain normalized source path, width, height, RGBA8 pixels and whether meaningful alpha exists.
 
-- normalized source path
-- width
-- height
-- RGBA8 pixels
-- whether meaningful alpha exists
+CPU decode cache is keyed by normalized path. Equivalent paths decode once. CPU decode and GPU texture lifetime remain separate so parser/unit tests do not require GL.
 
-### Texture cache
+## Texture color space
 
-Texture files are cached by normalized filesystem path.
+Color/sRGB roles:
 
-The same file referenced through equivalent relative paths decodes once.
-
-CPU decode cache and GPU texture cache are separate lifetime layers so parser tests can run without an OpenGL context.
-
-## Texture semantics and color space
-
-Texture roles are classified at material resolution time.
-
-sRGB/color textures:
-
-- base color / diffuse
+- base color/diffuse
 - ambient color
 - specular color
 - emissive
 - reflection color
 - transmission color
 
-Linear/data textures:
+Linear/data roles:
 
 - normal
 - bump
@@ -178,159 +146,240 @@ Linear/data textures:
 - roughness
 - shininess
 - opacity
-- displacement/height
+- displacement
 - clearcoat
 - clearcoat roughness
-- sheen scalar/data
+- sheen data
 - anisotropy
 
-GPU upload must choose appropriate sRGB or linear internal formats rather than treating every texture as display color.
+Raster upload uses appropriate sRGB or linear internal formats.
 
-Mipmaps are generated for filtered color/data textures. Normal-map mip levels must be renormalized when generated on the CPU if GPU automatic mip generation would produce materially incorrect vectors.
+Ordinary color/data textures may use GPU mip generation. Normal maps use a CPU-generated mip chain whose vectors are renormalized after filtering.
 
-## Texture-reference options
+## Texture options
 
-The existing `TextureRef` options must become functional:
+All currently parsed `TextureRef` options become functional:
 
-- `-o`: UV offset
-- `-s`: UV scale
-- `-t`: stored texture-space turbulence/translation term
-- `-clamp`: clamp vs repeat
-- `-bm`: bump/displacement strength
-- `-imfchan`: scalar channel selection
+- `-o`: add `offset.xy` after scaling
+- `-s`: multiply source UV by `scale.xy`
+- `-t`: add `turbulence.xy` after scale/offset as the static MTL texture-space perturbation currently representable by this renderer
+- `-clamp`: clamp transformed UV to `[0,1]`; otherwise repeat with `fract`
+- `-bm`: multiply bump/displacement strength
+- `-imfchan`: select scalar channel (`r`, `g`, `b`, `m`, `l`, `z` where supported by the parser); unsupported channel letters are a material diagnostic and use the semantic default channel
 
-The resolved material resource stores these values per texture slot.
+Resolved UV calculation is therefore:
 
-For repeat sampling, transformed UVs repeat before any atlas/page remap used internally by ray tracing.
+```text
+uv' = uv * scale.xy + offset.xy + turbulence.xy
+```
 
-For clamp sampling, transformed UVs clamp to the texture domain.
+then clamp/repeat behavior is applied.
 
 ## Material registry boundary
 
-The renderer must not depend directly on OBJ or MTL parser internals.
-
-Introduce a renderer-facing material resource layer, conceptually under:
+Introduce a renderer-facing material-resource layer, conceptually:
 
 - `Sources/Renderer/Material/Material.hpp`
 - `Sources/Renderer/Material/Material.cpp`
 
-The exact file split may remain compact, but the dependency direction is fixed:
+Dependency direction is fixed:
 
 ```text
 Models parser -> Renderer material registration -> ECS handle -> renderer
 ```
 
-A renderer material resource contains:
+The renderer never depends on OBJ/MTL parser internals and the ECS never stores GL object IDs.
 
-- resolved scalar values
-- texture handles/slots
-- texture transforms/options
+`Ecs::MaterialComponent` remains valid for procedural scalar materials. Imported materials additionally carry a renderer material-resource handle.
+
+A renderer material resource stores:
+
+- resolved scalar/color values
+- texture handles and texture options
+- property-presence flags needed to distinguish an explicit zero from a default zero
 - render class
-- resolved legacy/PBR conversions
-- raw values when useful for diagnostics
-
-`Ecs::MaterialComponent` remains usable for procedural scalar materials. Imported materials additionally carry a renderer material-resource handle.
-
-The ECS must not expose GPU object IDs.
+- legacy-to-PBR conversions
+- raw MTL values useful for diagnostics
 
 ## Render classes
 
-Every resolved material is classified as one of:
+Each resolved material is exactly one of:
 
-- Opaque
-- Masked
-- Transparent
-- Transmissive
+- `Opaque`
+- `Masked`
+- `Transparent`
+- `Transmissive`
 
-### Opaque
+`Opaque` and `Masked` use the deferred GBuffer path.
 
-No fractional coverage/transmission.
+`Masked` discards fragments below alpha cutoff `0.5` after all scalar/texture opacity multiplication.
 
-Uses deferred GBuffer path.
+`Transparent` is fractional alpha without physical transmission and uses a forward pass after opaque Lumen composition.
 
-### Masked
+`Transmissive` has explicit transmission/refraction semantics and uses the same forward stage with IOR/Fresnel/refraction.
 
-Binary or effectively binary opacity coverage.
+## Exact opacity and Sponza compatibility rules
 
-Uses deferred GBuffer path and discards fragments below an alpha threshold.
+Raw `d` and `Tr` values remain preserved.
 
-### Transparent
+Ordinary MTL semantics are the default:
 
-Fractional alpha/dissolve without physical transmission.
+- explicit `d`: opacity = `clamp(d, 0, 1)`
+- explicit `Tr`: opacity = `1 - clamp(Tr, 0, 1)`
+- when both are explicitly present, the later directive in the MTL wins, matching parser order
+- when neither is present, scalar opacity = `1`
 
-Uses a forward pass after the opaque Lumen composite.
+The first Sponza MTL uses an exporter convention where many visually opaque materials contain `d 0`, while `map_d` materials contain `d 1`.
 
-### Transmissive
+Detect compatibility mode only when all of the following are true at MTL-document scope:
 
-Material has explicit transmission/refraction semantics.
+1. there are at least 3 candidate textured materials without `map_d`, `Tr`, or explicit transmission;
+2. at least 75% of those candidates explicitly contain `d <= 1/255`;
+3. there is at least one `map_d` material and at least 75% of `map_d` materials with explicit `d` use `d >= 254/255`;
+4. no explicit `Tr`/transmission pattern contradicts that convention.
 
-Uses the same forward stage with transmission, IOR and Fresnel handling.
+Only under this detected mode, a non-`map_d`, non-transmissive material with explicit `d <= 1/255` resolves scalar opacity to `1` instead of `0`.
 
-## Sponza dissolve compatibility
+`map_d` remains authoritative for coverage and raw `d` is never rewritten in parsed metadata.
 
-The first Sponza MTL has an exporter convention that cannot be interpreted by applying ordinary `d` semantics blindly:
+## Opacity-map classification
 
-- many visually opaque materials contain `d 0.000000`
-- alpha-masked materials contain `d 1.000000` plus `map_d`
+The selected scalar channel of the fully decoded opacity map is scanned.
 
-Raw parsed `d`/`Tr` values remain preserved.
+A texel is considered binary-low when `value <= 1/255` and binary-high when `value >= 254/255`.
 
-A separate resolved-opacity stage determines render behavior.
+If every texel is binary-low or binary-high, the material is `Masked`.
 
-The compatibility rule must be narrow and data-driven, not a global inversion of MTL semantics.
+If any texel lies strictly between those thresholds, the material is `Transparent` unless explicit transmission makes it `Transmissive`.
 
-At MTL-document scope, detect the legacy/exporter pattern when:
+This gives Sponza foliage/chains a cutout path while preserving genuinely smooth opacity maps.
 
-- a strong majority of textured, non-`map_d`, non-transmissive materials specify `d == 0`
-- `map_d` materials use the opposite opaque scalar convention
-- no competing `Tr`/transmission pattern establishes ordinary dissolve semantics
+## Exact material value resolution
 
-When this pattern is detected, `d == 0` on ordinary non-alpha/non-transmissive materials resolves to opaque while raw metadata remains unchanged.
+The parser/resolver must track whether each scalar/color property was explicitly present so an explicit zero is not confused with an absent value.
 
-Without this detected pattern, ordinary MTL dissolve semantics apply.
+### Base color
 
-A `map_d` texture is still authoritative for coverage.
+```text
+base = explicit Kd ? Kd : white
+if map_Kd exists: base *= sample_srgb(map_Kd).rgb
+```
 
-## Opacity-texture classification
+### Ambient reflectance
 
-After decoding an opacity texture:
+```text
+ambient = explicit Ka ? Ka : white
+if map_Ka exists: ambient *= sample_srgb(map_Ka).rgb
+```
 
-- if sampled values are effectively binary, classify as Masked
-- if intermediate values exist, classify as Transparent
+`Ka` is ambient reflectance, not ambient occlusion.
 
-This prevents foliage/chain cutouts from paying for a blended transparency path while still supporting genuinely smooth transparency maps.
+### Emissive
 
-The binary test uses a small epsilon around 0 and 1 and scans the decoded scalar channel selected by `-imfchan`.
+```text
+emissive = explicit Ke ? Ke : (map_Ke exists ? white : black)
+if map_Ke exists: emissive *= sample_srgb(map_Ke).rgb
+```
 
-## MTL property resolution
+### Metallic
 
-The material resolver must consume all currently parsed scalar properties:
+```text
+metallic_base = explicit Pm ? Pm : (map_Pm exists ? 1 : 0)
+metallic = metallic_base * selected_scalar(map_Pm, default=1)
+```
 
-- `Kd` base color
-- `Ka` ambient reflectance
-- `Ks` specular color
-- `Ke` emissive
-- `Tf` transmission color
-- `Ns` shininess
-- `Ni` index of refraction
-- `d` dissolve
-- `Tr` transparency
-- `illum` illumination model
-- `Pm` metallic
-- `Pr` roughness
-- `Ps` specular extension/strength
-- `Pc` clearcoat
-- `Pcr` clearcoat roughness
-- `Pt` transmission
-- reflectivity
-- sheen
-- anisotropy
+clamped to `[0,1]`.
 
-Texture values modulate or replace their scalar counterparts according to the slot semantics below.
+### Roughness
+
+Priority is exact:
+
+1. if `map_Pr` exists, `roughness = selected_scalar(map_Pr) * (explicit Pr ? Pr : 1)`;
+2. else if explicit `Pr`, use `Pr`;
+3. else if shininess texture exists, convert sampled shininess to roughness;
+4. else if explicit `Ns`, convert `Ns` to roughness;
+5. else use `1`.
+
+Legacy conversion:
+
+```text
+roughness = sqrt(2 / (max(Ns,0) + 2))
+```
+
+then clamp to renderer interval `[0.04,1]`.
+
+### Specular/F0
+
+Start with dielectric F0 from IOR when metallic is not 1:
+
+```text
+ior = explicit Ni ? max(Ni, 1.0001) : 1.5
+F0_ior = ((ior - 1) / (ior + 1))^2
+```
+
+If explicit `Ks` exists, it replaces the neutral dielectric F0 color before specular-strength modulation.
+
+If `map_Ks` exists, sampled sRGB specular color multiplies `(explicit Ks ? Ks : white)` and becomes the explicit specular color.
+
+`Ps`/specular-strength multiplies the dielectric/specular term when present; absent value defaults to `1`.
+
+For metallic response, base color continues to drive conductor-like colored F0 and is blended with dielectric/specular F0 using metallic.
+
+### Opacity
+
+Resolved scalar opacity from `d`/`Tr`/compatibility is multiplied by `map_d` selected scalar when present.
+
+No `map_d` means texture opacity multiplier `1`.
+
+### Transmission
+
+```text
+transmission_amount = explicit Pt ? clamp(Pt,0,1) : 0
+if transmission texture exists:
+    transmission_amount *= selected_scalar(texture)
+transmission_color = explicit Tf ? Tf : white
+if transmission-color texture exists:
+    transmission_color *= sample_srgb(texture).rgb
+```
+
+Any nonzero resolved transmission classifies the material as `Transmissive`.
+
+### Clearcoat
+
+```text
+clearcoat = (explicit Pc ? Pc : (map_Pc exists ? 1 : 0)) * scalar(map_Pc, default=1)
+clearcoat_roughness = (explicit Pcr ? Pcr : (map_Pcr exists ? 1 : 0.1)) * scalar(map_Pcr, default=1)
+```
+
+Both clamp to `[0,1]`; clearcoat roughness is clamped to `[0.04,1]` when clearcoat is active.
+
+### Sheen
+
+```text
+sheen = (explicit sheen ? sheen : (sheen texture exists ? 1 : 0)) * scalar(sheen texture, default=1)
+```
+
+clamped to `[0,1]`.
+
+### Anisotropy
+
+```text
+anisotropy = (explicit anisotropy ? anisotropy : (anisotropy texture exists ? 1 : 0)) * scalar(anisotropy texture, default=1)
+```
+
+clamped to `[-0.95,0.95]`.
+
+### Reflectivity
+
+```text
+reflectivity = explicit reflectivity ? reflectivity : (reflection texture exists ? 1 : 0)
+```
+
+The reflection texture modulates reflection color/intensity; it does not replace base color.
 
 ## Texture slots
 
-Every currently parsed texture slot must be consumed or intentionally preprocessed:
+Every currently parsed texture slot must be sampled or intentionally preprocessed:
 
 - base color
 - ambient
@@ -350,460 +399,368 @@ Every currently parsed texture slot must be consumed or intentionally preprocess
 - sheen
 - anisotropy
 
-Fallbacks are deterministic when a slot is absent.
-
-## Value precedence
-
-For metallic/roughness/specular-like properties:
-
-```text
-explicit texture sample
-  -> explicit modern/PBR scalar
-  -> legacy MTL conversion
-  -> deterministic default
-```
-
-A texture generally modulates the resolved scalar unless the corresponding MTL extension defines it as the complete channel value. The exact choice is fixed per semantic and covered by tests.
-
-## Legacy shininess to roughness
-
-When explicit roughness is absent, convert `Ns` into microfacet roughness using a stable monotonic conversion such as:
-
-```text
-roughness = sqrt(2 / (Ns + 2))
-```
-
-with clamping to the renderer's supported roughness interval.
-
-An explicit roughness scalar/map takes precedence.
-
-## Specular and IOR
-
-The direct-light path must no longer hardcode dielectric F0 to `0.04` when material data provides a better value.
-
-For an ordinary dielectric without explicit specular color:
-
-```text
-F0 = ((ior - 1) / (ior + 1))^2
-```
-
-Explicit `Ks` / specular texture / specular-strength data then modifies the dielectric specular response according to material rules.
-
-For metals, base color and metallic response continue to drive colored conductor-like F0.
+There is no supported slot that remains metadata-only after this work.
 
 ## Tangent generation
 
-Extend renderer mesh vertices with a tangent basis sufficient for tangent-space normal mapping and anisotropic shading.
+Extend renderer mesh vertices with tangent direction and handedness/sign.
 
-Generated data includes:
+For each triangle:
 
-- tangent direction
-- handedness/sign used to reconstruct bitangent
+1. compute tangent/bitangent from position and UV gradients;
+2. accumulate into shared vertices;
+3. Gram-Schmidt orthogonalize tangent against final normal;
+4. normalize;
+5. derive handedness from the accumulated bitangent.
 
-Tangents are computed from triangle positions and UV gradients.
-
-Degenerate UV triangles must not create NaNs. They receive a deterministic orthogonal fallback tangent derived from the normal.
-
-Shared vertices accumulate tangents and normalize/orthogonalize against their final normal.
+If the UV determinant magnitude is below `1e-8`, use a deterministic orthogonal fallback tangent derived from the normal. No NaNs are permitted.
 
 ## Normal and bump maps
 
-Normal maps are sampled in tangent space and transformed through TBN into world-space normals before writing the GBuffer.
+True normal maps are sampled in linear color space, remapped from `[0,1]` to `[-1,1]`, normalized, then transformed through TBN to world space.
 
-Normal texture decoding uses linear color space.
+Bump maps use finite differences in texture space and `-bm` strength to perturb tangent-space normal.
 
-Bump maps use local finite differences in texture space to perturb the tangent-space normal using `-bm` strength.
+When both exist, bump perturbation is applied first to the flat tangent-space basis and the decoded normal map is then composed/renormalized with it; neither is silently discarded.
 
-If both a true normal map and a bump map exist, both contribute in a defined order rather than silently discarding one.
+## Sponza `_ddn` rule
 
-## Sponza `_ddn` convention
+A `map_Disp` path whose basename contains `_ddn` immediately before the extension is treated as a normal/detail-normal texture.
 
-The first Sponza asset frequently declares:
+Example:
 
 ```text
-map_Disp textures/*_ddn.tga
+textures/sponza_arch_ddn.tga -> normal/detail normal
 ```
 
-These files are normal/detail-normal textures, not height displacement maps.
+All other `map_Disp` textures remain displacement maps.
 
-Resolver rule:
+The raw directive/path remains preserved for diagnostics.
 
-- `map_Disp` path with `_ddn` normal-map naming convention -> normal/detail-normal slot
-- otherwise `map_Disp` remains displacement
+## Genuine displacement
 
-This rule is explicit, tested and isolated to semantic resolution; the raw directive remains preserved.
+A genuine displacement texture is applied during static imported-mesh preprocessing:
 
-## Real displacement
+1. transform UV using the texture options;
+2. sample selected height channel;
+3. convert sample from `[0,1]` to signed height `sample - 0.5`;
+4. multiply by resolved `-bm`/displacement strength;
+5. offset each source vertex along its current normal;
+6. recompute affected normals;
+7. regenerate tangents.
 
-A genuine displacement texture that is not reclassified as a normal map is applied during imported-mesh preprocessing.
+This is vertex displacement, not tessellation. It cannot create geometric detail below the source mesh's vertex density; that limitation is explicit.
 
-For static OBJ geometry:
+## GPU raster batching
 
-1. sample the height texture at vertex UV
-2. apply selected channel and texture transform
-3. multiply by `-bm`/resolved displacement scale
-4. offset the vertex along its current normal
-5. recompute affected face/vertex normals as necessary
-6. regenerate tangents
+GL4.3 portability does not assume bindless textures.
 
-This avoids introducing tessellation shaders solely for static OBJ displacement.
-
-The limitation is explicit: vertex displacement cannot reproduce sub-vertex tessellation detail that does not exist in the source topology.
-
-## GPU raster material path
-
-OpenGL 4.3 portability does not assume bindless textures.
-
-Imported raster work is grouped by a stable material-aware batch key:
+Imported raster batches are keyed by:
 
 ```text
 mesh handle + material handle + render class
 ```
 
-For ordinary raster passes, the material texture set is bound once per batch, then all instances of that batch are drawn.
+A material's texture set is bound once per batch and all instances in that batch are drawn together.
 
-Persistent VAO/VBO/EBO and instance-buffer behavior remains; texture support must not re-upload mesh data every frame.
+Persistent VAO/VBO/EBO/instance-buffer behavior remains. Adding materials must not re-upload static mesh geometry every frame.
 
-## GBuffer shader
+## GBuffer shader path
 
-The vertex stage must forward:
+The vertex stage forwards:
 
 - world position
 - world normal
-- transformed tangent basis
+- transformed tangent + handedness basis
 - UV
-- material/instance data needed by the batch
+- batch/material data required by the fragment stage
 
-The fragment stage resolves the material by combining scalar data and bound textures.
+The fragment stage resolves scalar + texture values and writes material-complete primary-surface data.
 
-At minimum it must visibly resolve:
+Masked materials discard below alpha `0.5` before writing depth/GBuffer.
 
-- textured base color
-- mapped normal/bump
-- metallic
-- roughness/shininess
-- emissive
-- alpha mask
-- specular/F0
-- IOR
-- transmission data
-- reflectivity
-- clearcoat
-- clearcoat roughness
-- sheen
-- anisotropy
+## Expanded GBuffer semantics
 
-## Expanded GBuffer layout
-
-The target GL4.3 path may use the guaranteed minimum of eight draw buffers.
-
-The preferred logical layout is:
+The GL4.3 path uses up to the guaranteed eight draw buffers with this logical contract:
 
 1. `PositionDepth`: world position + depth
 2. `NormalRoughness`: resolved world normal + roughness
 3. `AlbedoMetallic`: resolved base color + metallic
-4. `EmissiveOpacity`: resolved emissive + opacity
-5. `SpecularIor`: resolved F0/specular color + IOR
+4. `EmissiveOpacity`: emissive + opacity
+5. `SpecularIor`: resolved F0/specular RGB + IOR
 6. `Advanced`: clearcoat + clearcoat roughness + sheen + reflectivity
-7. `Transmission`: transmission tint RGB + transmission amount
+7. `Transmission`: transmission tint RGB + amount
 8. `TangentAnisotropy`: world tangent + anisotropy
 
-Exact internal formats are chosen for precision/bandwidth balance, but semantics remain stable.
+Formats may be optimized for bandwidth/precision, but these semantics may not be removed.
 
-If a property is constant and can safely remain in a material SSBO without requiring UV reconstruction in later passes, it may be sourced by material ID instead of consuming redundant GBuffer channels. That optimization must not remove any per-pixel textured behavior.
+A constant property may move to a material SSBO only when later passes can resolve it without losing per-pixel textured behavior.
 
-## Direct PBR lighting
+## Direct PBR
 
-The direct-light BRDF evolves from basic metallic/roughness GGX to material-driven evaluation.
+Direct lighting becomes material-driven and includes:
 
-Required contributions:
-
-- Lambertian/diffuse response
-- GGX specular
+- diffuse response
+- GGX base specular
 - IOR-derived dielectric F0
-- explicit specular color/strength
+- explicit `Ks`/specular map/strength
 - metallic response
 - roughness
 - clearcoat secondary GGX lobe
-- sheen contribution
-- anisotropic specular distribution using tangent/bitangent
+- sheen
+- anisotropic GGX using tangent/bitangent
 - emissive
 
-Energy sharing between diffuse/base specular/clearcoat must avoid obvious double counting.
+Clearcoat energy is taken from the underlying base lobe using Fresnel weighting so clearcoat does not simply add unbounded energy.
 
-## Ambient property
+Sheen is a grazing-angle fabric lobe and is energy-limited against diffuse.
 
-Legacy `Ka` / ambient texture is preserved as an ambient-reflectance term.
+Anisotropy modifies tangent/bitangent roughness axes rather than only scaling brightness.
 
-It must not be mislabeled as ambient occlusion.
+## Ambient/indirect property
 
-In the GPU renderer it modulates the material's indirect/ambient response where a legacy ambient term is needed; it does not replace Lumen occlusion.
+`Ka` and ambient texture modulate legacy ambient/indirect reflectance where used. They do not become AO and do not replace Lumen occlusion.
 
 ## Reflection property
 
-Reflectivity and reflection texture modulate the reflection contribution reaching the final material response.
+Resolved reflectivity/reflection texture modulates the existing reflection result before final material composition.
 
-They do not merely tint base color.
+Reflection data does not alter diffuse base color.
 
-The existing Lumen/reflection output remains the source of scene reflection; material reflectivity controls how strongly it is applied.
+## Transparent/transmissive pass
 
-## Transmission and real transparency
-
-Transparent and transmissive surfaces bypass the opaque GBuffer write and render in a separate forward stage after opaque Lumen composition.
-
-Add a focused GPU subsystem, conceptually:
+Add a focused forward subsystem, conceptually:
 
 - `Sources/Renderer/Gpu/TransparentGpu.hpp`
 - `Sources/Renderer/Gpu/TransparentGpu.cpp`
 
-The pass receives:
+It runs after opaque Lumen composition and receives:
 
 - opaque final color
 - opaque depth
 - camera matrices/position
-- direct-light data
-- material resources/textures
+- direct-light/trace scene data
+- transparent/transmissive material textures
 - transparent mesh batches
 
 It supports:
 
-- fractional opacity
-- transmission amount
-- transmission color / `Tf`
+- fractional alpha
+- transmission amount/color
 - IOR
 - Fresnel
-- screen-space refraction of opaque scene color
-- specular reflection contribution
+- screen-space refraction of opaque color
+- specular reflection
 - direct lighting
 - emissive
 - tint/absorption approximation
 
-Transparent batches are depth-sorted back-to-front at submesh/instance granularity.
+Batches are sorted back-to-front by camera-space submesh/instance center each frame.
 
-Opaque depth is read for occlusion but transparent surfaces do not overwrite opaque depth in a way that destroys later transparent layers.
+Opaque depth is read for rejection/occlusion. Transparent layers blend without destructively overwriting opaque depth.
 
-The implementation is explicit about the limitation that simple sorted forward transparency is not full order-independent transparency.
+This is sorted forward transparency, not full order-independent transparency; intersecting transparent geometry can therefore retain normal sorted-transparency limitations.
 
-## Imported geometry acceleration
+## Imported geometry trace scene
 
 Imported meshes must participate in GPU shadows, GI occlusion, Lumen rays and off-screen reflection tracing.
 
-Introduce a shared imported-geometry trace scene rather than flattening every imported triangle into world space every frame.
-
-Conceptual structure:
+Use a shared BLAS/TLAS structure:
 
 ```text
-static loaded mesh
+immutable loaded mesh
     -> local triangles
-    -> per-mesh BLAS BVH built once
+    -> per-mesh BLAS built once
 
 ECS instances
-    -> world transform + world bounds
+    -> transforms/world bounds
     -> TLAS over instances
 
 ray
     -> TLAS
-    -> instance transform to local space
+    -> transform into mesh local space
     -> BLAS
-    -> triangle intersection
+    -> triangle hit
 ```
 
-Procedural cube/plane analytic primitives remain as an optimized trace primitive type and coexist with imported BLAS/TLAS geometry.
+Procedural cube/plane analytic primitives remain as optimized primitive types and coexist with imported triangles.
 
-The shared trace scene is consumed by both direct-light shadow queries and Lumen trace queries.
+Transform-only changes update/refit TLAS and never rebuild immutable mesh BLAS.
 
-## Triangle trace records
+Trace triangles retain positions, required normals, UVs and material handle.
 
-Imported trace triangles retain enough data to recover material response at a hit:
+## Ray-visible textures under GL4.3
 
-- positions
-- geometric/smoothed normals as required
-- UVs
-- material handle
+Raster material binding is insufficient for arbitrary off-screen ray hits because compute shaders cannot rely on portable bindless texture access.
 
-This enables alpha-tested ray hits and material-aware off-screen GI/reflection sampling.
+Build internal trace texture atlases using fixed-size pages stored as `GL_TEXTURE_2D_ARRAY` layers.
 
-## Ray-visible texture access under GL4.3
+Maintain at least two atlas classes:
 
-Compute-ray hits cannot rely on arbitrary bindless sampler access.
+- sRGB/color
+- linear/data
 
-Raster batching continues to use ordinary per-material binding.
-
-For ray-visible material textures, create an internal trace texture atlas representation.
-
-The atlas uses one or more fixed-size pages stored as `GL_TEXTURE_2D_ARRAY` layers. Texture regions are packed with gutters. Material trace metadata stores:
+Each material texture record stores:
 
 - atlas class
 - page/layer
 - normalized region offset/scale
-- clamp/repeat behavior
-- channel selection
+- clamp/repeat mode
+- selected channel
+- semantic flags
 
-At minimum maintain separate atlas classes for:
+Each packed image receives a 4-texel gutter at mip 0, scaled appropriately through the mip chain. Gutters duplicate edge texels. Mip levels are generated per source region before packing so neighboring regions cannot bleed.
 
-- sRGB/color data
-- linear/data maps
+Repeat/clamp happens in source UV space before atlas remap.
 
-Mip levels are generated per source region before/while packing so neighboring atlas regions do not bleed into each other.
-
-Repeat is performed in material UV space before remapping into the atlas region.
-
-This permits arbitrary material counts in Lumen/shadow compute shaders using a small fixed sampler set.
+If one page cannot fit the next texture, allocate another array layer; atlas growth never silently downsamples a source merely to make it fit. A texture exceeding the device maximum texture size is a recoverable material diagnostic with semantic fallback.
 
 ## Alpha-tested ray hits
 
-Masked geometry must respect opacity maps in:
+Masked imported triangles use their opacity atlas during:
 
-- shadow rays
+- direct-light shadow rays
 - Lumen GI rays
 - reflection rays
 
-A triangle intersection that lands on a masked-out texel is rejected and traversal continues.
+A hit whose resolved alpha is `< 0.5` is rejected and traversal continues.
 
-This prevents leaf/chain billboard polygons from behaving as solid occluders.
+Thus leaves/chains do not become solid rectangular occluders.
 
-Fractionally transparent/transmissive surfaces are not treated as fully opaque shadow blockers; their initial implementation uses a defined attenuation/transmission approximation in the forward/trace material path.
+Fractional transparent/transmissive hits use an attenuation/transmission approximation rather than acting as fully opaque blockers.
 
 ## Material-aware Lumen
 
-Primary visible surfaces already enter Lumen through GBuffer data; after this upgrade that data is textured and materially complete.
+Primary visible surfaces enter Lumen through the expanded textured GBuffer.
 
-Off-screen ray hits must resolve at least:
+Off-screen imported ray hits resolve from trace material/atlas data at least:
 
 - base color
-- normal/detail normal where practical for hit shading
+- normal/detail normal where the hit path has tangent/UV data
 - metallic
 - roughness
 - emissive
 - specular/F0
 - reflectivity
-- clearcoat parameters
+- clearcoat
 - opacity mask
 
-This allows imported geometry to contribute textured GI/occlusion/reflection information instead of only receiving lighting.
+This allows imported textured geometry to contribute to GI/occlusion/reflections instead of only receiving lighting.
 
-The trace material path can intentionally omit expensive features that have negligible effect on bounce radiance only if the omission is explicit, tested and visually bounded; it cannot silently discard an entire supported material class.
+Emissive texture × emissive scalar contributes to both visible emissive and imported-hit radiance used by Lumen.
 
-## Emissive GI
+## Resource ownership/lifetime
 
-Resolved emissive texture × emissive scalar/strength contributes both to visible GBuffer emissive and to imported-material radiance used by Lumen surface/ray evaluation.
-
-An emissive imported surface must therefore be able to influence indirect lighting rather than only appear bright itself.
-
-## Resource lifetime
-
-Model cache ownership remains explicit:
+Explicit lifetime layers:
 
 - CPU model geometry cache
 - CPU decoded texture cache
-- renderer material resource cache
+- renderer material-resource cache
 - GPU raster textures
 - GPU trace atlases
-- imported BLAS data
+- imported BLAS
+- TLAS instance scene
 
-`Models::clearCache()` must invalidate model-owned renderer material/texture/mesh resources safely, or the API must be adjusted so cache teardown happens through one ordered ownership path.
-
-No ECS entity may retain a live GPU object ID directly.
+`Models::clearCache()` must either release model-owned renderer resources in a defined safe order or delegate to one renderer/model-resource teardown owner. No ECS entity stores a live GL object ID.
 
 ## Change tracking
 
-Scene-change tracking must distinguish:
+Track separately:
 
-- transform changes
-- loaded mesh/material handle changes
-- material scalar changes
-- texture/material-resource changes
-- light changes
+- transforms
+- loaded mesh handle
+- material-resource handle
+- procedural material scalar values
+- texture/material resource changes
+- lights
 
-A pure camera move must not force texture re-upload or BLAS rebuild.
+A camera move never re-decodes/re-uploads textures or rebuilds BLAS.
 
-A transform move may refit/update TLAS without rebuilding static mesh BLAS.
+A transform-only move updates/refits TLAS.
 
-A material texture change invalidates affected raster/material state and ray material state but not immutable mesh vertex buffers.
+A material change invalidates affected material/raster/trace state without re-uploading immutable mesh buffers.
 
 ## Performance requirements
 
-- Decode each source texture once.
-- Upload each GPU raster texture once per required color-space interpretation.
-- Build imported mesh BLAS once for immutable geometry.
-- Refit/update TLAS for transform-only changes where possible.
-- Preserve persistent mesh and instance buffers.
+- Decode each normalized texture path once.
+- Upload each raster texture once per required color-space interpretation.
+- No per-frame filesystem reads.
+- No per-frame TGA decode.
+- No per-frame material registration.
+- Build immutable mesh BLAS once.
+- Refit/update TLAS for transform-only changes.
+- Preserve persistent mesh/instance buffers.
 - Batch raster draws by mesh + material + render class.
-- Do not perform per-frame filesystem reads.
-- Do not perform per-frame TGA decode.
-- Do not re-register materials every frame.
-- Keep RendererCheck performance scenarios procedural unless explicitly testing imported materials.
+- Keep existing procedural RendererCheck perf scenarios procedural unless explicitly testing imported materials.
 
 ## Failure handling
 
-Fatal model-load errors:
+Fatal:
 
 - unreadable OBJ
 - structurally invalid OBJ preventing geometry creation
 - invalid required geometry indices
 
-Material/texture failures are normally recoverable:
+Recoverable material diagnostics:
 
-- missing optional texture -> diagnostic + semantic fallback
-- malformed optional TGA -> diagnostic + semantic fallback
-- unsupported optional material directive -> retain raw/ignore only when outside documented support
+- missing optional texture
+- malformed optional TGA
+- unsupported TGA variant outside this spec
+- texture larger than device limits
+- unsupported optional material directive outside currently documented parser support
 
-A missing opacity map on a material that explicitly depends on that mask falls back to a deterministic opaque/transparent policy and reports the missing asset rather than producing undefined sampling.
+Recoverable texture errors use deterministic semantic fallbacks instead of undefined sampling.
 
-Fallback textures:
+Fallbacks:
 
 - base color: white
-- ambient: white/neutral multiplier
-- normal: `(0, 0, 1)` tangent-space
+- ambient multiplier: white
+- normal: `(0,0,1)` tangent-space
 - bump: flat
-- metallic: 0
-- roughness: resolved scalar/default
-- specular: resolved scalar/F0
+- metallic: `0`
+- roughness: resolved scalar or `1`
+- specular: resolved IOR/scalar F0
 - emissive: black
-- opacity: 1
-- transmission: 0
-- clearcoat: 0
-- clearcoat roughness: scalar/default
-- sheen: 0
-- anisotropy: 0
-- reflection: neutral material reflectivity
+- opacity: `1`
+- transmission: `0`
+- clearcoat: `0`
+- clearcoat roughness: `0.1` when needed
+- sheen: `0`
+- anisotropy: `0`
+- reflection: resolved scalar/default
 
-## Testing strategy
+## Test strategy
 
-All new behavior is implemented test-first.
+All production behavior is implemented test-first.
 
 ### TGA contracts
 
 - uncompressed 24-bit
-- uncompressed 32-bit with alpha
+- uncompressed 32-bit alpha
 - RLE true-color
 - grayscale
-- color-mapped image
-- each origin/orientation combination
+- color-mapped
+- origin/orientation combinations
 - malformed header
-- truncated pixel data
+- truncated data
 - malformed RLE packet
 - cache reuse
 
-Fixtures are generated as tiny byte arrays/files in tests; no large binary test asset is required.
+Tiny byte-array/file fixtures are generated in tests; no large binary fixture is required.
 
-### Material resolution contracts
+### Material-resolution contracts
 
 - every scalar property
 - every texture slot
+- property-presence handling
 - sRGB vs linear classification
-- `-o`
-- `-s`
-- `-t`
-- `-clamp`
-- `-bm`
-- `-imfchan`
-- value precedence
-- `Ns` to roughness conversion
-- `Ni` to F0 conversion
-- `d` / `Tr` semantics
-- Sponza dissolve-compatibility detection
-- binary alpha mask vs fractional transparency
+- `-o`, `-s`, `-t`, `-clamp`, `-bm`, `-imfchan`
+- exact precedence rules above
+- `Ns` -> roughness
+- `Ni` -> F0
+- ordinary `d`/`Tr`
+- exact Sponza compatibility thresholds
+- binary mask vs fractional alpha thresholds
 - `_ddn` reclassification
 
 ### Geometry contracts
@@ -811,118 +768,113 @@ Fixtures are generated as tiny byte arrays/files in tests; no large binary test 
 - tangent generation
 - mirrored UV handedness
 - degenerate UV fallback
-- displacement preprocessing
+- displacement
 - normal/tangent recomputation after displacement
 
 ### GPU/source contracts
 
-Where a real OpenGL context is unavailable in unit tests, source/packing contracts verify:
+When no real GL context exists, strict source/packing contracts verify:
 
-- material GPU record layout
+- material GPU layout
 - raster batch key includes material/render class
-- texture samplers/UV path exist in GBuffer shader
-- alpha discard exists for masked materials
-- expanded GBuffer semantic outputs
-- direct-light shader consumes advanced material channels
+- GBuffer shader forwards UV/tangent
+- texture samplers are present
+- masked alpha discard exists
+- expanded GBuffer outputs exist
+- direct-light shader consumes advanced channels
 - transparent pass wiring
 - imported trace-scene wiring
 
-Runtime GL tests are added where the existing environment can execute them without destabilizing deterministic RendererCheck.
+### Trace contracts
 
-### Trace-scene contracts
-
-- BLAS construction
-- TLAS construction/refit
+- BLAS build
+- TLAS build/refit
 - triangle hit
 - transformed instance hit
-- masked hit rejection
 - material handle propagation
-- procedural analytic primitive coexistence
+- masked hit rejection and continued traversal
+- procedural analytic + imported triangle coexistence
 
-### Sponza asset contract
+### Sponza contract
 
-Using the existing `Assets/Sponza` submodule, verify at minimum:
+Using `Assets/Sponza`, verify:
 
-- diffuse/base-color maps are discovered
-- `_ddn` files resolve as normal/detail maps
-- opacity masks are discovered
-- material classes are sensible
-- opaque exporter `d 0` materials remain visible under detected compatibility mode
-- texture cache deduplicates repeated references
-- renderer material resources are created for imported parts
+- diffuse maps discovered
+- `_ddn` resolves as normal/detail normal
+- opacity masks discovered
+- expected render classes
+- exporter `d 0` opaque materials stay visible only under detected compatibility mode
+- repeated texture paths deduplicate
+- renderer material resources are created
 
-The Sponza contract does not replace procedural RendererCheck fixtures.
+Sponza does not replace procedural RendererCheck fixtures.
 
-## Visual acceptance criteria
+## Visual acceptance
 
-Normal interactive Sponza rendering must no longer appear as an untextured grayscale model.
+Normal interactive Sponza must no longer appear as an untextured grayscale scene.
 
-The resulting frame must visibly demonstrate:
+The frame must visibly demonstrate:
 
 - colored diffuse textures
-- mapped brick/column/fabric detail
+- brick/column/fabric normal detail
 - correct leaf/chain cutouts
 - material-dependent specular response
 - roughness variation
-- correct mapped normals
-- emissive contribution if present in an imported material
-- imported geometry casting/receiving correct ray-based shadow/GI effects
+- mapped normals
+- imported geometry casting/receiving ray-based shadows/GI
 
-Separate dedicated fixtures must demonstrate:
+Dedicated fixtures must separately demonstrate:
 
-- metallic material
+- metallic
 - smooth vs rough specular
 - clearcoat
 - sheen
 - anisotropy
 - fractional transparency
 - transmission/refraction with IOR
-- real displacement
-
-A feature is not considered implemented merely because the parser stores its value.
+- genuine displacement
+- emissive GI
 
 ## Compatibility
 
-Existing procedural scenes using only `Ecs::MaterialComponent` scalar values continue to render without requiring imported material resources.
+Existing procedural scenes using only scalar `Ecs::MaterialComponent` continue to work without imported material resources.
 
 Existing model API calls remain valid.
 
-Named RendererCheck scenes remain deterministic and procedural unless a new named material test is intentionally added.
+Named RendererCheck scenes remain deterministic/procedural unless a dedicated new material test is intentionally added.
 
 The normal no-test scene continues to use Sponza as the first imported model.
 
-## Implementation staging constraint
+## Implementation stages
 
-Implementation should be staged so every stage leaves `main` buildable and does not trigger unnecessary GitHub Actions runs.
-
-Recommended order:
+Every stage must leave `main` buildable and avoid unnecessary GitHub Actions runs.
 
 1. native TGA decoder/cache
-2. material resolution + Sponza compatibility
-3. tangent/displacement preprocessing
-4. renderer material registry + ECS handle
+2. exact material resolution + Sponza compatibility
+3. tangents + displacement preprocessing
+4. renderer material registry + ECS resource handle
 5. textured opaque/masked GBuffer
-6. advanced direct PBR material response
+6. advanced direct PBR
 7. transparent/transmissive forward pass
 8. imported BLAS/TLAS trace scene
-9. material-aware shadow/Lumen ray hits + trace texture atlases
-10. final Sponza visual/runtime verification and regression cleanup
+9. trace atlases + material-aware shadow/Lumen/reflection hits
+10. Sponza visual/runtime verification + regression cleanup
 
-Each stage gets focused tests before production changes and should be committed only when its local gate is green.
+Each stage gets a failing contract first, then implementation, then a focused verification gate before commit.
 
 ## Completion definition
 
 This work is complete only when:
 
-- every currently parsed material scalar has a documented visible renderer role or a documented physically irrelevant fallback role
-- every currently parsed texture slot is sampled, preprocessed, or intentionally converted into another supported representation
-- TGA textures are decoded without external libraries
-- Sponza renders textured and materially differentiated
-- opacity masks work
-- genuine transparency/transmission work
-- advanced specular/IOR/clearcoat/sheen/anisotropy are wired into shading
-- real displacement is processed for static imported meshes
-- imported triangles participate in GPU shadows and Lumen/reflection tracing
-- procedural RendererCheck behavior remains intact
-- strict compile/tests pass for all touched code
-- final full `c build` and interactive visual run are executed in an environment containing the complete lwcgl/CrapGame runtime
+- every currently parsed material scalar has a defined renderer role;
+- every currently parsed texture slot is sampled or intentionally preprocessed;
+- native TGA decode requires no external library;
+- Sponza renders textured and materially differentiated;
+- opacity masks work;
+- fractional transparency/transmission work;
+- IOR/specular/metallic/roughness/clearcoat/sheen/anisotropy affect shading;
+- genuine displacement affects static imported geometry;
+- imported triangles participate in GPU shadows/Lumen/reflection tracing;
+- procedural RendererCheck behavior remains intact;
+- strict compile/tests pass for touched code;
+- final full `c build` and interactive visual run are executed in a complete CrapGame/lwcgl environment.
