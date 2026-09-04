@@ -59,7 +59,8 @@ bool equalMaterial (const Ecs::MaterialComponent& a, const Ecs::MaterialComponen
         && a.sheen == b.sheen
         && a.anisotropy == b.anisotropy
         && a.illumination_model == b.illumination_model
-        && a.model_material == b.model_material;
+        && a.model_material == b.model_material
+        && a.renderer_material == b.renderer_material;
 }
 
 bool equalLight (const Ecs::LightComponent& a, const Ecs::LightComponent& b)
