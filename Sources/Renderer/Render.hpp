@@ -23,7 +23,9 @@
 #include "Renderer/Lumen/ScreenProbe.hpp"
 #include "Renderer/Lumen/SurfaceCache.hpp"
 #include "Renderer/Lumen/Tracer.hpp"
+#include "Renderer/Material/Material.hpp"
 #include "Renderer/Math/Math.hpp"
+#include "Renderer/Mesh/Mesh.hpp"
 #include "Renderer/PerformanceMetrics.hpp"
 #include "Renderer/Shadows/Shadows.hpp"
 #include "Renderer/Temporal/Temporal.hpp"
@@ -33,6 +35,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -151,6 +154,29 @@ public:
             gpu_world_revision_valid_ = true;
         }
 
+        Gpu::applyRevisionChanges(
+                &gpu_revisions_,
+                changes.geometry_changed,
+                changes.material_changed,
+                changes.lighting_changed,
+                changes.camera_changed,
+                Mesh::loadedMeshRevision(),
+                Material::revision()
+            );
+
+        gpu_revisions_.resolution =
+            (static_cast<std::uint64_t>(
+                    static_cast<std::uint32_t>(width_)
+                ) << 32u)
+            | static_cast<std::uint64_t>(
+                    static_cast<std::uint32_t>(height_)
+                );
+
+        if (gpu_frame_index_ == 0u)
+        {
+            gpu_converged_frame_cache_.invalidate();
+        }
+
         const bool refresh_camera = Gpu::cameraDataNeedsRefresh(
                 gpu_camera_data_valid_ && gpu_camera_matrices_valid_,
                 changes.camera_changed
@@ -187,12 +213,45 @@ public:
             gpu_camera_matrices_valid_ = true;
         }
 
-        renderGpuFrame(
+        if (gpu_converged_frame_cache_.frozen(gpu_revisions_))
+        {
+            std::string& error = gpu_error_scratch_;
+            error.clear();
+
+            if (!presenter_.presentTexture(gpu_lumen_.finalTexture(), &error))
+            {
+                if (!gpu_error_reported_)
+                {
+                    std::fprintf(
+                            stderr,
+                            "GPU cached presentation failed: %s\n",
+                            error.c_str()
+                        );
+                    gpu_error_reported_ = true;
+                }
+                return;
+            }
+
+            ++gpu_frame_index_;
+            gpu_error_reported_ = false;
+            return;
+        }
+
+        const std::uint64_t lumen_sample_before = gpu_lumen_sample_index_;
+
+        if (renderGpuFrame(
                 world,
                 gpu_camera_position_,
                 changes,
                 frame_time_ns
-            );
+            )
+                && gpu_lumen_sample_index_ != lumen_sample_before)
+        {
+            gpu_converged_frame_cache_.recordSample(
+                    gpu_revisions_,
+                    true
+                );
+        }
     }
 
     void shutdown ();
