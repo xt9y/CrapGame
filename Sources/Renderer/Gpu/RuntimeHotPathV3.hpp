@@ -1,6 +1,8 @@
 #ifndef CRAPGAME_RENDERER_GPU_RUNTIME_HOT_PATH_V3_HPP
 #define CRAPGAME_RENDERER_GPU_RUNTIME_HOT_PATH_V3_HPP
 
+#include "Renderer/Gpu/SceneSimulationPolicy.hpp"
+
 #include <cstdint>
 
 namespace Renderer
@@ -18,7 +20,7 @@ inline std::uint32_t simulationTicksDue (
                 std::uint64_t *phase
         )
 {
-    if (!phase)
+    if (!phase || !sceneSimulationEnabled())
     {
         return 0u;
     }

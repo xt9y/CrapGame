@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_TEST_TESTSCENE_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/Gpu/SceneSimulationPolicy.hpp"
 
 #include <cstdint>
 
@@ -12,6 +13,17 @@ namespace Test
 
 struct SceneState
 {
+    SceneState()
+    {
+        Gpu::setSceneSimulationEnabled(false);
+    }
+
+    void setDynamic(bool value)
+    {
+        dynamic=value;
+        Gpu::setSceneSimulationEnabled(value);
+    }
+
     Ecs::Entity cube      = Ecs::INVALID_ENTITY,
                 ground    = Ecs::INVALID_ENTITY,
                 light     = Ecs::INVALID_ENTITY,
@@ -19,6 +31,7 @@ struct SceneState
 
     const char *test_name = nullptr;
     bool renderercheck = false;
+    bool dynamic = false;
 };
 
 bool knownTest (const char *test_name);
