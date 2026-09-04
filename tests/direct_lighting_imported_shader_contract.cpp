@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <exception>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -14,7 +15,7 @@ static void require(bool condition,const char *message)
     }
 }
 
-int main()
+int main(int argc,char **argv)
 {
     try
     {
@@ -23,8 +24,33 @@ int main()
                 "front-to-back AABB entry helper missing");
         require(source.find("leftEntry<=rightEntry")!=std::string::npos,
                 "front-to-back BVH child ordering missing");
-        require(source.find("bool traceImportedShadowInstanceAny(")!=std::string::npos,
-                "compact imported shadow traversal missing");
+
+        const std::string shadow_token="bool traceImportedShadowInstanceAny(";
+        const std::string shadow_call=
+            "traceImportedShadowInstanceAny(ii,ro,rd,maximumDistance)";
+        const std::size_t declaration=source.find(shadow_token);
+        const std::size_t call=source.find(shadow_call);
+        const std::size_t definition=declaration==std::string::npos
+            ?std::string::npos:source.find(shadow_token,declaration+shadow_token.size());
+        require(declaration!=std::string::npos,
+                "compact imported shadow traversal declaration missing");
+        require(call!=std::string::npos,
+                "compact imported shadow traversal call missing");
+        require(definition!=std::string::npos,
+                "compact imported shadow traversal definition missing");
+        require(declaration<call&&call<definition,
+                "compact imported shadow traversal must be declared before its caller");
+        const std::size_t declaration_end=source.find(';',declaration);
+        require(declaration_end!=std::string::npos&&declaration_end<call,
+                "compact imported shadow traversal forward declaration is malformed");
+
+        if(argc>1)
+        {
+            std::ofstream out(argv[1],std::ios::binary);
+            require(out.is_open(),"failed to open generated shader output");
+            out<<source;
+            require(out.good(),"failed to write generated shader output");
+        }
     }
     catch(const std::exception& exception)
     {
