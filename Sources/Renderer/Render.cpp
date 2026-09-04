@@ -301,6 +301,11 @@ bool Rendering::renderGpuFrame (
             direct_dirty
         );
 
+    const bool composite_due = Gpu::lumenCompositeRequired(
+            direct_dirty,
+            lumen_due
+        );
+
     const bool profile_frame =
         Gpu::profilerCallChainRequired(gpu_profiler_enabled_);
     std::string& error = gpu_error_scratch_;
@@ -442,7 +447,11 @@ bool Rendering::renderGpuFrame (
         }
 
         ++gpu_lumen_sample_index_;
+        gpu_lumen_schedule_.markUpdated(frame_time_ns);
+    }
 
+    if (composite_due)
+    {
         if (profile_frame)
         {
             gpu_profiler_.begin(Gpu::Profiler::Pass::LumenComposite);
@@ -470,14 +479,12 @@ bool Rendering::renderGpuFrame (
             }
             return false;
         }
-
-        gpu_lumen_schedule_.markUpdated(frame_time_ns);
     }
 
     if (Gpu::gpuWorkInvalidatesPresenter(
             geometry_dirty,
             direct_dirty,
-            lumen_due))
+            composite_due))
     {
         presenter_.invalidateGpuState();
     }

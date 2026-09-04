@@ -6,6 +6,14 @@ namespace Renderer
 namespace Gpu
 {
 
+inline bool lumenCompositeRequired (
+            bool direct_changed,
+            bool lumen_trace_ran
+    )
+{
+    return direct_changed || lumen_trace_ran;
+}
+
 inline bool gpuWorkInvalidatesPresenter (
             bool geometry_ran,
             bool direct_ran,
