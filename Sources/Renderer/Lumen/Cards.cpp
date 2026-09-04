@@ -55,14 +55,9 @@ void CardScene::build (const Ecs::World& world)
 
     for (const Ecs::Entity entity : world.entities()) 
     {
-        const Ecs::TransformComponent *transform =
-            world.getTransform(entity);
-
-        const Ecs::MeshComponent *mesh =
-            world.getMesh(entity);
-
-        const Ecs::RenderableComponent *renderable =
-            world.getRenderable(entity);
+        const Ecs::TransformComponent *transform = world.getTransform(entity);
+        const Ecs::MeshComponent *mesh = world.getMesh(entity);
+        const Ecs::RenderableComponent *renderable = world.getRenderable(entity);
 
         if (!transform
                 || !mesh
@@ -72,8 +67,7 @@ void CardScene::build (const Ecs::World& world)
             continue;
         }
 
-        const Mesh::Bounds bounds =
-            Mesh::meshForType(mesh->mesh).bounds;
+        const Mesh::Bounds bounds = Mesh::meshForComponent(*mesh).bounds;
 
         const Math::Vec3 center = {
             (bounds.minimum.x + bounds.maximum.x) * 0.5f,
@@ -87,12 +81,11 @@ void CardScene::build (const Ecs::World& world)
             (bounds.maximum.z - bounds.minimum.z) * 0.5f,
         };
 
-        const Math::Mat4 model =
-            Math::transform(
-                    toVec3(transform->position),
-                    toVec3(transform->rotation),
-                    toVec3(transform->scale)
-                );
+        const Math::Mat4 model = Math::transform(
+                toVec3(transform->position),
+                toVec3(transform->rotation),
+                toVec3(transform->scale)
+            );
 
         const float scale_x = std::fabs(transform->scale.x),
                     scale_y = std::fabs(transform->scale.y),
