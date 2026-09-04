@@ -60,8 +60,40 @@ public:
                 const Math::Mat4& projection,
                 const Math::Vec3& camera_position,
                 std::uint64_t frame_index,
+                bool secondary_refresh_due,
                 std::string *error = nullptr
         );
+
+    bool traceShared (
+                const GBufferGpu& gbuffer,
+                const DirectLightingGpu& direct,
+                const TriangleScene& triangles,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Math::Vec3& camera_position,
+                std::uint64_t frame_index,
+                std::string *error = nullptr
+        )
+    {
+        return traceShared(gbuffer,direct,triangles,view,projection,
+                           camera_position,frame_index,true,error);
+    }
+
+    bool traceShared (
+                const GBufferGpu& gbuffer,
+                const DirectLightingGpu& direct,
+                const Math::Mat4& view,
+                const Math::Mat4& projection,
+                const Math::Vec3& camera_position,
+                std::uint64_t frame_index,
+                bool secondary_refresh_due,
+                std::string *error = nullptr
+        )
+    {
+        return traceShared(gbuffer,direct,direct.triangleScene(),view,
+                           projection,camera_position,frame_index,
+                           secondary_refresh_due,error);
+    }
 
     bool traceShared (
                 const GBufferGpu& gbuffer,
@@ -73,8 +105,8 @@ public:
                 std::string *error = nullptr
         )
     {
-        return traceShared(gbuffer, direct, direct.triangleScene(), view,
-                           projection, camera_position, frame_index, error);
+        return traceShared(gbuffer,direct,direct.triangleScene(),view,
+                           projection,camera_position,frame_index,true,error);
     }
 
     bool composite (
