@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_DIRECTLIGHTINGIMPORTEDSHADER_HPP
 
 #include "Renderer/Gpu/DirectLightingShader.hpp"
+#include "Renderer/Gpu/ShadowTriangleShader.hpp"
 #include "Renderer/Gpu/StaticShadowShader.hpp"
 #include "Renderer/Gpu/TriangleTraceShader.hpp"
 
@@ -28,7 +29,24 @@ inline std::string directLightingImportedShader()
     if (at == std::string::npos)
         throw std::runtime_error("direct-light shader insertion point missing");
     source.insert(at, std::string(IMPORTED_TRIANGLE_TRACE_GLSL)
+                    + IMPORTED_SHADOW_TRIANGLE_GLSL
                     + STATIC_SHADOW_DIRECT_GLSL);
+
+    const std::string opaque_start=
+        "int material=int(importedInstances[ii].materialHandle);";
+    const std::string opaque_end=
+        "if(opaque&&traceImportedInstanceAny(ii,ro,rd,maximumDistance))return true;";
+    const std::size_t opaque_at=source.find(opaque_start);
+    const std::size_t opaque_end_at=source.find(opaque_end,opaque_at);
+    if(opaque_at==std::string::npos||opaque_end_at==std::string::npos)
+        throw std::runtime_error("direct-light opaque shadow patch point missing");
+    const std::string compact_opaque=
+        "ImportedInstance shadowInstance=importedInstances[ii];"
+        "bool opaque=(shadowInstance.flags&3u)==0u;"
+        "if(opaque&&traceImportedShadowInstanceAny(ii,ro,rd,maximumDistance))return true;";
+    source.replace(opaque_at,
+                   opaque_end_at+opaque_end.size()-opaque_at,
+                   compact_opaque);
 
     const std::string old_shadow =
         "if(light.coneShadow.z>0.5&&shadowed(position,normal,ld,maxD))continue;";

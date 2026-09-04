@@ -7,6 +7,7 @@
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/StaticDiffuseLightingGpu.hpp"
 #include "Renderer/Gpu/StaticShadowCacheGpu.hpp"
+#include "Renderer/Gpu/TraceGeometryGpu.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
 #include "Renderer/Gpu/ViewSpecularGpu.hpp"
 #include "Renderer/Math/Math.hpp"
@@ -64,6 +65,7 @@ public:
     const StaticShadowCacheGpu& staticShadowCache() const { return static_shadow_cache_; }
     const StaticDiffuseLightingGpu& staticDiffuse() const { return static_diffuse_; }
     const ViewSpecularGpu& viewSpecular() const { return view_specular_; }
+    const TraceGeometryGpu& traceGeometry() const { return trace_geometry_; }
 
 private:
     static constexpr std::size_t BVH_THRESHOLD=8u;
@@ -94,6 +96,7 @@ private:
     std::vector<BvhBoundsInput> primitive_bounds_;
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
     TriangleScene triangle_scene_;
+    TraceGeometryGpu trace_geometry_;
     StaticShadowCacheGpu static_shadow_cache_;
     StaticDiffuseLightingGpu static_diffuse_;
     ViewSpecularGpu view_specular_;

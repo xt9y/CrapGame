@@ -58,12 +58,17 @@ bool DirectLightingGpu::bindImportedScene(const TriangleScene& triangles,
         if (error) *error = "imported triangle scene is not ready";
         return false;
     }
+    if (!trace_geometry_.ensure(triangles.triangleBuffer(),triangles.triangleCount(),
+                                Mesh::loadedMeshRevision(),error))
+        return false;
+
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0,triangles.triangleBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1,triangles.meshBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,2,triangles.instanceBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,3,triangles.blasNodeBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,4,triangles.tlasNodeBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,7,triangles.traceRecordBuffer());
+    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,8,trace_geometry_.shadowTriangleBuffer());
     GLModern.glActiveTexture(GL_TEXTURE0+4);
     glBindTexture(GL_TEXTURE_2D_ARRAY,triangles.colorAtlas());
     GLModern.glActiveTexture(GL_TEXTURE0+5);
