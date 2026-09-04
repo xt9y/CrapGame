@@ -148,6 +148,10 @@ vec3 importedFallbackRadiance(){
         "reflection=source*weight*(1.0-roughness*0.82);",
         "float materialReflection=clamp(max(advanced.w,metallic),0.0,1.0);float clearcoat=clamp(advanced.x,0.0,1.0),clearcoatRoughness=clamp(advanced.y,0.04,1.0);reflection=source*weight*(0.18+0.82*materialReflection)*(1.0-roughness*0.75)+source*vec3(0.04)*clearcoat*(1.0-clearcoatRoughness*0.70);");
 
+    replaceLumenRequired(&source,
+        "if(uHistoryValid!=0){vec4 pp=texelFetch(sPreviousPosition,tp,0);if(pp.w>0&&distance(pp.xyz,position)<0.18){indirect=mix(indirect,texelFetch(sPreviousIndirect,tp,0).xyz,0.84);reflection=mix(reflection,texelFetch(sPreviousReflection,tp,0).xyz,0.72);}}",
+        "if(uHistoryValid!=0){ivec2 historyDimensions=textureSize(sPreviousPosition,0),bestHistoryPixel=tp;float bestHistoryDistance=1e20;for(int oy=-1;oy<=1;++oy){for(int ox=-1;ox<=1;++ox){ivec2 historyPixel=clamp(tp+ivec2(ox,oy),ivec2(0),historyDimensions-ivec2(1));vec4 previousPosition=texelFetch(sPreviousPosition,historyPixel,0);if(previousPosition.w<=0.0)continue;float historyDistance=distance(previousPosition.xyz,position);if(historyDistance<bestHistoryDistance){bestHistoryDistance=historyDistance;bestHistoryPixel=historyPixel;}}}if(bestHistoryDistance<0.22){indirect=mix(indirect,texelFetch(sPreviousIndirect,bestHistoryPixel,0).xyz,0.86);reflection=mix(reflection,texelFetch(sPreviousReflection,bestHistoryPixel,0).xyz,0.74);}}");
+
     return source;
 }
 
