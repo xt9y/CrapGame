@@ -30,6 +30,15 @@ inline std::string directLightingImportedShader()
     if (shadow_at == std::string::npos)
         throw std::runtime_error("direct-light shadow call missing");
     source.replace(shadow_at, old_shadow.size(), new_shadow);
+
+    const std::string old_material =
+        "vec3 position=pd.xyz,normal=normalize(nr.xyz),albedo=am.xyz,viewDirection=normalize(uCameraPosition-position),emissive=eo.xyz;float roughness=nr.w,metallic=am.w;vec3 direct=emissive;";
+    const std::string new_material =
+        "vec3 position=pd.xyz,normal=normalize(nr.xyz),albedo=am.xyz,viewDirection=normalize(uCameraPosition-position),emissive=eo.xyz,ambient=texelFetch(sAmbientTransmission,pixel,0).rgb;float roughness=nr.w,metallic=am.w;vec3 direct=emissive+ambient*albedo*0.025;";
+    const std::size_t material_at = source.find(old_material);
+    if (material_at == std::string::npos)
+        throw std::runtime_error("direct-light ambient material patch point missing");
+    source.replace(material_at, old_material.size(), new_material);
     return source;
 }
 

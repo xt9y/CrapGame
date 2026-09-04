@@ -24,6 +24,16 @@ bool hasPath(const TextureRef& ref)
     return !ref.path.empty();
 }
 
+bool nearZero(float value)
+{
+    return std::fabs(value) <= 0.0001f;
+}
+
+bool black(const Renderer::Math::Vec3& value)
+{
+    return nearZero(value.x) && nearZero(value.y) && nearZero(value.z);
+}
+
 bool isTransmissionSemantic(const MaterialData& material)
 {
     return material.transmission > 0.0001f
@@ -85,7 +95,7 @@ float selectedChannel(const TextureAsset& asset, std::size_t pixel, char channel
     if (key == 'g') component = 1u;
     else if (key == 'b') component = 2u;
     else if (key == 'a') component = 3u;
-    else if (key == 'm')
+    else if (key == 'm' || key == 'l')
     {
         const unsigned value = static_cast<unsigned>(asset.image.rgba[base])
             + static_cast<unsigned>(asset.image.rgba[base + 1u])
@@ -102,20 +112,21 @@ float selectedChannel(const TextureAsset& asset, std::size_t pixel, char channel
 bool opacityIsBinary(const Renderer::Material::TextureBinding& binding)
 {
     const TextureAsset *asset = texture(binding.texture);
-    if (!asset || asset->image.rgba.empty())
-    {
-        return true;
-    }
+    if (!asset || asset->image.rgba.empty()) return true;
     const std::size_t pixels = asset->image.rgba.size() / 4u;
     for (std::size_t i = 0; i < pixels; ++i)
     {
         const float value = selectedChannel(*asset, i, binding.channel);
-        if (value > 5.0f / 255.0f && value < 250.0f / 255.0f)
-        {
-            return false;
-        }
+        if (value > 5.0f / 255.0f && value < 250.0f / 255.0f) return false;
     }
     return true;
+}
+
+void warnDerivedFailure(std::vector<std::string> *warnings,
+                        const std::string& error)
+{
+    if (warnings && !error.empty())
+        warnings->push_back("map_Ns roughness conversion failed: " + error);
 }
 
 } // namespace
@@ -134,10 +145,7 @@ bool detectLegacyZeroDIsOpaque(const std::vector<MaterialData>& materials)
         if (alpha_map)
         {
             ++alpha_materials;
-            if (material.opacity < 0.999f)
-            {
-                alpha_scalar_convention = false;
-            }
+            if (material.opacity < 0.999f) alpha_scalar_convention = false;
             continue;
         }
         if (isTransmissionSemantic(material)
@@ -146,15 +154,9 @@ bool detectLegacyZeroDIsOpaque(const std::vector<MaterialData>& materials)
             competing_transmission = true;
             continue;
         }
-        if (!hasPath(material.base_color_texture))
-        {
-            continue;
-        }
+        if (!hasPath(material.base_color_texture)) continue;
         ++ordinary_textured;
-        if (material.opacity <= 0.0001f)
-        {
-            ++ordinary_zero;
-        }
+        if (material.opacity <= 0.0001f) ++ordinary_zero;
     }
 
     return ordinary_textured > 0u
@@ -178,22 +180,48 @@ Renderer::Material::Resource resolveMaterial(
     out.specular = material.specular;
     out.emissive = material.emissive;
     out.transmission_color = material.transmission_color;
-    out.metallic = clamp01(material.metallic);
+
+    /* Texture-driven extension properties must remain active when their MTL
+     * scalar is omitted. The parser's legacy scalar defaults are zero for
+     * these extensions, so the presence of a map supplies the neutral base. */
+    out.metallic = clamp01(
+        hasPath(material.metallic_texture) && nearZero(material.metallic)
+            ? 1.0f : material.metallic);
     out.shininess = std::max(0.0f, material.shininess);
     out.roughness = clamp01(material.roughness);
-    if (out.shininess > 0.0f && material.roughness >= 0.999f)
+    if (!hasPath(material.roughness_texture)
+            && !hasPath(material.shininess_texture)
+            && out.shininess > 0.0f && material.roughness >= 0.999f)
     {
         out.roughness = Renderer::Material::nsToRoughness(out.shininess);
     }
     out.specular_strength = std::max(0.0f, material.specular_strength);
     out.ior = std::max(1.0001f, material.ior);
-    out.transmission = clamp01(material.transmission);
-    out.reflectivity = clamp01(material.reflectivity);
-    out.clearcoat = clamp01(material.clearcoat);
-    out.clearcoat_roughness = clamp01(material.clearcoat_roughness);
-    out.sheen = clamp01(material.sheen);
-    out.anisotropy = std::max(-1.0f, std::min(1.0f, material.anisotropy));
+    out.transmission = clamp01(
+        hasPath(material.transmission_texture) && nearZero(material.transmission)
+            ? 1.0f : material.transmission);
+    out.reflectivity = clamp01(
+        hasPath(material.reflection_texture) && nearZero(material.reflectivity)
+            ? 1.0f : material.reflectivity);
+    out.clearcoat = clamp01(
+        hasPath(material.clearcoat_texture) && nearZero(material.clearcoat)
+            ? 1.0f : material.clearcoat);
+    out.clearcoat_roughness = clamp01(
+        hasPath(material.clearcoat_roughness_texture)
+                && nearZero(material.clearcoat_roughness)
+            ? 1.0f : material.clearcoat_roughness);
+    out.sheen = clamp01(
+        hasPath(material.sheen_texture) && nearZero(material.sheen)
+            ? 1.0f : material.sheen);
+    out.anisotropy = std::max(-0.95f, std::min(0.95f,
+        hasPath(material.anisotropy_texture) && nearZero(material.anisotropy)
+            ? 0.95f : material.anisotropy));
     out.illumination_model = material.illumination_model;
+
+    if (hasPath(material.emissive_texture) && black(out.emissive))
+        out.emissive = {1.0f, 1.0f, 1.0f};
+    if (hasPath(material.specular_texture) && black(out.specular))
+        out.specular = {1.0f, 1.0f, 1.0f};
 
     float opacity = clamp01(material.opacity);
     if (legacy_zero_d_is_opaque
@@ -227,10 +255,33 @@ Renderer::Material::Resource resolveMaterial(
     for (std::size_t i = 0; i < Renderer::Material::slotIndex(Slot::Count); ++i)
     {
         out.textures[i] = bindingFor(
-            *refs[i],
-            static_cast<Slot>(i),
-            warnings
-        );
+            *refs[i], static_cast<Slot>(i), warnings);
+    }
+
+    /* map_Ns is intentionally converted into a cached linear roughness map.
+     * That makes it visible in GBuffer, transparency and ray-material paths
+     * without requiring a seventeenth live material sampler. */
+    const std::size_t roughness_index = Renderer::Material::slotIndex(Slot::Roughness);
+    const std::size_t shininess_index = Renderer::Material::slotIndex(Slot::Shininess);
+    if (out.textures[roughness_index].texture == INVALID_TEXTURE
+            && out.textures[shininess_index].texture != INVALID_TEXTURE)
+    {
+        Renderer::Material::TextureBinding derived = out.textures[shininess_index];
+        std::string conversion_error;
+        derived.texture = shininessToRoughnessTexture(
+            derived.texture, derived.channel, &conversion_error);
+        if (derived.texture != INVALID_TEXTURE)
+        {
+            derived.channel = 'r';
+            derived.color_space = Renderer::Material::ColorSpace::Linear;
+            out.textures[roughness_index] = derived;
+            out.textures[shininess_index] = Renderer::Material::TextureBinding{};
+            out.roughness = 1.0f;
+        }
+        else
+        {
+            warnDerivedFailure(warnings, conversion_error);
+        }
     }
 
     if (!material.displacement_texture.path.empty())
@@ -241,7 +292,8 @@ Renderer::Material::Resource resolveMaterial(
         {
             const std::size_t normal = Renderer::Material::slotIndex(Slot::Normal);
             const std::size_t displacement = Renderer::Material::slotIndex(Slot::Displacement);
-            if (out.textures[normal].texture == INVALID_TEXTURE) out.textures[normal] = out.textures[displacement];
+            if (out.textures[normal].texture == INVALID_TEXTURE)
+                out.textures[normal] = out.textures[displacement];
             out.textures[displacement] = Renderer::Material::TextureBinding{};
         }
     }

@@ -23,6 +23,15 @@ TextureHandle loadTexture(
     std::string *error = nullptr
 );
 
+/* map_Ns is intentionally preprocessed rather than consuming another live
+ * sampler. Normalized map values are interpreted over the legacy MTL Ns
+ * interval [0,1000], converted with sqrt(2/(Ns+2)), and cached as RGBA8. */
+TextureHandle shininessToRoughnessTexture(
+    TextureHandle shininess,
+    char channel = '\0',
+    std::string *error = nullptr
+);
+
 const TextureAsset *texture(TextureHandle handle);
 void clearTextureCache();
 
