@@ -79,6 +79,7 @@ struct MaterialComponent
 
     int illumination_model = 0;
     std::uint32_t model_material = INVALID_ASSET_HANDLE;
+    std::uint32_t renderer_material = INVALID_ASSET_HANDLE;
 };
 
 enum class LightType 

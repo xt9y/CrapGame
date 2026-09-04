@@ -4,6 +4,9 @@
 #include "Renderer/Math/Math.hpp"
 
 #include <string>
+#include <vector>
+
+namespace Renderer { namespace Material { struct Resource; } }
 
 namespace Models
 {
@@ -62,6 +65,13 @@ struct MaterialData
     TextureRef sheen_texture;
     TextureRef anisotropy_texture;
 };
+
+bool detectLegacyZeroDIsOpaque(const std::vector<MaterialData>& materials);
+Renderer::Material::Resource resolveMaterial(
+    const MaterialData& material,
+    bool legacy_zero_d_is_opaque,
+    std::vector<std::string> *warnings = nullptr
+);
 
 } // namespace Models
 

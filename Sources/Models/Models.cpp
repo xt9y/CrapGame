@@ -1,6 +1,9 @@
 #include "Models/Models.hpp"
 
+#include "Models/Material.hpp"
 #include "Models/Obj.hpp"
+#include "Models/Texture.hpp"
+#include "Renderer/Material/Material.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 
 #include <deque>
@@ -17,6 +20,8 @@ struct Part
 {
     std::uint32_t mesh = Ecs::INVALID_ASSET_HANDLE;
     std::uint32_t material = Ecs::INVALID_ASSET_HANDLE;
+    Renderer::Material::MaterialHandle renderer_material =
+        Renderer::Material::INVALID_MATERIAL;
 };
 
 struct Model
@@ -59,7 +64,10 @@ Ecs::Vec3 toVec3 (const Renderer::Math::Vec3& value)
     return {value.x, value.y, value.z};
 }
 
-Ecs::MaterialComponent materialComponent (std::uint32_t handle)
+Ecs::MaterialComponent materialComponent (
+                std::uint32_t handle,
+                Renderer::Material::MaterialHandle renderer_material
+        )
 {
     Ecs::MaterialComponent result = {
         {1.0f, 1.0f, 1.0f},
@@ -68,6 +76,7 @@ Ecs::MaterialComponent materialComponent (std::uint32_t handle)
         1.0f,
         1.0f,
     };
+    result.renderer_material = renderer_material;
 
     if (handle == Ecs::INVALID_ASSET_HANDLE
             || handle >= materials().size())
@@ -124,11 +133,25 @@ ModelHandle load (const std::string& path, std::string *error)
         return INVALID_MODEL;
     }
 
+    const bool legacy_zero_d_is_opaque =
+        detectLegacyZeroDIsOpaque(document.materials);
+
     const std::uint32_t material_base =
         static_cast<std::uint32_t>(materials().size());
 
+    std::vector<Renderer::Material::MaterialHandle> resolved_materials;
+    resolved_materials.reserve(document.materials.size());
+
     for (MaterialData& material : document.materials)
     {
+        Renderer::Material::Resource resource = resolveMaterial(
+                material,
+                legacy_zero_d_is_opaque,
+                &document.warnings
+            );
+        resolved_materials.push_back(
+            Renderer::Material::registerMaterial(std::move(resource))
+        );
         materials().push_back(std::move(material));
     }
 
@@ -141,12 +164,20 @@ ModelHandle load (const std::string& path, std::string *error)
         const std::uint32_t mesh =
             Renderer::Mesh::registerLoadedMesh(std::move(submesh.mesh));
 
-        const std::uint32_t material =
-            submesh.material_index == UINT32_MAX
-            ? Ecs::INVALID_ASSET_HANDLE
-            : material_base + submesh.material_index;
+        const bool has_material =
+            submesh.material_index != UINT32_MAX
+            && submesh.material_index < resolved_materials.size();
 
-        model.parts.push_back({mesh, material});
+        const std::uint32_t material = has_material
+            ? material_base + submesh.material_index
+            : Ecs::INVALID_ASSET_HANDLE;
+
+        const Renderer::Material::MaterialHandle renderer_material =
+            has_material
+            ? resolved_materials[submesh.material_index]
+            : Renderer::Material::INVALID_MATERIAL;
+
+        model.parts.push_back({mesh, material, renderer_material});
     }
 
     const ModelHandle handle =
@@ -189,7 +220,10 @@ std::vector<Ecs::Entity> spawn (
         world.addTransform(entity, options.transform);
         world.addMesh(entity, {Ecs::MeshType::Cube, part.mesh});
         world.addRenderable(entity, {options.visible});
-        world.addMaterial(entity, materialComponent(part.material));
+        world.addMaterial(
+            entity,
+            materialComponent(part.material, part.renderer_material)
+        );
         entities.push_back(entity);
     }
 
@@ -218,6 +252,8 @@ void clearCache ()
     cache().clear();
     models().clear();
     materials().clear();
+    Renderer::Material::clear();
+    clearTextureCache();
     Renderer::Mesh::clearLoadedMeshes();
 }
 
