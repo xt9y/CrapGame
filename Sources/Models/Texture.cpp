@@ -76,6 +76,22 @@ TextureHandle loadTexture(const std::string& path, std::string *error)
     return handle;
 }
 
+bool normalMapUsesNegativeY(const std::string& path)
+{
+    std::string stem = std::filesystem::path(path).stem().string();
+    std::transform(
+        stem.begin(), stem.end(), stem.begin(),
+        [](unsigned char c)
+        {
+            return static_cast<char>(std::tolower(c));
+        });
+
+    return (stem.size() >= 4u
+            && stem.compare(stem.size() - 4u, 4u, "_ddn") == 0)
+        || (stem.size() >= 5u
+            && stem.compare(stem.size() - 5u, 5u, "_ddna") == 0);
+}
+
 TextureHandle shininessToRoughnessTexture(TextureHandle shininess,
                                            char channel,
                                            std::string *error)
