@@ -4,9 +4,11 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/CpuReferencePolicy.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
+#include "Renderer/Gpu/CacheStats.hpp"
 #include "Renderer/Gpu/ConvergedFrameCache.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/FrameHotPath.hpp"
+#include "Renderer/Gpu/FrameWorkPolicy.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/LumenGpu.hpp"
 #include "Renderer/Gpu/LumenSchedule.hpp"
@@ -247,8 +249,27 @@ public:
         {
             std::string& error = gpu_error_scratch_;
             error.clear();
+            const bool profile_frame =
+                Gpu::profilerCallChainRequired(gpu_profiler_enabled_);
 
-            if (!presenter_.presentTexture(gpu_lumen_.finalTexture(), &error))
+            if (profile_frame)
+            {
+                gpu_profiler_.beginFrame(gpu_frame_index_);
+                gpu_profiler_.begin(Gpu::Profiler::Pass::Present);
+            }
+
+            const bool present_ok = presenter_.presentTexture(
+                    gpu_lumen_.finalTexture(), &error);
+
+            if (profile_frame)
+            {
+                gpu_profiler_.end(Gpu::Profiler::Pass::Present);
+                gpu_profiler_.endFrame();
+                gpu_profiler_.setCacheStats(gpu_cache_stats_);
+                gpu_profiler_.printIfDue(gpu_frame_index_);
+            }
+
+            if (!present_ok)
             {
                 if (!gpu_error_reported_)
                 {
@@ -345,6 +366,8 @@ private:
     Gpu::LumenSchedule gpu_lumen_schedule_;
     Gpu::ConvergedFrameCache gpu_converged_frame_cache_;
     Gpu::RevisionState gpu_revisions_ = {};
+    Gpu::RevisionState gpu_previous_revisions_ = {};
+    Gpu::CacheStats gpu_cache_stats_ = {};
     Gpu::ScenePrewarm gpu_scene_prewarm_;
     Gpu::Presenter presenter_;
     Gpu::Profiler gpu_profiler_;
@@ -395,9 +418,11 @@ private:
     bool gpu_camera_data_valid_ = false;
     bool gpu_profiler_enabled_ = false;
     bool gpu_world_revision_valid_ = false;
+    bool gpu_previous_revisions_valid_ = false;
     std::uint64_t gpu_world_revision_ = 0u;
     std::uint64_t gpu_frame_index_ = 0;
     std::uint64_t gpu_lumen_sample_index_ = 0;
+    std::uint64_t gpu_secondary_refresh_ns_ = 0u;
 
     int width_  = 1,
         height_ = 1;
