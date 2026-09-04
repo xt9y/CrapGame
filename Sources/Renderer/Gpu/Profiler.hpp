@@ -1,6 +1,7 @@
 #ifndef CRAPGAME_RENDERER_GPU_PROFILER_HPP
 #define CRAPGAME_RENDERER_GPU_PROFILER_HPP
 
+#include "Renderer/Gpu/CacheStats.hpp"
 #include "Renderer/PerformanceMetrics.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -21,6 +22,11 @@ public:
     enum class Pass : std::size_t
     {
         Geometry = 0,
+        StaticShadow,
+        StaticDiffuse,
+        ViewSpecular,
+        Reprojection,
+        DirtyTiles,
         DirectLighting,
         LumenTrace,
         LumenComposite,
@@ -36,8 +42,8 @@ public:
     void begin (Pass pass);
     void end (Pass pass);
     void endFrame ();
-
     void printIfDue (std::uint64_t frame_index);
+    void setCacheStats (const CacheStats& stats) { cache_stats_ = stats; }
 
     double milliseconds (Pass pass) const;
     double totalMilliseconds () const;
@@ -61,19 +67,24 @@ private:
     void consumeSlot (Slot& slot, bool block);
     bool slotReady (const Slot& slot) const;
     bool performanceSampleAllowed (const Slot& slot) const;
+    bool hasSamples () const;
 
     std::array<Slot, SLOT_COUNT> slots_ = {};
     std::array<double, PASS_COUNT> milliseconds_ = {};
     std::array<std::uint32_t, PASS_COUNT> sample_counts_ = {};
 
     PerformanceMetrics::Writer performance_writer_;
+    CacheStats cache_stats_ = {};
+    CacheStats printed_cache_stats_ = {};
     std::uint64_t performance_start_ns_ = 0;
+    std::uint64_t last_print_ns_ = 0;
     double performance_warmup_ms_ = 0.0;
     double performance_duration_ms_ = 0.0;
     std::uint32_t performance_samples_since_flush_ = 0;
 
     int current_slot_ = -1;
     bool performance_mode_ = false;
+    bool interactive_profile_mode_ = false;
     bool performance_writer_ready_ = false;
     bool initialized_ = false;
 };

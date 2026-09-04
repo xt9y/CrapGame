@@ -13,9 +13,7 @@ namespace Gpu
 namespace
 {
 
-constexpr std::uint64_t SAMPLE_INTERVAL = 64u;
-constexpr std::uint64_t PRINT_CHECK_INTERVAL = 1024u;
-constexpr std::uint64_t PRINT_INTERVAL_NS = 2000000000ull;
+constexpr std::uint64_t PRINT_INTERVAL_NS = 1000000000ull;
 constexpr std::uint32_t WARMUP_SAMPLES = 1u;
 constexpr std::uint32_t PERF_FLUSH_INTERVAL = 64u;
 
@@ -42,6 +40,11 @@ const char *passName (Profiler::Pass pass)
     switch (pass)
     {
         case Profiler::Pass::Geometry:       return "geometry";
+        case Profiler::Pass::StaticShadow:   return "static-shadow";
+        case Profiler::Pass::StaticDiffuse:  return "static-diffuse";
+        case Profiler::Pass::ViewSpecular:   return "view-specular";
+        case Profiler::Pass::Reprojection:   return "reprojection";
+        case Profiler::Pass::DirtyTiles:     return "dirty-tiles";
         case Profiler::Pass::DirectLighting: return "direct";
         case Profiler::Pass::LumenTrace:     return "lumen-trace";
         case Profiler::Pass::LumenComposite: return "lumen-compose";
@@ -57,6 +60,11 @@ const char *metricName (Profiler::Pass pass)
     switch (pass)
     {
         case Profiler::Pass::Geometry:       return "geometry_ms";
+        case Profiler::Pass::StaticShadow:   return "static_shadow_ms";
+        case Profiler::Pass::StaticDiffuse:  return "static_diffuse_ms";
+        case Profiler::Pass::ViewSpecular:   return "view_specular_ms";
+        case Profiler::Pass::Reprojection:   return "reprojection_ms";
+        case Profiler::Pass::DirtyTiles:     return "dirty_tiles_ms";
         case Profiler::Pass::DirectLighting: return "direct_ms";
         case Profiler::Pass::LumenTrace:     return "lumen_trace_ms";
         case Profiler::Pass::LumenComposite: return "lumen_compose_ms";
@@ -74,10 +82,11 @@ bool Profiler::init ()
     shutdown();
 
     performance_mode_ = PerformanceMetrics::requested();
+    interactive_profile_mode_ = environmentFlag("CRAPGAME_GPU_PROFILE");
 
     if (!gpuProfilerRequested(
             performance_mode_,
-            environmentFlag("CRAPGAME_GPU_PROFILE")))
+            interactive_profile_mode_))
     {
         return true;
     }
@@ -114,6 +123,9 @@ bool Profiler::init ()
 
     milliseconds_.fill(0.0);
     sample_counts_.fill(0u);
+    cache_stats_ = {};
+    printed_cache_stats_ = {};
+    last_print_ns_ = 0u;
 
     performance_start_ns_ = monotonicNanoseconds();
     performance_warmup_ms_ = PerformanceMetrics::warmupMilliseconds();
@@ -167,12 +179,16 @@ void Profiler::shutdown ()
     performance_writer_.close();
     milliseconds_.fill(0.0);
     sample_counts_.fill(0u);
+    cache_stats_ = {};
+    printed_cache_stats_ = {};
     performance_start_ns_ = 0;
+    last_print_ns_ = 0;
     performance_warmup_ms_ = 0.0;
     performance_duration_ms_ = 0.0;
     performance_samples_since_flush_ = 0u;
     current_slot_ = -1;
     performance_mode_ = false;
+    interactive_profile_mode_ = false;
     performance_writer_ready_ = false;
     initialized_ = false;
 }
@@ -351,22 +367,12 @@ void Profiler::beginFrame (std::uint64_t frame_index)
         return;
     }
 
-    const std::uint64_t interval =
-        performance_mode_ ? 1u : SAMPLE_INTERVAL;
-
-    if (frame_index % interval != 0u)
-    {
-        return;
-    }
-
-    const std::uint64_t sample_index = frame_index / interval;
     const std::size_t slot_index = static_cast<std::size_t>(
-            sample_index % SLOT_COUNT
+            frame_index % SLOT_COUNT
         );
     Slot& slot = slots_[slot_index];
 
-    /* Only the query slot about to be reused matters on this frame. This
-     * replaces the old eight-slot scan that ran for every perf frame. */
+    /* Only the query slot about to be reused matters on this frame. */
     consumeSlot(slot, false);
 
     if (slot.pending)
@@ -395,13 +401,6 @@ void Profiler::begin (Pass pass)
     }
 
     Slot& slot = slots_[static_cast<std::size_t>(current_slot_)];
-
-    if (pass == Pass::Present
-            && !presentTimerQueryDue(performance_mode_, slot.frame))
-    {
-        return;
-    }
-
     GL33.glQueryCounter(slot.begin[index], GL_TIMESTAMP);
     slot.measured[index] = true;
 }
@@ -454,33 +453,54 @@ void Profiler::endFrame ()
     current_slot_ = -1;
 }
 
+bool Profiler::hasSamples () const
+{
+    return std::any_of(
+            sample_counts_.begin(),
+            sample_counts_.end(),
+            [](std::uint32_t count) { return count != 0u; }
+        );
+}
+
 void Profiler::printIfDue (std::uint64_t frame_index)
 {
-    static std::uint64_t last_print_ns = 0;
+    (void)frame_index;
 
-    if (!initialized_
-            || performance_mode_
-            || frame_index == 0
-            || frame_index % PRINT_CHECK_INTERVAL != 0u)
+    if (!initialized_ || performance_mode_ || !interactive_profile_mode_)
     {
         return;
     }
 
     const std::uint64_t now_ns = monotonicNanoseconds();
 
-    if (last_print_ns != 0
-            && now_ns - last_print_ns < PRINT_INTERVAL_NS)
+    if (last_print_ns_ != 0
+            && now_ns - last_print_ns_ < PRINT_INTERVAL_NS)
     {
         return;
     }
 
-    last_print_ns = now_ns;
     collect(false);
 
+    if (!hasSamples())
+    {
+        return;
+    }
+
+    last_print_ns_ = now_ns;
     std::fprintf(stderr, "GPU frame");
 
     for (std::size_t index = 0; index < PASS_COUNT; ++index)
     {
+        if (sample_counts_[index] <= WARMUP_SAMPLES)
+        {
+            std::fprintf(
+                    stderr,
+                    "  %s n/a",
+                    passName(static_cast<Pass>(index))
+                );
+            continue;
+        }
+
         std::fprintf(
                 stderr,
                 "  %s %.3f ms",
@@ -489,11 +509,47 @@ void Profiler::printIfDue (std::uint64_t frame_index)
             );
     }
 
+    std::fprintf(stderr, "  total %.3f ms", totalMilliseconds());
+
+    const CacheStats delta = cacheStatsDelta(cache_stats_, printed_cache_stats_);
+    printed_cache_stats_ = cache_stats_;
     std::fprintf(
             stderr,
-            "  total %.3f ms\n",
-            totalMilliseconds()
+            "  shadow gen %llu cached %llu  reproj %llu  dirty %llu  reused %llu",
+            static_cast<unsigned long long>(delta.static_shadow_generated),
+            static_cast<unsigned long long>(delta.static_shadow_cached),
+            static_cast<unsigned long long>(delta.reprojection_pixels),
+            static_cast<unsigned long long>(delta.dirty_tiles),
+            static_cast<unsigned long long>(delta.reused_pixels)
         );
+
+    if (delta.radiance_queries != 0u)
+    {
+        std::fprintf(
+                stderr,
+                "  radiance-hit %.1f%%",
+                cacheHitPercent(delta.radiance_hits, delta.radiance_queries)
+            );
+    }
+    else
+    {
+        std::fprintf(stderr, "  radiance-hit n/a");
+    }
+
+    if (delta.reflection_queries != 0u)
+    {
+        std::fprintf(
+                stderr,
+                "  reflection-hit %.1f%%",
+                cacheHitPercent(delta.reflection_hits, delta.reflection_queries)
+            );
+    }
+    else
+    {
+        std::fprintf(stderr, "  reflection-hit n/a");
+    }
+
+    std::fprintf(stderr, "\n");
 }
 
 double Profiler::milliseconds (Pass pass) const
