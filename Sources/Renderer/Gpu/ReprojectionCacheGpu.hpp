@@ -43,6 +43,10 @@ public:
     bool ready() const;
     bool historyValid() const { return history_valid_; }
     GLuint validMaskTexture() const { return valid_mask_; }
+    GLuint previousPositionTexture() const { return previous_position_; }
+    GLuint previousNormalTexture() const { return previous_normal_; }
+    GLuint previousMaterialTexture() const { return previous_material_; }
+    const Math::Mat4& previousViewProjection() const { return previous_view_projection_; }
 
 private:
     void destroyTextures();

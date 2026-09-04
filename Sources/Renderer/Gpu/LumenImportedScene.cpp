@@ -135,6 +135,7 @@ bool LumenGpu::traceShared(
         && history_valid_ && reprojection_cache_.historyValid();
     const bool temporal_history_valid = history_valid_ && scene_unchanged
         && !camera_changed;
+    const bool reflection_history_valid = history_valid_ && scene_unchanged;
 
     last_view_ = view;
     last_projection_ = projection;
@@ -181,6 +182,7 @@ bool LumenGpu::traceShared(
     glBindTexture(GL_TEXTURE_2D_ARRAY, triangles.dataAtlas());
     bindTextureUnitInline(9, gbuffer.specularIorTexture());
     bindTextureUnitInline(10, gbuffer.advancedMaterialTexture());
+    bindTextureUnitInline(14, gbuffer.materialIdentityTexture());
     GLModern.glActiveTexture(GL_TEXTURE0);
 
     GL20.glUseProgram(trace_program_);
@@ -205,6 +207,10 @@ bool LumenGpu::traceShared(
     GL20.glUniform1i(trace_dirty_tile_dispatch_location_, reprojection_active ? 1 : 0);
     GL20.glUniform1i(trace_radiance_generation_location_,
                      static_cast<GLint>(radiance_cache_.generation()));
+    if (!reflection_cache_.bind(trace_program_,reprojection_cache_,
+                                reflection_history_[read_index],
+                                reflection_history_valid,error))
+        return false;
 
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangles.triangleBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, triangles.meshBuffer());
@@ -237,7 +243,7 @@ bool LumenGpu::traceShared(
     if (conservativeGpuCleanupRequired(true))
     {
         GL20.glUseProgram(0);
-        for (GLuint unit = 0; unit < 11; ++unit)
+        for (GLuint unit = 0; unit < 15; ++unit)
         {
             GLModern.glActiveTexture(GL_TEXTURE0 + unit);
             glBindTexture(unit == 7 || unit == 8

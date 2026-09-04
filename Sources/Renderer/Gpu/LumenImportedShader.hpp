@@ -3,6 +3,7 @@
 
 #include "Renderer/Gpu/BvhShadersV2.hpp"
 #include "Renderer/Gpu/RadianceCacheShader.hpp"
+#include "Renderer/Gpu/ReflectionCacheShader.hpp"
 #include "Renderer/Gpu/TriangleTraceShader.hpp"
 
 #include <stdexcept>
@@ -135,6 +136,11 @@ vec3 importedFallbackRadiance(){
         "vec3 primitiveFallbackRadiance(int i){",
         "vec3 primitiveFallbackRadiance(int i){if(gImportedHit)return importedFallbackRadiance();");
 
+    const std::size_t reflection_at=source.find("void main(){");
+    if(reflection_at==std::string::npos)
+        throw std::runtime_error("Lumen reflection insertion point missing");
+    source.insert(reflection_at,REFLECTION_CACHE_GLSL);
+
     replaceLumenRequired(&source,
         "layout(binding=6) uniform sampler2D sPreviousPosition;",
         "layout(binding=6) uniform sampler2D sPreviousPosition;\n"
@@ -154,14 +160,8 @@ vec3 importedFallbackRadiance(){
         "vec3 origin=position+normal*TRACE_BIAS*2.0,giDirection=hemisphereDirection(normal,pixel),giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,giSource);if(!giCached){int giHit;float giDistance;vec3 giNormal,cacheSource;if(traceScene(origin,giDirection,28.0,giHit,giDistance,giNormal)){vec3 hp=origin+giDirection*giDistance;giSource=screenRadiance(hp,giHit);cacheSource=primitiveFallbackRadiance(giHit);}else{float sky=clamp(normal.y*0.5+0.5,0.0,1.0);giSource=vec3(mix(0.008,0.028,sky)/0.32);cacheSource=giSource;}radianceCacheUpdate(position,normal,cacheSource);}indirect=giSource*albedo*(1.0-metallic)*0.32;");
 
     replaceLumenRequired(&source,
-        "if(metallic>0.08||roughness<0.45)",
-        "if(metallic>0.08||roughness<0.45||advanced.w>0.01||advanced.x>0.01)");
-    replaceLumenRequired(&source,
-        "vec3 hp=origin+reflectionDirection*rd,source=screenRadiance(hp,ri),f0=mix(vec3(0.04),albedo,metallic);",
-        "vec3 hp=origin+reflectionDirection*rd,source=screenRadiance(hp,ri);float ni=max(si.a,1.0001),iorRatio=(ni-1.0)/(ni+1.0);vec3 dielectricF0=dot(si.rgb,si.rgb)>EPSILON?clamp(si.rgb,vec3(0.0),vec3(1.0)):vec3(iorRatio*iorRatio);vec3 f0=mix(dielectricF0,albedo,metallic);");
-    replaceLumenRequired(&source,
-        "reflection=source*weight*(1.0-roughness*0.82);",
-        "float materialReflection=clamp(max(advanced.w,metallic),0.0,1.0);float clearcoat=clamp(advanced.x,0.0,1.0),clearcoatRoughness=clamp(advanced.y,0.04,1.0);reflection=source*weight*(0.18+0.82*materialReflection)*(1.0-roughness*0.75)+source*vec3(0.04)*clearcoat*(1.0-clearcoatRoughness*0.70);");
+        "vec3 incident=normalize(position-uCameraPosition),reflectionDirection=normalize(reflect(incident,normal)),reflection=vec3(0);if(metallic>0.08||roughness<0.45){int ri;float rd;vec3 rn;if(traceScene(origin,reflectionDirection,48.0,ri,rd,rn)){vec3 hp=origin+reflectionDirection*rd,source=screenRadiance(hp,ri),f0=mix(vec3(0.04),albedo,metallic);float fresnel=pow(1.0-clamp(dot(normal,normalize(uCameraPosition-position)),0.0,1.0),5.0);vec3 weight=f0+(vec3(1.0)-f0)*fresnel;reflection=source*weight*(1.0-roughness*0.82);}}",
+        "vec3 incident=normalize(position-uCameraPosition),reflectionDirection=normalize(reflect(incident,normal)),reflection=vec3(0);if(metallic>0.08||roughness<0.45||advanced.w>0.01||advanced.x>0.01){vec3 source=vec3(0.0);bool historyValue=false;uint materialId=texelFetch(sMaterialIdentity,pixel,0).r;if(reflectionFallbackSource(position,normal,roughness,materialId,origin,reflectionDirection,source,historyValue)){if(historyValue){reflection=source;}else{float ni=max(si.a,1.0001),iorRatio=(ni-1.0)/(ni+1.0);vec3 dielectricF0=dot(si.rgb,si.rgb)>EPSILON?clamp(si.rgb,vec3(0.0),vec3(1.0)):vec3(iorRatio*iorRatio);vec3 f0=mix(dielectricF0,albedo,metallic);float fresnel=pow(1.0-clamp(dot(normal,normalize(uCameraPosition-position)),0.0,1.0),5.0);vec3 weight=f0+(vec3(1.0)-f0)*fresnel;float materialReflection=clamp(max(advanced.w,metallic),0.0,1.0);float clearcoat=clamp(advanced.x,0.0,1.0),clearcoatRoughness=clamp(advanced.y,0.04,1.0);reflection=source*weight*(0.18+0.82*materialReflection)*(1.0-roughness*0.75)+source*vec3(0.04)*clearcoat*(1.0-clearcoatRoughness*0.70);}}}");
 
     replaceLumenRequired(&source,
         "if(uHistoryValid!=0){vec4 pp=texelFetch(sPreviousPosition,tp,0);if(pp.w>0&&distance(pp.xyz,position)<0.18){indirect=mix(indirect,texelFetch(sPreviousIndirect,tp,0).xyz,0.84);reflection=mix(reflection,texelFetch(sPreviousReflection,tp,0).xyz,0.72);}}",

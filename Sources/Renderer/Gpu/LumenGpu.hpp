@@ -8,6 +8,7 @@
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Gpu/RadianceCacheGpu.hpp"
+#include "Renderer/Gpu/ReflectionCacheGpu.hpp"
 #include "Renderer/Gpu/ReprojectionCacheGpu.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
 #include "Renderer/Gpu/TransparentGpu.hpp"
@@ -137,6 +138,7 @@ public:
     const ReprojectionCacheGpu& reprojectionCache () const { return reprojection_cache_; }
     const DirtyTileGpu& dirtyTiles () const { return dirty_tile_gpu_; }
     const RadianceCacheGpu& radianceCache () const { return radiance_cache_; }
+    const ReflectionCacheGpu& reflectionCache () const { return reflection_cache_; }
 
 private:
     bool ensureImportedTraceShader(std::string *error);
@@ -192,6 +194,7 @@ private:
     ReprojectionCacheGpu reprojection_cache_;
     DirtyTileGpu dirty_tile_gpu_;
     RadianceCacheGpu radiance_cache_;
+    ReflectionCacheGpu reflection_cache_;
     std::uint64_t reprojection_scene_revision_ = 0u;
     std::uint64_t reprojection_mesh_revision_ = 0u;
     std::uint64_t reprojection_material_revision_ = 0u;
