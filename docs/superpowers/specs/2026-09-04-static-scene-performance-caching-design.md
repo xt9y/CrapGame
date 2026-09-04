@@ -8,7 +8,7 @@ Target branch: `main`
 
 Make the interactive Sponza scene fast because its geometry, materials, and directional light are static, not by lowering whole-frame resolution or requiring faster hardware.
 
-The renderer must avoid recomputing expensive work whose inputs have not changed. Native primary raster resolution remains the default. Expensive secondary effects become cached, reprojected, tiled, or sparse.
+The renderer must avoid recomputing expensive work whose semantic inputs have not changed. Native primary raster resolution remains the default. Expensive secondary effects become cached, reprojected, tiled, or sparse.
 
 All implementation commits for this work use the prefix `Perf: `.
 
@@ -19,8 +19,9 @@ All implementation commits for this work use the prefix `Perf: `.
 - Preserve existing RendererCheck deterministic reference behavior.
 - Preserve correctness for dynamic lights, moving geometry, transparent/transmissive materials, masked alpha geometry, and camera motion.
 - Prefer focused classes/files over expanding `Render.cpp` or monolithic GPU files.
-- Cache validity must be driven by explicit revisions and inputs, not guessed from elapsed time.
+- Cache validity is driven by explicit revisions and inputs, never by elapsed wall-clock time.
 - A cache hit must never silently reuse data after one of its semantic inputs changed.
+- No CPU readback or GPU synchronization is added to the normal gameplay hot path for cache decisions.
 
 ## Current Problem
 
@@ -44,7 +45,7 @@ load scene
   +-- build static triangle acceleration
   +-- precompile all shaders
   +-- build static directional shadow cache
-  +-- initialize world-space GI/radiance cache
+  +-- initialize world-space radiance cache
   v
 interactive frame
   |
@@ -60,7 +61,7 @@ interactive frame
   |                +-- validate reusable pixels/tiles
   |                +-- shade only dirty/missing work
   |                +-- sample static directional shadows
-  |                +-- sample world-space GI/radiance caches
+  |                +-- sample world-space radiance cache
   |                +-- trace only sparse cache misses
   |
   +-- cheap view-dependent specular/reflection update
@@ -91,14 +92,14 @@ Each cache declares exactly which revisions invalidate it.
 | mesh/texture residency | registry only | registry only | no | no | no |
 | static BLAS | yes | no | no | no | no |
 | TLAS | transforms/visibility | no | no | no | no |
-| static directional shadow | yes | alpha/masked | yes | no | resolution/light atlas only |
-| world radiance/probes | yes | yes | yes | no | no |
+| static directional shadow | yes | alpha/masked | yes | no | no |
+| world radiance cache | yes | yes | yes | no | no |
 | reprojection history | yes | yes | yes | yes | yes |
 | converged final frame | yes | yes | yes | yes | yes |
 | static diffuse lighting cache | yes | yes | yes | reprojection only | yes |
 | view specular cache | yes | yes | yes | yes | yes |
 
-No cache may key directly on wall-clock time.
+No cache keys directly on wall-clock time.
 
 ## 2. Converged Frame Cache
 
@@ -106,6 +107,7 @@ Create:
 
 - `Sources/Renderer/Gpu/ConvergedFrameCache.hpp`
 - `Sources/Renderer/Gpu/ConvergedFrameCache.cpp`
+- `Sources/Renderer/Gpu/ConvergencePolicy.hpp`
 
 Purpose: stop rendering expensive passes when the exact scene, light, camera, and resolution are unchanged and Lumen history has converged.
 
@@ -115,25 +117,26 @@ State:
 - revision tuple
 - convergence sample count
 - convergence stable-count
-- last measured temporal delta/variance
 - valid/converged flags
 
-Behavior:
+No full-frame GPU-to-CPU variance readback is allowed. Convergence is determined by revision stability plus bounded sample count:
 
-1. Any relevant revision change invalidates convergence.
-2. While unconverged, Lumen may produce bounded additional samples.
-3. A sample is considered stable when the measured/history delta is below a fixed threshold.
-4. After `N` consecutive stable samples, mark converged.
-5. Also force convergence after a finite maximum sample count to prevent infinite refinement.
+1. Any relevant revision change resets sample/stable counts.
+2. The first four samples after invalidation always run.
+3. Samples 5-8 run only when the existing Lumen history-valid path requests refinement.
+4. After eight valid samples with no semantic invalidation, the frame is considered converged.
+5. Sixteen samples is the absolute maximum even under a debug/fixed refinement mode.
 6. Once converged and revisions remain identical, skip geometry, direct, Lumen, and composite work and present the cached final texture.
 
-Initial contract values:
+Policy constants:
 
-- minimum convergence samples: 4
-- stable samples required: 3
-- maximum convergence samples: 16
+```text
+MIN_CONVERGENCE_SAMPLES = 4
+DEFAULT_CONVERGENCE_SAMPLES = 8
+MAX_CONVERGENCE_SAMPLES = 16
+```
 
-Thresholds must be constants in one policy file/class and covered by tests.
+A debug environment override may request a count from 1-16, but the default path uses 8.
 
 ## 3. Scene Prewarm
 
@@ -148,8 +151,8 @@ Prewarm after scene construction and renderer initialization, before the interac
 
 Prewarm performs:
 
-- upload all loaded meshes used by the world;
-- upload all referenced material textures;
+- upload every loaded mesh referenced by visible world entities;
+- upload every referenced material texture;
 - build mip chains;
 - build imported BLAS/TLAS resources;
 - rebuild trace-material GPU records/atlases;
@@ -157,9 +160,11 @@ Prewarm performs:
 - compile the imported Lumen shader;
 - allocate GBuffer/direct/Lumen/transparent targets;
 - build static directional shadow resources when applicable;
-- initialize world-space GI/radiance-cache resources.
+- allocate/initialize world-space radiance-cache resources.
 
 The prewarm API returns explicit success/error. Failure must not silently fall back to per-frame lazy initialization.
+
+Prewarm may make startup/loading slower; that cost is intentional because it removes multi-second visible first frames.
 
 ## 4. Static Directional Shadow Cache
 
@@ -171,17 +176,18 @@ Create:
 
 Purpose: eliminate per-screen-pixel imported-triangle shadow traversal for a static directional light.
 
-Use a light-space depth/visibility atlas generated from static scene geometry.
+Use one 2048x2048 light-space depth atlas per active static directional light. The orthographic projection is fitted to the static world bounds with 5% padding on each axis.
 
 Requirements:
 
-- full support for opaque geometry;
-- alpha test for masked materials while generating the cache;
-- transparent/transmissive geometry excluded from opaque shadow depth and handled by existing dynamic/transmission logic where required;
+- opaque geometry writes depth directly;
+- masked geometry performs the same alpha cutoff semantics as the GBuffer before writing depth;
+- transparent/transmissive geometry does not write opaque shadow depth;
+- lookup uses a fixed 3x3 PCF kernel;
 - cache keyed by geometry/material/light revisions;
 - camera movement never invalidates this cache;
-- PCF or equivalent small filtered lookup to avoid hard aliasing;
-- dynamic lights and moving geometry retain the existing ray/BVH path.
+- dynamic lights and moving geometry retain the existing ray/BVH path;
+- if a directional light or its transform changes, regenerate before the next frame that uses it.
 
 The normal Sponza directional light must use the cached path after initial generation.
 
@@ -192,15 +198,16 @@ Create:
 - `Sources/Renderer/Gpu/ReprojectionCacheGpu.hpp`
 - `Sources/Renderer/Gpu/ReprojectionCacheGpu.cpp`
 - `Sources/Renderer/Gpu/ReprojectionShader.hpp`
+- `Sources/Renderer/Gpu/ReprojectionPolicy.hpp`
 
 Purpose: reuse previous expensive lighting when only the camera moves.
 
-History stores enough data to validate reuse:
+History stores:
 
 - previous world position/depth
 - previous normal
-- previous material identifier or equivalent material validation value
-- previous direct diffuse/static lighting
+- previous exact 32-bit material ID
+- previous cached static diffuse/direct contribution
 - previous indirect lighting
 - previous reflection contribution
 
@@ -209,10 +216,19 @@ For each current pixel:
 1. Reconstruct current world position.
 2. Project it into the previous view-projection.
 3. Sample previous validation buffers.
-4. Reuse only when position/depth, normal, and material tests pass.
-5. Mark all failed/disoccluded pixels dirty.
+4. Reuse only when all validation tests pass.
+5. Mark failed/disoccluded pixels dirty.
 
-Initial validation tolerances must be centralized in a policy helper and tested.
+Validation is exact for material ID and uses these initial tolerances:
+
+```text
+position_error <= max(0.03 world units, 0.01 * camera_distance)
+normal_dot >= 0.94
+previous projected UV inside [0,1]
+previous depth valid
+```
+
+No color-based acceptance test is used.
 
 ## 6. Dirty Tile Compaction
 
@@ -222,16 +238,17 @@ Create:
 - `Sources/Renderer/Gpu/DirtyTileGpu.cpp`
 - `Sources/Renderer/Gpu/DirtyTileShader.hpp`
 
-Use 8x8 tiles.
+Use fixed 8x8 tiles.
 
 After reprojection validation:
 
+- one invalid pixel marks its whole containing tile dirty;
 - produce one dirty flag per tile;
-- compact dirty tile coordinates into an SSBO;
-- dispatch expensive direct/Lumen miss work only for compacted dirty tiles;
+- compact dirty tile coordinates into an SSBO using a GPU atomic counter;
+- expensive direct/Lumen miss work dispatches only for compacted dirty tiles;
 - fully reusable tiles perform no expensive shading dispatch.
 
-Correctness rule: any invalid pixel marks its containing tile dirty. This deliberately prefers some over-shading over incorrect cache reuse.
+This deliberately prefers small amounts of over-shading over incorrect partial-tile reuse.
 
 ## 7. Split Static Diffuse From View-Dependent Specular
 
@@ -246,15 +263,17 @@ For static lights and static geometry/materials, cache the camera-independent pa
 
 - diffuse BRDF contribution;
 - static directional shadow visibility;
-- camera-independent emissive/ambient terms where applicable.
+- camera-independent emissive/ambient terms.
 
-Update only camera-dependent terms during camera motion:
+Update camera-dependent terms during camera motion:
 
 - specular Fresnel/view response;
 - reflection weighting;
 - transmission/refraction view response.
 
-Dynamic lights continue through the normal direct-light path.
+Dynamic lights continue through the existing dynamic direct-light path.
+
+For a material with both static and dynamic light contributions, the final direct term is the sum of cached static diffuse, current view-dependent specular, and dynamic-light evaluation.
 
 ## 8. GPU World-Space Radiance Cache
 
@@ -266,19 +285,22 @@ Create:
 
 Purpose: stop tracing imported Sponza triangles repeatedly for GI values that are world-space stable.
 
-The cache is world-space and camera-independent.
+Use a sparse hashed 3D probe grid.
 
-Design:
+Initial design:
 
-- sparse hashed 3D cells or probe records around visible/important geometry;
-- each record stores irradiance/radiance, confidence/sample count, and revision stamp;
-- primary Lumen shading queries the cache first;
-- cache hit -> reuse;
-- cache miss/low confidence -> trace imported geometry and update record;
-- camera motion does not invalidate records;
-- geometry/material/light changes invalidate affected cache generation globally at first implementation, with room for local invalidation later.
+- cell size: 0.5 world units;
+- hash table: power-of-two capacity, starting at 65536 probe slots;
+- key: signed integer 3D cell coordinate plus current radiance-generation revision;
+- value: RGB irradiance/radiance, confidence/sample count, and accumulated dominant normal;
+- maximum probe samples before considered high confidence: 16;
+- cache lookup accepts a probe only when its generation matches and confidence >= 4;
+- shading samples the eight neighboring grid cells and blends valid probes by trilinear spatial weights multiplied by normal agreement;
+- if no acceptable neighbors exist, trace imported geometry and update the nearest probe slot;
+- camera motion never invalidates records;
+- geometry/material/light changes increment the radiance generation and logically invalidate all prior probes without clearing the whole buffer synchronously.
 
-The first implementation may use global revision invalidation rather than spatially selective invalidation, but it must not rebuild solely due to camera movement.
+Collision handling uses linear probing with a maximum of 8 probes. Failure to insert simply produces an uncached trace for that sample; it must not block rendering.
 
 ## 9. Reflection Fallback Cache
 
@@ -287,32 +309,40 @@ Create:
 - `Sources/Renderer/Gpu/ReflectionCacheGpu.hpp`
 - `Sources/Renderer/Gpu/ReflectionCacheGpu.cpp`
 
-Reflection order:
+Reflection order is fixed:
 
-1. screen-space hit/current visible information;
-2. cached world-space reflection/radiance data;
-3. imported triangle trace only for misses.
+1. current screen-space hit;
+2. world-space radiance-cache fallback for rough reflections;
+3. validated previous reflection history for smooth surfaces;
+4. imported triangle trace only when the prior sources miss or fail validation.
 
-Temporal validation uses world position, normal, roughness, and material identity.
+History validation requires:
+
+```text
+position test: same ReprojectionPolicy threshold
+normal_dot >= 0.96
+roughness difference <= 0.05
+material ID exact match
+```
 
 ## 10. Imported Ray Geometry Compaction
 
-Create focused shadow/GI records rather than using the same large triangle representation for every ray purpose.
-
-Add:
+Create:
 
 - `Sources/Renderer/Gpu/ShadowTriangleGpu.hpp`
 - `Sources/Renderer/Gpu/TraceGeometryGpu.hpp`
 - `Sources/Renderer/Gpu/TraceGeometryGpu.cpp`
 
-Shadow records contain only data required for visibility/alpha lookup.
-GI/reflection records retain UV/normal/material information.
+Do not use the same 128-byte `TriangleGpu` record for every ray purpose.
 
-Goals:
+Shadow visibility records contain only:
 
-- reduce SSBO bandwidth;
-- reduce cache pressure;
-- keep material-aware tracing only where needed.
+- 3 positions;
+- compact material/flags index needed only for masked/transmission candidates.
+
+GI/reflection records retain positions, UVs, normals, and material identity.
+
+The shadow traversal must not fetch UV/material records for opaque candidates.
 
 ## 11. BVH Traversal Improvements
 
@@ -320,35 +350,44 @@ Keep implementation isolated in BVH builder/traversal helpers.
 
 Apply:
 
-- binned SAH split selection for imported BLAS where it improves estimated traversal cost;
-- front-to-back child ordering from ray/AABB entry distance;
+- 16-bin SAH split selection for imported BLAS;
+- fall back to the existing median/centroid split when SAH produces an empty side or no cost improvement;
+- front-to-back child traversal using ray/AABB entry distance;
 - separate opaque-only visibility traversal from masked/transmissive traversal;
 - early any-hit exit for opaque shadow queries;
 - avoid material/UV fetch until a candidate hit actually requires alpha/transmission evaluation;
 - preserve TLAS refit for moving transforms;
-- avoid per-frame BLAS rebuild for static meshes.
+- never rebuild static BLAS solely because the camera moved.
 
-No optimization may change hit semantics.
+A contract must compare hit/miss and nearest-hit distance against the pre-optimization traversal on generated deterministic rays.
 
 ## 12. GBuffer Bandwidth Reduction
 
 Do not reduce primary image resolution.
 
-Reduce per-pixel memory traffic instead.
+Reduce per-pixel memory traffic in two stages.
 
-First targets:
+### Stage A
 
-- reconstruct world position from depth + inverse view-projection instead of storing full world position where practical;
-- replace per-pixel uniform material values with material ID + material SSBO lookup when values are constant over the material;
-- retain per-pixel values only when texture-driven or interpolation-dependent;
-- compact normals where precision remains visually safe;
-- reduce attachment count in stages rather than one large rewrite.
+- stop storing full world position in the long-term GBuffer contract;
+- keep depth and reconstruct world position from depth plus inverse view-projection;
+- add exact `R32UI` material ID for cache/reprojection validation;
+- move material constants that are uniform across a material to the material SSBO;
+- retain texture-driven roughness/metallic/specular/transmission values per pixel only when necessary.
 
-Each format change requires source/contract tests and RendererCheck/visual verification.
+### Stage B
+
+After Stage A visual verification:
+
+- evaluate octahedral two-channel normal storage;
+- adopt it only if RendererCheck/visual comparisons show no material-normal regression;
+- otherwise retain the existing normal precision.
+
+Attachment reduction is incremental. A stage is not accepted merely because it uses less memory; it must preserve rendered behavior.
 
 ## 13. Static Scene Simulation Policy
 
-Add an explicit scene dynamics flag to the scene/test state.
+Add an explicit `dynamic` flag to `Renderer::Test::SceneState`.
 
 Normal Sponza gameplay scene:
 
@@ -362,25 +401,27 @@ RendererCheck scenes that intentionally animate lights/objects:
 dynamic = true
 ```
 
-When false, the main loop must not call scene-animation update code. Camera input remains independent and active.
+When false, the main loop does not call scene-animation update code. Camera input remains independent and active.
 
-Do not infer scene dynamics from entity count or frame history.
+Do not infer scene dynamics from entity count or recent frame history.
 
 ## 14. Low-FPS Profiling
 
-Create/update a profiling policy so explicit profiling is useful even at 1 FPS.
+Update profiling so explicit profiling is useful even below 1 FPS.
 
 When `CRAPGAME_GPU_PROFILE=1`:
 
-- query pass timings every rendered frame;
-- print no more than approximately once per second;
-- include cache statistics.
+- issue timer queries for every rendered frame;
+- aggregate asynchronously;
+- print at most once per second when results are available;
+- never block waiting for a query result;
+- include cache counters.
 
 Required counters:
 
 - geometry ms
-- static shadow generation ms / cached marker
-- direct/static diffuse ms
+- static shadow generation ms / `cached`
+- static diffuse/direct ms
 - view specular ms
 - reprojection ms
 - dirty tile count / total tiles
@@ -391,7 +432,7 @@ Required counters:
 - composite ms
 - present ms
 
-Default non-profile gameplay must not pay CPU readback/query overhead for these statistics.
+Default non-profile gameplay does not pay CPU readback/query overhead for these statistics.
 
 ## 15. Frame Scheduling Rules
 
@@ -401,15 +442,15 @@ Rules:
 
 - scene/light/material revision change -> immediate invalidation and sample;
 - camera change -> use reprojection and bounded refresh; do not globally invalidate world-space static caches;
-- continuous camera motion -> bounded secondary-effect update cadence;
-- unchanged camera + unchanged scene -> converge for a finite number of samples then freeze;
+- continuous camera motion -> at most one expensive secondary-effect refresh every 66,666,667 ns (15 Hz), with intermediate frames using reprojection/cache data;
+- unchanged camera + unchanged scene -> converge to the default eight samples then freeze;
 - unchanged converged state -> no expensive trace/composite dispatch merely because time passed.
 
-A fixed environment override such as `CRAPGAME_LUMEN_HZ` may remain for debugging/performance testing, but default behavior follows cache/convergence state.
+`CRAPGAME_LUMEN_HZ` remains a debugging/performance override. It may alter the moving-camera refresh interval, but it does not disable revision-based invalidation or static-frame convergence freeze unless an explicit debug-force flag is also set.
 
 ## 16. Render-Loop Ownership
 
-`Rendering::renderGpuFrame` should remain orchestration only.
+`Rendering::renderGpuFrame` remains orchestration only.
 
 It decides which subsystem runs based on revision/cache policy and delegates work to focused classes.
 
@@ -438,8 +479,6 @@ Presenter
 
 The goal is structural elimination of repeated work rather than a hardware-specific FPS promise.
 
-Required observable behavior:
-
 ### Stationary static Sponza
 
 After convergence:
@@ -449,7 +488,7 @@ After convergence:
 - no imported triangle shadow traversal;
 - no imported Lumen trace;
 - no composite regeneration;
-- only presentation/window work remains.
+- only transparent work when transparent state is explicitly dynamic; otherwise only presentation/window work remains.
 
 ### Moving camera, static Sponza
 
@@ -457,11 +496,12 @@ After convergence:
 - static directional shadow cache remains valid;
 - world-space radiance cache remains valid;
 - reprojection reuses valid lighting history;
-- expensive updates operate on dirty tiles/cache misses rather than the full frame where possible.
+- expensive updates operate on dirty tiles/cache misses rather than the full frame where possible;
+- camera movement alone does not rebuild BLAS, trace atlases, static shadows, or radiance generation.
 
 ### Scene/light/material change
 
-- affected caches invalidate immediately;
+- affected caches invalidate before reuse;
 - no stale lighting/shadows are presented as valid.
 
 ### Startup
@@ -470,30 +510,30 @@ After convergence:
 
 ## 18. Testing Strategy
 
-Every subsystem gets a focused contract before production implementation.
+Every subsystem gets a focused failing contract before production implementation.
 
-Required contracts include:
+Required contracts:
 
 - revision invalidation matrix;
-- converged-frame freeze/wakeup;
+- converged-frame freeze/wakeup at 8 samples;
 - prewarm calls all required residency paths;
 - static directional shadow camera-independence;
 - masked-material shadow invalidation;
-- reprojection validation/rejection;
+- reprojection validation/rejection using exact policy tolerances;
 - 8x8 dirty-tile compaction;
 - static diffuse/view-specular split;
-- radiance-cache camera independence and scene invalidation;
+- radiance-cache camera independence, confidence, collision bound, and generation invalidation;
 - reflection fallback ordering;
 - compact shadow/GI record layout;
-- BVH traversal semantic equivalence;
-- GBuffer reconstruction/packing;
+- 16-bin SAH traversal semantic equivalence;
+- GBuffer position reconstruction/material ID packing;
 - static scene simulation skip;
-- low-FPS profiling cadence;
+- low-FPS profiling nonblocking cadence;
 - stationary Sponza performs no expensive post-convergence work.
 
 Final verification:
 
-- strict C++17 compile with warnings-as-errors for focused contracts;
+- strict C++17 focused contracts with warnings-as-errors;
 - `c build`;
 - RendererCheck smoke/contract suite;
 - interactive Sponza startup;
@@ -503,7 +543,7 @@ Final verification:
 
 ## 19. Commit Structure
 
-Implementation should be split into small logical commits such as:
+Implementation is split into small logical commits:
 
 - `Perf: freeze converged static frames`
 - `Perf: prewarm imported renderer resources`
@@ -515,8 +555,10 @@ Implementation should be split into small logical commits such as:
 - `Perf: cache reflection fallbacks`
 - `Perf: compact imported ray geometry`
 - `Perf: improve imported BVH traversal`
+- `Perf: reconstruct GBuffer world position`
 - `Perf: reduce GBuffer bandwidth`
 - `Perf: skip static scene simulation`
 - `Perf: expose low-FPS GPU profiling`
+- `Perf: verify static-scene cache pipeline`
 
 Each commit must leave `main` buildable or be paired immediately with the exact contract it introduces.
