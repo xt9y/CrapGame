@@ -62,6 +62,14 @@ void setError (std::string *error, const char *message)
     }
 }
 
+void clearPresentationBackbuffer ()
+{
+    GL30.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(0.055f, 0.070f, 0.105f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
 } // namespace
 
 bool Presenter::init (std::string *error)
@@ -236,6 +244,7 @@ bool Presenter::drawTexture (
         gpu_state_valid_ = true;
     }
 
+    clearPresentationBackbuffer();
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
     if (conservative_cleanup)
