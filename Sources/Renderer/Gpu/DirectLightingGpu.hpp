@@ -17,12 +17,15 @@
 
 namespace Renderer { namespace Gpu {
 
+class TriangleScene;
+
 class DirectLightingGpu
 {
 public:
     bool init(std::string *error=nullptr);
     bool resize(int width,int height,std::string *error=nullptr);
     bool updateScene(const Ecs::World& world,std::string *error=nullptr);
+    bool bindImportedScene(const TriangleScene& triangles,std::string *error=nullptr);
     bool dispatch(const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error=nullptr);
     bool render(const Ecs::World& world,const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error=nullptr);
     void shutdown();
@@ -30,6 +33,8 @@ public:
 
     bool ready() const { return program_!=0 && direct_color_!=0; }
     GLuint directTexture() const { return direct_color_; }
+    GLuint lightBuffer() const { return light_buffer_; }
+    std::size_t lightCount() const { return lights_.size(); }
     GLuint finalTexture() const { return direct_color_; }
     GLuint primitiveBuffer() const { return primitive_buffer_; }
     std::size_t primitiveCount() const { return primitives_.size(); }
