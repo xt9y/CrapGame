@@ -73,10 +73,6 @@ bool parseInt(const std::string& text,int* value)
 }
 
 float clamp01(float v){return std::max(0.0f,std::min(1.0f,v));}
-Renderer::Math::Vec3 add(const Renderer::Math::Vec3&a,const Renderer::Math::Vec3&b){return {a.x+b.x,a.y+b.y,a.z+b.z};}
-Renderer::Math::Vec3 sub(const Renderer::Math::Vec3&a,const Renderer::Math::Vec3&b){return {a.x-b.x,a.y-b.y,a.z-b.z};}
-Renderer::Math::Vec3 cross(const Renderer::Math::Vec3&a,const Renderer::Math::Vec3&b){return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};}
-Renderer::Math::Vec3 normalize(const Renderer::Math::Vec3&v){float l=std::sqrt(v.x*v.x+v.y*v.y+v.z*v.z);return l>1e-20f?Renderer::Math::Vec3{v.x/l,v.y/l,v.z/l}:Renderer::Math::Vec3{0,1,0};}
 
 bool vec3From(const std::vector<std::string>& t,std::size_t start,Renderer::Math::Vec3* out)
 {
@@ -210,9 +206,9 @@ Submesh build(const RawPart& raw,const std::vector<Renderer::Math::Vec3>& positi
 {
     Submesh out;out.object_name=raw.object_name;out.group_name=raw.group_name;out.material_name=raw.material_name;
     std::vector<Renderer::Math::Vec3> faceNormals(raw.triangles.size()); std::unordered_map<SmoothKey,Renderer::Math::Vec3,SmoothHash> smooth;
-    for(std::size_t ti=0;ti<raw.triangles.size();++ti){const Triangle&t=raw.triangles[ti];auto n=normalize(cross(sub(positions[t.corners[1].position],positions[t.corners[0].position]),sub(positions[t.corners[2].position],positions[t.corners[0].position])));faceNormals[ti]=n;if(t.smoothing>0)for(const Ref&r:t.corners)if(r.normal<0)smooth[{r.position,t.smoothing}]=add(smooth[{r.position,t.smoothing}],n);}
+    for(std::size_t ti=0;ti<raw.triangles.size();++ti){const Triangle&t=raw.triangles[ti];auto n=Renderer::Math::normalize(Renderer::Math::cross(Renderer::Math::subtract(positions[t.corners[1].position],positions[t.corners[0].position]),Renderer::Math::subtract(positions[t.corners[2].position],positions[t.corners[0].position])));faceNormals[ti]=n;if(t.smoothing>0)for(const Ref&r:t.corners)if(r.normal<0)smooth[{r.position,t.smoothing}]=Renderer::Math::add(smooth[{r.position,t.smoothing}],n);}
     std::unordered_map<VertexKey,std::uint32_t,VertexHash> unique;
-    for(std::size_t ti=0;ti<raw.triangles.size();++ti){const Triangle&t=raw.triangles[ti];for(const Ref&r:t.corners){VertexKey key={r.position,r.uv,r.normal,r.normal<0?t.smoothing:0,r.normal<0&&t.smoothing==0?ti+1u:0u};auto it=unique.find(key);if(it==unique.end()){Renderer::Math::Vec3 n=r.normal>=0?normals[r.normal]:(t.smoothing>0?normalize(smooth[{r.position,t.smoothing}]):faceNormals[ti]);Renderer::Math::Vec2 uv=r.uv>=0?uvs[r.uv]:Renderer::Math::Vec2{0,0};std::uint32_t idx=static_cast<std::uint32_t>(out.mesh.vertices.size());out.mesh.vertices.push_back({positions[r.position],n,uv});unique.emplace(key,idx);out.mesh.indices.push_back(idx);}else out.mesh.indices.push_back(it->second);}}
+    for(std::size_t ti=0;ti<raw.triangles.size();++ti){const Triangle&t=raw.triangles[ti];for(const Ref&r:t.corners){VertexKey key={r.position,r.uv,r.normal,r.normal<0?t.smoothing:0,r.normal<0&&t.smoothing==0?ti+1u:0u};auto it=unique.find(key);if(it==unique.end()){Renderer::Math::Vec3 n=r.normal>=0?normals[r.normal]:(t.smoothing>0?Renderer::Math::normalize(smooth[{r.position,t.smoothing}]):faceNormals[ti]);Renderer::Math::Vec2 uv=r.uv>=0?uvs[r.uv]:Renderer::Math::Vec2{0,0};std::uint32_t idx=static_cast<std::uint32_t>(out.mesh.vertices.size());out.mesh.vertices.push_back({positions[r.position],n,uv});unique.emplace(key,idx);out.mesh.indices.push_back(idx);}else out.mesh.indices.push_back(it->second);}}
     out.mesh.bounds=boundsFor(out.mesh.vertices);return out;
 }
 
@@ -240,7 +236,7 @@ bool load(const std::string& path,Document* document,std::string* error)
     {
         ++lineNumber; line=trim(line); if(line.empty()||line[0]=='#')continue; auto t=tokens(line); if(t.empty())continue; const std::string key=lower(t[0]);
         if(key=="v"){Renderer::Math::Vec3 v{};if(!vec3From(t,1,&v)){if(error)*error="invalid vertex at OBJ line "+std::to_string(lineNumber);return false;}positions.push_back(v);}
-        else if(key=="vn"){Renderer::Math::Vec3 v{};if(!vec3From(t,1,&v)){if(error)*error="invalid normal at OBJ line "+std::to_string(lineNumber);return false;}normals.push_back(normalize(v));}
+        else if(key=="vn"){Renderer::Math::Vec3 v{};if(!vec3From(t,1,&v)){if(error)*error="invalid normal at OBJ line "+std::to_string(lineNumber);return false;}normals.push_back(Renderer::Math::normalize(v));}
         else if(key=="vt"){Renderer::Math::Vec2 v{};if(t.size()<3||!parseFloat(t[1],&v.x)||!parseFloat(t[2],&v.y)){if(error)*error="invalid texcoord at OBJ line "+std::to_string(lineNumber);return false;}uvs.push_back(v);}
         else if(key=="o") objectName=t.size()>1?t[1]:std::string{};
         else if(key=="g") groupName=t.size()>1?t[1]:std::string{};
