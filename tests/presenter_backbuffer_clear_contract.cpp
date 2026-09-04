@@ -18,10 +18,10 @@ int main ()
     std::ifstream input("Sources/Renderer/Gpu/Presenter.cpp");
     require(static_cast<bool>(input), "Presenter.cpp must be readable");
 
-    const std::string source(
+    const std::string source{
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>()
-    );
+    };
 
     const std::size_t helper = source.find("void clearPresentationBackbuffer ()");
     const std::size_t call = source.find("clearPresentationBackbuffer();");
