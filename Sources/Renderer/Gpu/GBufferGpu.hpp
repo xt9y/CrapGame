@@ -23,6 +23,29 @@ public:
     bool init(std::string* error=nullptr);
     bool resize(int width,int height,std::string* error=nullptr);
     bool updateScene(const Ecs::World& world,std::string* error=nullptr);
+
+    bool prewarm(const Ecs::World& world,std::string* error=nullptr)
+    {
+        if(!updateScene(world,error)) return false;
+
+        for(const Ecs::Entity entity:world.entities())
+        {
+            const Ecs::RenderableComponent* renderable=world.getRenderable(entity);
+            const Ecs::MaterialComponent* material=world.getMaterial(entity);
+            if(!renderable||!renderable->visible||!material
+                    || material->renderer_material==Ecs::INVALID_ASSET_HANDLE)
+            {
+                continue;
+            }
+
+            if(!material_gpu_.ensure(material->renderer_material,error))
+                return false;
+        }
+
+        if(error) error->clear();
+        return true;
+    }
+
     bool draw(const Math::Mat4& view,const Math::Mat4& projection,std::string* error=nullptr);
     bool render(const Ecs::World& world,const Math::Mat4& view,const Math::Mat4& projection,std::string* error=nullptr);
     void shutdown();
