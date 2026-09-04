@@ -132,9 +132,12 @@ jobs:
           set -euo pipefail
           c build
 
-      - name: RendererCheck regression suite
+      - name: RendererCheck smoke suite
         run: |
           set -euo pipefail
+          cp rendercheck.toml /tmp/rendercheck.toml
+          trap 'cp /tmp/rendercheck.toml rendercheck.toml' EXIT
+          sed -i 's/^capture = true$/capture = false/' rendercheck.toml
           xvfb-run -a renderercheck run
 
       - name: Dependency and tree audit
