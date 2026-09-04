@@ -1,6 +1,8 @@
 #include "Renderer/Gpu/LumenGpu.hpp"
 #include "Renderer/Gpu/LumenImportedShader.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
+#include "Renderer/Material/Material.hpp"
+#include "Renderer/Mesh/Mesh.hpp"
 
 #include <cmath>
 #include <exception>
@@ -47,11 +49,12 @@ bool LumenGpu::ensureImportedTraceShader(std::string *error)
     const GLint imported_instances = GL20.glGetUniformLocation(candidate, "uImportedInstanceCount");
     const GLint imported_tlas = GL20.glGetUniformLocation(candidate, "uImportedTlasNodeCount");
     const GLint trace_materials = GL20.glGetUniformLocation(candidate, "uTraceMaterialCount");
+    const GLint reprojection = GL20.glGetUniformLocation(candidate, "uReprojectionAvailable");
 
     if (view_projection < 0 || camera < 0 || primitive_count < 0
             || bvh_count < 0 || frame < 0 || history < 0
             || imported_instances < 0 || imported_tlas < 0
-            || trace_materials < 0)
+            || trace_materials < 0 || reprojection < 0)
     {
         destroyProgram(&candidate);
         setInlineError(error, "GPU imported Lumen uniforms are unavailable");
@@ -69,6 +72,7 @@ bool LumenGpu::ensureImportedTraceShader(std::string *error)
     trace_imported_instance_count_location_ = imported_instances;
     trace_imported_tlas_count_location_ = imported_tlas;
     trace_material_count_location_ = trace_materials;
+    trace_reprojection_available_location_ = reprojection;
     bvh_trace_active_ = true;
     if (error) error->clear();
     return true;
@@ -92,10 +96,34 @@ bool LumenGpu::traceShared(
         return false;
     }
     if (!ensureImportedTraceShader(error)) return false;
+    if (!reprojection_cache_.ensure(width_, height_, error)) return false;
+
+    if (!history_valid_)
+    {
+        reprojection_cache_.invalidate();
+        reprojection_scene_revision_valid_ = false;
+    }
 
     const bool camera_changed =
         matrixChanged(view, last_view_)
         || matrixChanged(projection, last_projection_);
+    const std::uint64_t scene_revision = direct.sceneRevision();
+    const std::uint64_t mesh_revision = Mesh::loadedMeshRevision();
+    const std::uint64_t material_revision = Material::revision();
+    const bool scene_unchanged =
+        reprojection_scene_revision_valid_
+        && scene_revision == reprojection_scene_revision_
+        && mesh_revision == reprojection_mesh_revision_
+        && material_revision == reprojection_material_revision_;
+    const bool reprojection_active =
+        camera_changed
+        && scene_unchanged
+        && history_valid_
+        && reprojection_cache_.historyValid();
+    const bool temporal_history_valid =
+        history_valid_
+        && scene_unchanged
+        && !camera_changed;
 
     last_view_ = view;
     last_projection_ = projection;
@@ -103,6 +131,7 @@ bool LumenGpu::traceShared(
     final_output_ = final_color_;
 
     if (history_valid_
+            && !reprojection_active
             && !importedTraceSampleDue(camera_changed, frame_index))
     {
         if (error) error->clear();
@@ -112,6 +141,19 @@ bool LumenGpu::traceShared(
     const Math::Mat4 view_projection = Math::multiply(projection, view);
     const int read_index = history_index_;
     const int write_index = 1 - history_index_;
+
+    if (reprojection_active)
+    {
+        if (!reprojection_cache_.reproject(
+                gbuffer,
+                indirect_history_[read_index],
+                reflection_history_[read_index],
+                camera_position,
+                error))
+        {
+            return false;
+        }
+    }
 
     bindTextureUnitInline(0, gbuffer.positionDepthTexture());
     bindTextureUnitInline(1, gbuffer.normalRoughnessTexture());
@@ -126,6 +168,9 @@ bool LumenGpu::traceShared(
     glBindTexture(GL_TEXTURE_2D_ARRAY, triangles.dataAtlas());
     bindTextureUnitInline(9, gbuffer.specularIorTexture());
     bindTextureUnitInline(10, gbuffer.advancedMaterialTexture());
+    bindTextureUnitInline(11, reprojection_cache_.indirectTexture());
+    bindTextureUnitInline(12, reprojection_cache_.reflectionTexture());
+    bindTextureUnitInline(13, reprojection_cache_.validMaskTexture());
     GLModern.glActiveTexture(GL_TEXTURE0);
 
     GL20.glUseProgram(trace_program_);
@@ -140,13 +185,16 @@ bool LumenGpu::traceShared(
                          ? static_cast<GLint>(direct.bvhNodeCount()) : 0);
     GL20.glUniform1i(trace_frame_location_,
                      static_cast<GLint>(frame_index & 0x7fffffffu));
-    GL20.glUniform1i(trace_history_valid_location_, history_valid_ ? 1 : 0);
+    GL20.glUniform1i(trace_history_valid_location_,
+                     temporal_history_valid ? 1 : 0);
     GL20.glUniform1i(trace_imported_instance_count_location_,
                      static_cast<GLint>(triangles.instanceCount()));
     GL20.glUniform1i(trace_imported_tlas_count_location_,
                      static_cast<GLint>(triangles.tlasNodeCount()));
     GL20.glUniform1i(trace_material_count_location_,
                      static_cast<GLint>(triangles.traceMaterialCount()));
+    GL20.glUniform1i(trace_reprojection_available_location_,
+                     reprojection_active ? 1 : 0);
 
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangles.triangleBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, triangles.meshBuffer());
@@ -172,7 +220,7 @@ bool LumenGpu::traceShared(
     if (conservativeGpuCleanupRequired(true))
     {
         GL20.glUseProgram(0);
-        for (GLuint unit = 0; unit < 11; ++unit)
+        for (GLuint unit = 0; unit < 14; ++unit)
         {
             GLModern.glActiveTexture(GL_TEXTURE0 + unit);
             glBindTexture(unit == 7 || unit == 8
@@ -181,8 +229,15 @@ bool LumenGpu::traceShared(
         GLModern.glActiveTexture(GL_TEXTURE0);
     }
 
+    if (!reprojection_cache_.capture(gbuffer, view_projection, error))
+        return false;
+
     history_index_ = write_index;
     history_valid_ = true;
+    reprojection_scene_revision_ = scene_revision;
+    reprojection_mesh_revision_ = mesh_revision;
+    reprojection_material_revision_ = material_revision;
+    reprojection_scene_revision_valid_ = true;
     if (error) error->clear();
     return true;
 }

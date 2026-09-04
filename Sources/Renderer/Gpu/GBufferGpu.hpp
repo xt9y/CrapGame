@@ -50,7 +50,7 @@ public:
     bool render(const Ecs::World& world,const Math::Mat4& view,const Math::Mat4& projection,std::string* error=nullptr);
     void shutdown();
 
-    bool ready() const { return program_!=0 && framebuffer_!=0; }
+    bool ready() const { return program_!=0 && framebuffer_!=0 && material_identity_!=0; }
     int width() const { return width_; }
     int height() const { return height_; }
     GLuint positionDepthTexture() const { return position_depth_; }
@@ -61,6 +61,7 @@ public:
     GLuint advancedMaterialTexture() const { return advanced_; }
     GLuint transmissionTexture() const { return ambient_transmission_; }
     GLuint tangentAnisotropyTexture() const { return tangent_anisotropy_; }
+    GLuint materialIdentityTexture() const { return material_identity_; }
     GLuint depthTexture() const { return depth_; }
 
 private:
@@ -76,6 +77,7 @@ private:
         float advanced[4];
         float transmission[4];
         float extra[4];
+        std::uint32_t identity[4];
     };
     struct Batch
     {
@@ -112,7 +114,8 @@ private:
     GLuint program_=0, framebuffer_=0;
     GLuint position_depth_=0, normal_roughness_=0, albedo_metallic_=0,
            emissive_opacity_=0, specular_ior_=0, advanced_=0,
-           ambient_transmission_=0, tangent_anisotropy_=0, depth_=0;
+           ambient_transmission_=0, tangent_anisotropy_=0,
+           material_identity_=0, depth_=0;
     GLint view_location_=-1, projection_location_=-1;
     GLint texture_mask_location_=-1, alpha_cutoff_location_=-1, masked_location_=-1;
     GLint sampler_locations_[MaterialGpu::LIVE_TEXTURE_COUNT] = {};

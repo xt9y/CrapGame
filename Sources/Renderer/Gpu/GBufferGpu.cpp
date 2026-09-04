@@ -28,6 +28,7 @@ struct InstanceData {
     vec4 advanced;
     vec4 transmission;
     vec4 extra;
+    uvec4 identity;
 };
 layout(std430,binding=0) readonly buffer InstanceBuffer { InstanceData instances[]; };
 uniform mat4 uView;
@@ -69,6 +70,7 @@ struct InstanceData {
     vec4 advanced;
     vec4 transmission;
     vec4 extra;
+    uvec4 identity;
 };
 layout(std430,binding=0) readonly buffer InstanceBuffer { InstanceData instances[]; };
 
@@ -92,6 +94,7 @@ uniform sampler2D uClearcoatTex;
 uniform sampler2D uClearcoatRoughnessTex;
 uniform sampler2D uSheenTex;
 uniform sampler2D uAnisotropyTex;
+layout(r32ui,binding=0) writeonly uniform uimage2D oMaterialIdentity;
 
 layout(location=0) out vec4 oPositionDepth;
 layout(location=1) out vec4 oNormalRoughness;
@@ -188,6 +191,7 @@ void main(){
     oAdvanced=vec4(clearcoat,clearcoatRoughness,sheen,reflectivity);
     oAmbientTransmission=vec4(ambient,transmission);
     oTangentAnisotropy=vec4(t,anisotropy);
+    imageStore(oMaterialIdentity,ivec2(gl_FragCoord.xy),uvec4(inst.identity.x,0u,0u,0u));
 }
 )GLSL";
 
@@ -202,6 +206,13 @@ int channelCode(char channel)
     switch(channel){case 'g':case 'G':return 1;case 'b':case 'B':return 2;case 'a':case 'A':return 3;case 'm':case 'M':return 4;default:return 0;}
 }
 
+std::uint32_t materialIdentity(Ecs::Entity entity,const Ecs::MaterialComponent& material)
+{
+    if(material.renderer_material!=Ecs::INVALID_ASSET_HANDLE)
+        return (material.renderer_material&0x7fffffffu)+1u;
+    return 0x80000000u|(entity&0x7fffffffu);
+}
+
 bool ensureColorTexture(GLuint* texture,int width,int height,SurfaceFormat format)
 {
     if(!texture) return false;
@@ -213,6 +224,20 @@ bool ensureColorTexture(GLuint* texture,int width,int height,SurfaceFormat forma
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D,0,surfaceInternalFormat(format),width,height,0,GL_RGBA,surfacePixelType(format),nullptr);
+    return true;
+}
+
+bool ensureMaterialIdentityTexture(GLuint* texture,int width,int height)
+{
+    if(!texture) return false;
+    if(*texture==0) *texture=lwcgl_glGenTexture();
+    if(*texture==0) return false;
+    glBindTexture(GL_TEXTURE_2D,*texture);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_R32UI,width,height,0,GL_RED_INTEGER,GL_UNSIGNED_INT,nullptr);
     return true;
 }
 
@@ -255,7 +280,7 @@ bool GBufferGpu::init(std::string* error)
     return true;
 }
 
-bool GBufferGpu::resize(int width,int height,std::string* error){if(!resizeStorageRequired(width_,height_,framebuffer_!=0,width,height))return true;width_=normalizedExtent(width);height_=normalizedExtent(height);return createAttachments(error);}
+bool GBufferGpu::resize(int width,int height,std::string* error){if(!resizeStorageRequired(width_,height_,framebuffer_!=0&&material_identity_!=0,width,height))return true;width_=normalizedExtent(width);height_=normalizedExtent(height);return createAttachments(error);}
 bool GBufferGpu::createMesh(Ecs::MeshType type,MeshGpu* mesh,std::string* error){return createMesh(Mesh::meshForType(type),mesh,error);}
 
 bool GBufferGpu::createMesh(const Mesh::MeshData& source,MeshGpu* mesh,std::string* error)
@@ -322,7 +347,7 @@ bool GBufferGpu::createAttachments(std::string* error)
         setError(error,"failed to allocate GPU GBuffer framebuffer");
         return false;
     }
-    const bool ok=ensureColorTexture(&position_depth_,width_,height_,GBUFFER_POSITION_DEPTH_FORMAT)&&ensureColorTexture(&normal_roughness_,width_,height_,GBUFFER_NORMAL_ROUGHNESS_FORMAT)&&ensureColorTexture(&albedo_metallic_,width_,height_,GBUFFER_ALBEDO_METALLIC_FORMAT)&&ensureColorTexture(&emissive_opacity_,width_,height_,GBUFFER_EMISSIVE_FORMAT)&&ensureColorTexture(&specular_ior_,width_,height_,GBUFFER_SPECULAR_IOR_FORMAT)&&ensureColorTexture(&advanced_,width_,height_,GBUFFER_ADVANCED_FORMAT)&&ensureColorTexture(&ambient_transmission_,width_,height_,GBUFFER_TRANSMISSION_FORMAT)&&ensureColorTexture(&tangent_anisotropy_,width_,height_,GBUFFER_TANGENT_ANISOTROPY_FORMAT)&&ensureDepthTexture(&depth_,width_,height_);if(!ok){setError(error,"failed to allocate GPU GBuffer textures");destroyAttachments();return false;}
+    const bool ok=ensureColorTexture(&position_depth_,width_,height_,GBUFFER_POSITION_DEPTH_FORMAT)&&ensureColorTexture(&normal_roughness_,width_,height_,GBUFFER_NORMAL_ROUGHNESS_FORMAT)&&ensureColorTexture(&albedo_metallic_,width_,height_,GBUFFER_ALBEDO_METALLIC_FORMAT)&&ensureColorTexture(&emissive_opacity_,width_,height_,GBUFFER_EMISSIVE_FORMAT)&&ensureColorTexture(&specular_ior_,width_,height_,GBUFFER_SPECULAR_IOR_FORMAT)&&ensureColorTexture(&advanced_,width_,height_,GBUFFER_ADVANCED_FORMAT)&&ensureColorTexture(&ambient_transmission_,width_,height_,GBUFFER_TRANSMISSION_FORMAT)&&ensureColorTexture(&tangent_anisotropy_,width_,height_,GBUFFER_TANGENT_ANISOTROPY_FORMAT)&&ensureMaterialIdentityTexture(&material_identity_,width_,height_)&&ensureDepthTexture(&depth_,width_,height_);if(!ok){setError(error,"failed to allocate GPU GBuffer textures");destroyAttachments();return false;}
     GL30.glBindFramebuffer(GL_FRAMEBUFFER,framebuffer_);GLuint textures[]={position_depth_,normal_roughness_,albedo_metallic_,emissive_opacity_,specular_ior_,advanced_,ambient_transmission_,tangent_anisotropy_};for(int i=0;i<8;++i)GL30.glFramebufferTexture2D(GL_FRAMEBUFFER,static_cast<GLenum>(GL_COLOR_ATTACHMENT0+i),GL_TEXTURE_2D,textures[i],0);GL30.glFramebufferTexture2D(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_TEXTURE_2D,depth_,0);const GLenum outputs[]={GL_COLOR_ATTACHMENT0,GL_COLOR_ATTACHMENT1,GL_COLOR_ATTACHMENT2,GL_COLOR_ATTACHMENT3,GL_COLOR_ATTACHMENT4,GL_COLOR_ATTACHMENT5,GL_COLOR_ATTACHMENT6,GL_COLOR_ATTACHMENT7};GL20.glDrawBuffers(8,outputs);const GLenum status=GL30.glCheckFramebufferStatus(GL_FRAMEBUFFER);GL30.glBindFramebuffer(GL_FRAMEBUFFER,0);glBindTexture(GL_TEXTURE_2D,0);if(status!=GL_FRAMEBUFFER_COMPLETE){char message[128];std::snprintf(message,sizeof(message),"GPU GBuffer framebuffer incomplete: 0x%04x",static_cast<unsigned>(status));setError(error,message);destroyAttachments();return false;}return true;
 }
 
@@ -339,7 +364,7 @@ bool GBufferGpu::updateScene(const Ecs::World& world,std::string* error)
         instance.ambient_opacity[0]=ambient.x;instance.ambient_opacity[1]=ambient.y;instance.ambient_opacity[2]=ambient.z;instance.ambient_opacity[3]=resource?resource->opacity:material->opacity;
         const float specStrength=resource?resource->specular_strength:material->specular_strength;instance.specular_ior[0]=specular.x*specStrength;instance.specular_ior[1]=specular.y*specStrength;instance.specular_ior[2]=specular.z*specStrength;instance.specular_ior[3]=resource?resource->ior:material->ior;
         instance.advanced[0]=resource?resource->clearcoat:material->clearcoat;instance.advanced[1]=resource?resource->clearcoat_roughness:material->clearcoat_roughness;instance.advanced[2]=resource?resource->sheen:material->sheen;instance.advanced[3]=resource?resource->reflectivity:material->reflectivity;
-        instance.transmission[0]=transmissionColor.x;instance.transmission[1]=transmissionColor.y;instance.transmission[2]=transmissionColor.z;instance.transmission[3]=resource?resource->transmission:material->transmission;instance.extra[0]=resource?resource->anisotropy:material->anisotropy;
+        instance.transmission[0]=transmissionColor.x;instance.transmission[1]=transmissionColor.y;instance.transmission[2]=transmissionColor.z;instance.transmission[3]=resource?resource->transmission:material->transmission;instance.extra[0]=resource?resource->anisotropy:material->anisotropy;instance.identity[0]=materialIdentity(entity,*material);
         if(mesh->loaded_mesh!=Ecs::INVALID_ASSET_HANDLE){const Material::MaterialHandle mh=resource?material->renderer_material:Material::INVALID_MATERIAL;const Material::RenderClass rc=resource?resource->render_class:Material::RenderClass::Opaque;LoadedBatch* b=loadedBatch(mesh->loaded_mesh,mh,rc,error);if(!b)return false;b->instances.push_back(instance);}else if(mesh->mesh==Ecs::MeshType::Cube)cubes_.instances.push_back(instance);else planes_.instances.push_back(instance);
     }
     if(!uploadBatch(&cubes_,error)||!uploadBatch(&planes_,error)) return false;
@@ -351,7 +376,7 @@ bool GBufferGpu::updateScene(const Ecs::World& world,std::string* error)
 
 bool GBufferGpu::draw(const Math::Mat4& view,const Math::Mat4& projection,std::string* error)
 {
-    if(!ready()){setError(error,"GPU GBuffer is not initialized or resized");return false;}GL30.glBindFramebuffer(GL_FRAMEBUFFER,framebuffer_);glViewport(0,0,width_,height_);const GLfloat zero[4]={0,0,0,0};for(int i=0;i<8;++i)GL30.glClearBufferfv(GL_COLOR,i,zero);glClearDepth(1.0);glClear(GL_DEPTH_BUFFER_BIT);glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LESS);glDisable(GL_BLEND);glEnable(GL_CULL_FACE);glCullFace(GL_BACK);GL20.glUseProgram(program_);GL20.glUniformMatrix4fv(view_location_,1,GL_FALSE,view.value);GL20.glUniformMatrix4fv(projection_location_,1,GL_FALSE,projection.value);
+    if(!ready()){setError(error,"GPU GBuffer is not initialized or resized");return false;}GL30.glBindFramebuffer(GL_FRAMEBUFFER,framebuffer_);glViewport(0,0,width_,height_);const GLfloat zero[4]={0,0,0,0};for(int i=0;i<8;++i)GL30.glClearBufferfv(GL_COLOR,i,zero);glClearDepth(1.0);glClear(GL_DEPTH_BUFFER_BIT);glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LESS);glDisable(GL_BLEND);glEnable(GL_CULL_FACE);glCullFace(GL_BACK);GL42.glBindImageTexture(0,material_identity_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_R32UI);GL20.glUseProgram(program_);GL20.glUniformMatrix4fv(view_location_,1,GL_FALSE,view.value);GL20.glUniformMatrix4fv(projection_location_,1,GL_FALSE,projection.value);
     auto drawProcedural=[&](const Batch& b)->bool{if(b.instances.empty())return true;if(!bindMaterial(Material::INVALID_MATERIAL,error))return false;GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0,b.instance_buffer);GL30.glBindVertexArray(b.mesh.vao);GL31.glDrawElementsInstanced(GL_TRIANGLES,b.mesh.index_count,GL_UNSIGNED_INT,nullptr,static_cast<GLsizei>(b.instances.size()));return true;};
     if(!drawProcedural(cubes_)||!drawProcedural(planes_)) return false;
     for(const LoadedBatch& batch:loaded_batches_)
@@ -364,12 +389,12 @@ bool GBufferGpu::draw(const Math::Mat4& view,const Math::Mat4& projection,std::s
         GL30.glBindVertexArray(mesh->vao);
         GL31.glDrawElementsInstanced(GL_TRIANGLES,mesh->index_count,GL_UNSIGNED_INT,nullptr,static_cast<GLsizei>(batch.instances.size()));
     }
-    GL30.glBindVertexArray(0);GL20.glUseProgram(0);GL30.glBindFramebuffer(GL_FRAMEBUFFER,0);glDisable(GL_CULL_FACE);glDisable(GL_DEPTH_TEST);GL42.glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);if(error)error->clear();return true;
+    GL30.glBindVertexArray(0);GL20.glUseProgram(0);GL30.glBindFramebuffer(GL_FRAMEBUFFER,0);glDisable(GL_CULL_FACE);glDisable(GL_DEPTH_TEST);GL42.glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT|GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);GL42.glBindImageTexture(0,0,0,GL_FALSE,0,GL_WRITE_ONLY,GL_R32UI);if(error)error->clear();return true;
 }
 
 bool GBufferGpu::render(const Ecs::World& world,const Math::Mat4& view,const Math::Mat4& projection,std::string* error){return updateScene(world,error)&&draw(view,projection,error);}
 
-void GBufferGpu::destroyAttachments(){deleteTexture(&position_depth_);deleteTexture(&normal_roughness_);deleteTexture(&albedo_metallic_);deleteTexture(&emissive_opacity_);deleteTexture(&specular_ior_);deleteTexture(&advanced_);deleteTexture(&ambient_transmission_);deleteTexture(&tangent_anisotropy_);deleteTexture(&depth_);if(framebuffer_!=0){GL30.glDeleteFramebuffers(1,&framebuffer_);framebuffer_=0;}}
+void GBufferGpu::destroyAttachments(){deleteTexture(&position_depth_);deleteTexture(&normal_roughness_);deleteTexture(&albedo_metallic_);deleteTexture(&emissive_opacity_);deleteTexture(&specular_ior_);deleteTexture(&advanced_);deleteTexture(&ambient_transmission_);deleteTexture(&tangent_anisotropy_);deleteTexture(&material_identity_);deleteTexture(&depth_);if(framebuffer_!=0){GL30.glDeleteFramebuffers(1,&framebuffer_);framebuffer_=0;}}
 void GBufferGpu::destroyMesh(MeshGpu* mesh){if(!mesh)return;if(mesh->index_buffer!=0)GL15.glDeleteBuffers(1,&mesh->index_buffer);if(mesh->vertex_buffer!=0)GL15.glDeleteBuffers(1,&mesh->vertex_buffer);if(mesh->vao!=0)GL30.glDeleteVertexArrays(1,&mesh->vao);*mesh={};}
 void GBufferGpu::destroyBatch(Batch* b){if(!b)return;if(b->instance_buffer!=0)GL15.glDeleteBuffers(1,&b->instance_buffer);b->instance_buffer=0;b->instance_capacity=0;b->instances.clear();b->uploaded_instances.clear();destroyMesh(&b->mesh);}
 void GBufferGpu::destroyBatch(LoadedBatch* b){if(!b)return;if(b->instance_buffer!=0)GL15.glDeleteBuffers(1,&b->instance_buffer);b->instance_buffer=0;b->instance_capacity=0;b->instances.clear();b->uploaded_instances.clear();}

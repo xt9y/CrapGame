@@ -6,6 +6,7 @@
 #include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/ReprojectionCacheGpu.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
 #include "Renderer/Gpu/TransparentGpu.hpp"
 #include "Renderer/Math/Math.hpp"
@@ -38,7 +39,8 @@ public:
     bool resize (int width, int height, std::string *error = nullptr);
     bool prewarmImportedTrace (std::string *error = nullptr)
     {
-        return ensureImportedTraceShader(error);
+        if (!ensureImportedTraceShader(error)) return false;
+        return reprojection_cache_.ensure(width_, height_, error);
     }
 
     bool traceShared (
@@ -128,6 +130,7 @@ public:
     }
     GLuint indirectTexture () const { return indirect_history_[history_index_]; }
     GLuint reflectionTexture () const { return reflection_history_[history_index_]; }
+    const ReprojectionCacheGpu& reprojectionCache () const { return reprojection_cache_; }
 
 private:
     bool ensureImportedTraceShader(std::string *error);
@@ -173,13 +176,19 @@ private:
     GLint trace_imported_instance_count_location_ = -1;
     GLint trace_imported_tlas_count_location_ = -1;
     GLint trace_material_count_location_ = -1;
+    GLint trace_reprojection_available_location_ = -1;
 
     Math::Mat4 last_view_ = Math::identity();
     Math::Mat4 last_projection_ = Math::identity();
     Math::Vec3 last_camera_ = {0.0f, 0.0f, 0.0f};
 
+    ReprojectionCacheGpu reprojection_cache_;
+    std::uint64_t reprojection_scene_revision_ = 0u;
+    std::uint64_t reprojection_mesh_revision_ = 0u;
+    std::uint64_t reprojection_material_revision_ = 0u;
     int history_index_ = 0;
     bool history_valid_ = false;
+    bool reprojection_scene_revision_valid_ = false;
     bool bvh_shader_validated_ = false;
     bool bvh_trace_active_ = false;
 

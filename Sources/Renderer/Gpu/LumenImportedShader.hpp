@@ -13,20 +13,20 @@ inline void replaceLumenRequired(std::string *source,
                                  const std::string& from,
                                  const std::string& to)
 {
-    const std::size_t at = source ? source->find(from) : std::string::npos;
-    if (at == std::string::npos)
+    const std::size_t at=source?source->find(from):std::string::npos;
+    if(at==std::string::npos)
         throw std::runtime_error("Lumen imported shader patch point missing");
-    source->replace(at, from.size(), to);
+    source->replace(at,from.size(),to);
 }
 
 inline std::string lumenImportedTraceShader()
 {
-    std::string source = LUMEN_TRACE_BVH_V2_COMPUTE;
+    std::string source=LUMEN_TRACE_BVH_V2_COMPUTE;
     replaceLumenRequired(&source,
         "layout(std430,binding=7) readonly buffer PrimitiveBuffer",
         "layout(std430,binding=5) readonly buffer PrimitiveBuffer");
 
-    std::string imported = IMPORTED_TRIANGLE_TRACE_GLSL;
+    std::string imported=IMPORTED_TRIANGLE_TRACE_GLSL;
     replaceLumenRequired(&imported,
         "layout(binding=4) uniform sampler2DArray sTraceColorAtlas;",
         "layout(binding=7) uniform sampler2DArray sTraceColorAtlas;");
@@ -34,14 +34,14 @@ inline std::string lumenImportedTraceShader()
         "layout(binding=5) uniform sampler2DArray sTraceDataAtlas;",
         "layout(binding=8) uniform sampler2DArray sTraceDataAtlas;");
 
-    const std::size_t rotate_at = source.find("vec3 rotateX");
-    if (rotate_at == std::string::npos)
+    const std::size_t rotate_at=source.find("vec3 rotateX");
+    if(rotate_at==std::string::npos)
         throw std::runtime_error("Lumen imported shader insertion point missing");
-    source.insert(rotate_at, imported);
+    source.insert(rotate_at,imported);
 
-    replaceLumenRequired(&source, "bool traceScene(", "bool traceAnalyticScene(");
+    replaceLumenRequired(&source,"bool traceScene(","bool traceAnalyticScene(");
 
-    const char *combined = R"GLSL(
+    const char *combined=R"GLSL(
 int gImportedMaterial=-1;
 vec2 gImportedUv=vec2(0.0);
 vec3 gImportedNormal=vec3(0.0);
@@ -101,12 +101,12 @@ bool traceScene(vec3 ro,vec3 rd,float maximumDistance,
 }
 )GLSL";
 
-    const std::size_t hash_at = source.find("uint hashValue");
-    if (hash_at == std::string::npos)
+    const std::size_t hash_at=source.find("uint hashValue");
+    if(hash_at==std::string::npos)
         throw std::runtime_error("Lumen combined-trace insertion point missing");
-    source.insert(hash_at, combined);
+    source.insert(hash_at,combined);
 
-    const char *material_eval = R"GLSL(
+    const char *material_eval=R"GLSL(
 vec3 importedFallbackRadiance(){
     if(!gImportedHit||gImportedMaterial<0||gImportedMaterial>=uTraceMaterialCount)return vec3(0.018,0.022,0.032);
     TraceRecord material=traceRecords[gImportedMaterial];
@@ -124,19 +124,31 @@ vec3 importedFallbackRadiance(){
     return max(emissive+diffuse+conductor+spec,vec3(0.0));
 }
 )GLSL";
-    const std::size_t fallback_at = source.find("vec3 primitiveFallbackRadiance");
-    if (fallback_at == std::string::npos)
+    const std::size_t fallback_at=source.find("vec3 primitiveFallbackRadiance");
+    if(fallback_at==std::string::npos)
         throw std::runtime_error("Lumen imported material insertion point missing");
-    source.insert(fallback_at, material_eval);
+    source.insert(fallback_at,material_eval);
     replaceLumenRequired(&source,
         "vec3 primitiveFallbackRadiance(int i){",
         "vec3 primitiveFallbackRadiance(int i){if(gImportedHit)return importedFallbackRadiance();");
 
     replaceLumenRequired(&source,
         "layout(binding=6) uniform sampler2D sPreviousPosition;",
-        "layout(binding=6) uniform sampler2D sPreviousPosition;\nlayout(binding=9) uniform sampler2D sSpecularIor;\nlayout(binding=10) uniform sampler2D sAdvancedMaterial;");
+        "layout(binding=6) uniform sampler2D sPreviousPosition;\n"
+        "layout(binding=9) uniform sampler2D sSpecularIor;\n"
+        "layout(binding=10) uniform sampler2D sAdvancedMaterial;\n"
+        "layout(binding=11) uniform sampler2D sReprojectedIndirect;\n"
+        "layout(binding=12) uniform sampler2D sReprojectedReflection;\n"
+        "layout(binding=13) uniform usampler2D sReprojectionValid;\n"
+        "uniform int uReprojectionAvailable;");
     replaceLumenRequired(&source,
         "vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0);",
+        "if(uReprojectionAvailable!=0&&texelFetch(sReprojectionValid,tp,0).r!=0u){"
+        "vec4 currentPosition=texelFetch(sPositionDepth,pixel,0);"
+        "imageStore(oIndirect,tp,texelFetch(sReprojectedIndirect,tp,0));"
+        "imageStore(oReflection,tp,texelFetch(sReprojectedReflection,tp,0));"
+        "imageStore(oPositionHistory,tp,vec4(currentPosition.xyz,currentPosition.w>0.0?1.0:0.0));"
+        "return;}"
         "vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0),si=texelFetch(sSpecularIor,pixel,0),advanced=texelFetch(sAdvancedMaterial,pixel,0);");
     replaceLumenRequired(&source,
         "if(metallic>0.08||roughness<0.45)",
