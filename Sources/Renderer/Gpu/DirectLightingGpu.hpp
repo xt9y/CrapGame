@@ -5,6 +5,7 @@
 #include "Renderer/Gpu/Bvh.hpp"
 #include "Renderer/Gpu/BvhBench.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/StaticShadowCacheGpu.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
 #include "Renderer/Math/Math.hpp"
 
@@ -34,7 +35,8 @@ public:
     bool updateScene(const Ecs::World& world,std::string *error=nullptr);
     bool prewarm(const Ecs::World& world,std::string *error=nullptr)
     {
-        return updateScene(world,error);
+        if(!updateScene(world,error)) return false;
+        return ensureStaticShadowCache(error);
     }
     bool bindImportedScene(const TriangleScene& triangles,std::string *error=nullptr);
     bool dispatch(const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error=nullptr);
@@ -57,6 +59,7 @@ public:
     const Ecs::World *sceneWorld() const { return scene_world_; }
     std::uint64_t sceneRevision() const { return scene_revision_; }
     TransparentGpu *transparentPass() const { return transparent_.get(); }
+    const StaticShadowCacheGpu& staticShadowCache() const { return static_shadow_cache_; }
 
 private:
     static constexpr std::size_t BVH_THRESHOLD=8u;
@@ -68,6 +71,8 @@ private:
     const BvhBenchConfig& benchConfig();
     void appendStressPrimitives(std::size_t count);
     bool ensureBvhBuffer(std::string *error);
+    bool ensureStaticShadowCache(std::string *error);
+    int staticShadowLightIndex() const;
     bool uploadBuffer(GLuint buffer,std::size_t *capacity,const void *data,std::size_t size,std::string *error);
     void destroyTextures();
 
@@ -83,6 +88,7 @@ private:
     std::vector<BvhBoundsInput> primitive_bounds_;
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
     TriangleScene triangle_scene_;
+    StaticShadowCacheGpu static_shadow_cache_;
     mutable std::unique_ptr<TransparentGpu> transparent_;
     const Ecs::World *scene_world_=nullptr;
     std::uint64_t scene_revision_=0u;
