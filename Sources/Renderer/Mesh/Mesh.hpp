@@ -36,6 +36,10 @@ struct MeshData
 MeshData createCube ();
 MeshData createPlane ();
 const MeshData& meshForType (Ecs::MeshType mesh_type);
+std::uint32_t registerLoadedMesh (MeshData mesh);
+const MeshData *loadedMesh (std::uint32_t handle);
+const MeshData& meshForComponent (const Ecs::MeshComponent& component);
+void clearLoadedMeshes ();
 
 } // namespace Mesh
 } // namespace Renderer

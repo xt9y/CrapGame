@@ -10,6 +10,7 @@ namespace Ecs
 
 using Entity = std::uint32_t;
 constexpr Entity INVALID_ENTITY = UINT32_MAX;
+constexpr std::uint32_t INVALID_ASSET_HANDLE = UINT32_MAX;
 
 struct Vec3 
 {
@@ -43,6 +44,7 @@ enum class MeshType
 struct MeshComponent 
 {
     MeshType mesh;
+    std::uint32_t loaded_mesh = INVALID_ASSET_HANDLE;
 };
 
 struct RenderableComponent 
@@ -58,6 +60,25 @@ struct MaterialComponent
     float metallic,
           roughness,
           emissive_strength;
+
+    Vec3 ambient = {0.0f, 0.0f, 0.0f},
+         specular = {0.0f, 0.0f, 0.0f},
+         transmission_color = {1.0f, 1.0f, 1.0f};
+
+    float specular_strength = 1.0f,
+          shininess = 0.0f,
+          ior = 1.0f,
+          opacity = 1.0f,
+          transparency = 0.0f,
+          transmission = 0.0f,
+          reflectivity = 0.0f,
+          clearcoat = 0.0f,
+          clearcoat_roughness = 0.0f,
+          sheen = 0.0f,
+          anisotropy = 0.0f;
+
+    int illumination_model = 0;
+    std::uint32_t model_material = INVALID_ASSET_HANDLE;
 };
 
 enum class LightType 
@@ -139,13 +160,7 @@ public:
     Entity activeCamera () const;
     const std::vector<Entity>& entities () const;
 
-    /* Monotonic conservative mutation revision. Mutable component access
-     * advances this value; const renderer reads do not. This gives render-hot
-     * change tracking an O(1) unchanged-world fast path. */
     std::uint64_t changeRevision () const { return change_revision_; }
-
-    /* Use when code retains a mutable component reference across frames and
-     * mutates it without going through a non-const getter. */
     void markChanged () { ++change_revision_; }
 
 private:
