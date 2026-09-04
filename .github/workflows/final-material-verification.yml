@@ -66,6 +66,15 @@ jobs:
             -o /tmp/tga_contract
           /tmp/tga_contract
 
+          $CXX tests/normal_convention_contract.cpp \
+            Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
+            -o /tmp/normal_convention_contract
+          /tmp/normal_convention_contract
+
+          $CXX tests/lumen_schedule_contract.cpp \
+            -o /tmp/lumen_schedule_contract
+          /tmp/lumen_schedule_contract
+
           $CXX tests/material_resolver_contract.cpp \
             Sources/Models/Material.cpp Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
             Sources/Renderer/Material/Material.cpp \
@@ -112,7 +121,7 @@ jobs:
             -o /tmp/gpu_material_contract
           /tmp/gpu_material_contract
 
-          for test in gpu_gbuffer_material_contract direct_material_brdf_contract transparent_material_contract; do
+          for test in gpu_gbuffer_material_contract direct_material_brdf_contract transparent_material_contract imported_trace_cadence_contract lumen_history_neighborhood_contract; do
             $CXX tests/${test}.cpp -o /tmp/${test}
             /tmp/${test}
           done
