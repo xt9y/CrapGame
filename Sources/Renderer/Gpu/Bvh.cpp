@@ -1,10 +1,12 @@
 #include "Bvh.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numeric>
 #include <utility>
+#include <vector>
 
 namespace Renderer
 {
@@ -79,48 +81,248 @@ float centroid (const BvhBoundsInput& bounds, int axis)
     return (component(bounds.minimum, axis) + component(bounds.maximum, axis)) * 0.5f;
 }
 
+float surfaceArea (const float minimum[3], const float maximum[3])
+{
+    const float x = std::max(0.0f, maximum[0] - minimum[0]),
+                y = std::max(0.0f, maximum[1] - minimum[1]),
+                z = std::max(0.0f, maximum[2] - minimum[2]);
+    return 2.0f * (x * y + y * z + z * x);
+}
+
+void resetBounds (float minimum[3], float maximum[3])
+{
+    const float largest = std::numeric_limits<float>::max();
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        minimum[axis] = largest;
+        maximum[axis] = -largest;
+    }
+}
+
+void includeBounds (
+            float minimum[3],
+            float maximum[3],
+            const BvhBoundsInput& bounds
+    )
+{
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        minimum[axis] = std::min(minimum[axis], bounds.minimum[axis]);
+        maximum[axis] = std::max(maximum[axis], bounds.maximum[axis]);
+    }
+}
+
+void includeBounds (
+            float minimum[3],
+            float maximum[3],
+            const float other_minimum[3],
+            const float other_maximum[3]
+    )
+{
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        minimum[axis] = std::min(minimum[axis], other_minimum[axis]);
+        maximum[axis] = std::max(maximum[axis], other_maximum[axis]);
+    }
+}
+
+struct Bin
+{
+    float minimum[3];
+    float maximum[3];
+    std::size_t count = 0u;
+
+    Bin ()
+    {
+        resetBounds(minimum, maximum);
+    }
+};
+
 struct Builder
 {
     const std::vector<BvhBoundsInput>& bounds;
     std::vector<std::uint32_t> order;
     std::vector<BvhNodeGpu> nodes;
     std::size_t leaf_size;
+    std::size_t bin_count;
+
+    int longestCentroidAxis (
+                const float centroid_minimum[3],
+                const float centroid_maximum[3]
+        ) const
+    {
+        int split_axis = 0;
+        float split_extent = centroid_maximum[0] - centroid_minimum[0];
+        for (int axis = 1; axis < 3; ++axis)
+        {
+            const float extent = centroid_maximum[axis] - centroid_minimum[axis];
+            if (extent > split_extent)
+            {
+                split_axis = axis;
+                split_extent = extent;
+            }
+        }
+        return split_axis;
+    }
+
+    std::size_t medianSplit (
+                std::size_t first,
+                std::size_t count,
+                int split_axis
+        )
+    {
+        auto begin = order.begin() + static_cast<std::ptrdiff_t>(first);
+        auto end = begin + static_cast<std::ptrdiff_t>(count);
+        std::stable_sort(
+                begin,
+                end,
+                [&] (std::uint32_t left, std::uint32_t right)
+                {
+                    const float left_center = centroid(bounds[left], split_axis),
+                                right_center = centroid(bounds[right], split_axis);
+                    if (left_center < right_center) return true;
+                    if (left_center > right_center) return false;
+                    return bounds[left].primitive_index < bounds[right].primitive_index;
+                }
+            );
+        return first + count / 2u;
+    }
+
+    bool chooseSahSplit (
+                std::size_t first,
+                std::size_t count,
+                const float node_minimum[3],
+                const float node_maximum[3],
+                const float centroid_minimum[3],
+                const float centroid_maximum[3],
+                int *best_axis,
+                std::size_t *best_bin
+        )
+    {
+        const float parent_area = surfaceArea(node_minimum, node_maximum);
+        if (parent_area <= 0.0f || count <= leaf_size) return false;
+
+        float best_cost = parent_area * static_cast<float>(count);
+        bool found = false;
+
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const float extent = centroid_maximum[axis] - centroid_minimum[axis];
+            if (extent <= 1.0e-8f) continue;
+
+            std::vector<Bin> bins(bin_count);
+            for (std::size_t offset = 0; offset < count; ++offset)
+            {
+                const std::uint32_t item_index = order[first + offset];
+                const float normalized =
+                    (centroid(bounds[item_index], axis) - centroid_minimum[axis]) / extent;
+                std::size_t bin_index = static_cast<std::size_t>(
+                        normalized * static_cast<float>(bin_count)
+                    );
+                if (bin_index >= bin_count) bin_index = bin_count - 1u;
+
+                Bin& bin = bins[bin_index];
+                ++bin.count;
+                includeBounds(bin.minimum, bin.maximum, bounds[item_index]);
+            }
+
+            std::vector<std::size_t> left_count(bin_count),
+                                     right_count(bin_count);
+            std::vector<std::array<float, 3>> left_minimum(bin_count),
+                                                   left_maximum(bin_count),
+                                                   right_minimum(bin_count),
+                                                   right_maximum(bin_count);
+
+            float running_minimum[3], running_maximum[3];
+            resetBounds(running_minimum, running_maximum);
+            std::size_t running_count = 0u;
+            for (std::size_t index = 0; index < bin_count; ++index)
+            {
+                if (bins[index].count != 0u)
+                {
+                    includeBounds(
+                            running_minimum,
+                            running_maximum,
+                            bins[index].minimum,
+                            bins[index].maximum
+                        );
+                    running_count += bins[index].count;
+                }
+                left_count[index] = running_count;
+                for (int component_index = 0; component_index < 3; ++component_index)
+                {
+                    left_minimum[index][component_index] = running_minimum[component_index];
+                    left_maximum[index][component_index] = running_maximum[component_index];
+                }
+            }
+
+            resetBounds(running_minimum, running_maximum);
+            running_count = 0u;
+            for (std::size_t reverse = bin_count; reverse-- > 0u;)
+            {
+                if (bins[reverse].count != 0u)
+                {
+                    includeBounds(
+                            running_minimum,
+                            running_maximum,
+                            bins[reverse].minimum,
+                            bins[reverse].maximum
+                        );
+                    running_count += bins[reverse].count;
+                }
+                right_count[reverse] = running_count;
+                for (int component_index = 0; component_index < 3; ++component_index)
+                {
+                    right_minimum[reverse][component_index] = running_minimum[component_index];
+                    right_maximum[reverse][component_index] = running_maximum[component_index];
+                }
+            }
+
+            for (std::size_t split = 0; split + 1u < bin_count; ++split)
+            {
+                const std::size_t left_items = left_count[split],
+                                  right_items = right_count[split + 1u];
+                if (left_items == 0u || right_items == 0u) continue;
+
+                const float left_area = surfaceArea(
+                            left_minimum[split].data(),
+                            left_maximum[split].data()
+                        ),
+                            right_area = surfaceArea(
+                            right_minimum[split + 1u].data(),
+                            right_maximum[split + 1u].data()
+                        ),
+                            cost = left_area * static_cast<float>(left_items)
+                                 + right_area * static_cast<float>(right_items);
+
+                if (cost < best_cost - 1.0e-6f)
+                {
+                    best_cost = cost;
+                    *best_axis = axis;
+                    *best_bin = split;
+                    found = true;
+                }
+            }
+        }
+        return found;
+    }
 
     std::uint32_t buildNode (std::size_t first, std::size_t count)
     {
         const std::uint32_t node_index = static_cast<std::uint32_t>(nodes.size());
         nodes.push_back({});
 
-        float minimum[3] = {
-            std::numeric_limits<float>::max(),
-            std::numeric_limits<float>::max(),
-            std::numeric_limits<float>::max(),
-        };
-        float maximum[3] = {
-            -std::numeric_limits<float>::max(),
-            -std::numeric_limits<float>::max(),
-            -std::numeric_limits<float>::max(),
-        };
-        float centroid_minimum[3] = {
-            std::numeric_limits<float>::max(),
-            std::numeric_limits<float>::max(),
-            std::numeric_limits<float>::max(),
-        };
-        float centroid_maximum[3] = {
-            -std::numeric_limits<float>::max(),
-            -std::numeric_limits<float>::max(),
-            -std::numeric_limits<float>::max(),
-        };
+        float minimum[3], maximum[3],
+              centroid_minimum[3], centroid_maximum[3];
+        resetBounds(minimum, maximum);
+        resetBounds(centroid_minimum, centroid_maximum);
 
         for (std::size_t offset = 0; offset < count; ++offset)
         {
             const BvhBoundsInput& item = bounds[order[first + offset]];
-
+            includeBounds(minimum, maximum, item);
             for (int axis = 0; axis < 3; ++axis)
             {
-                minimum[axis] = std::min(minimum[axis], item.minimum[axis]);
-                maximum[axis] = std::max(maximum[axis], item.maximum[axis]);
-
                 const float center = centroid(item, axis);
                 centroid_minimum[axis] = std::min(centroid_minimum[axis], center);
                 centroid_maximum[axis] = std::max(centroid_maximum[axis], center);
@@ -151,35 +353,54 @@ struct Builder
         }
 
         int split_axis = 0;
-        float split_extent = centroid_maximum[0] - centroid_minimum[0];
-
-        for (int axis = 1; axis < 3; ++axis)
-        {
-            const float extent = centroid_maximum[axis] - centroid_minimum[axis];
-            if (extent > split_extent)
-            {
-                split_axis = axis;
-                split_extent = extent;
-            }
-        }
-
-        const std::size_t left_count = count / 2u;
-        const std::size_t middle = first + left_count;
-        const std::size_t end = first + count;
-
-        std::nth_element(
-                order.begin() + static_cast<std::ptrdiff_t>(first),
-                order.begin() + static_cast<std::ptrdiff_t>(middle),
-                order.begin() + static_cast<std::ptrdiff_t>(end),
-                [&] (std::uint32_t left, std::uint32_t right)
-                {
-                    return centroid(bounds[left], split_axis)
-                        < centroid(bounds[right], split_axis);
-                }
+        std::size_t split_bin = 0u,
+                    middle = 0u;
+        const bool use_sah = chooseSahSplit(
+                first,
+                count,
+                minimum,
+                maximum,
+                centroid_minimum,
+                centroid_maximum,
+                &split_axis,
+                &split_bin
             );
 
-        const std::uint32_t left = buildNode(first, left_count);
-        const std::uint32_t right = buildNode(middle, count - left_count);
+        if (use_sah)
+        {
+            const float extent =
+                centroid_maximum[split_axis] - centroid_minimum[split_axis];
+            auto begin = order.begin() + static_cast<std::ptrdiff_t>(first);
+            auto end = begin + static_cast<std::ptrdiff_t>(count);
+            auto middle_it = std::stable_partition(
+                    begin,
+                    end,
+                    [&] (std::uint32_t item_index)
+                    {
+                        const float normalized =
+                            (centroid(bounds[item_index], split_axis)
+                                - centroid_minimum[split_axis]) / extent;
+                        std::size_t bin_index = static_cast<std::size_t>(
+                                normalized * static_cast<float>(bin_count)
+                            );
+                        if (bin_index >= bin_count) bin_index = bin_count - 1u;
+                        return bin_index <= split_bin;
+                    }
+                );
+            middle = first + static_cast<std::size_t>(middle_it - begin);
+        }
+
+        if (!use_sah || middle == first || middle == first + count)
+        {
+            middle = medianSplit(
+                    first,
+                    count,
+                    longestCentroidAxis(centroid_minimum, centroid_maximum)
+                );
+        }
+
+        const std::uint32_t left = buildNode(first, middle - first);
+        const std::uint32_t right = buildNode(middle, first + count - middle);
 
         BvhNodeGpu& completed = nodes[node_index];
         completed.meta[0] = static_cast<std::int32_t>(left);
@@ -235,9 +456,10 @@ BvhBoundsInput primitiveBounds (
     return result;
 }
 
-BvhBuild buildBvh (
+BvhBuild buildBvhSah (
             const std::vector<BvhBoundsInput>& bounds,
-            std::size_t leaf_size
+            std::size_t leaf_size,
+            std::size_t bin_count
     )
 {
     BvhBuild result;
@@ -252,6 +474,7 @@ BvhBuild buildBvh (
         std::vector<std::uint32_t>(bounds.size()),
         {},
         std::min<std::size_t>(3u, std::max<std::size_t>(1u, leaf_size)),
+        std::max<std::size_t>(2u, std::min<std::size_t>(64u, bin_count)),
     };
 
     std::iota(builder.order.begin(), builder.order.end(), 0u);
@@ -260,6 +483,14 @@ BvhBuild buildBvh (
 
     result.nodes = std::move(builder.nodes);
     return result;
+}
+
+BvhBuild buildBvh (
+            const std::vector<BvhBoundsInput>& bounds,
+            std::size_t leaf_size
+    )
+{
+    return buildBvhSah(bounds, leaf_size, 16u);
 }
 
 bool refitBvh (

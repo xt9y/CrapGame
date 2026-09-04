@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_LUMENIMPORTEDSHADER_HPP
 
 #include "Renderer/Gpu/BvhShadersV2.hpp"
+#include "Renderer/Gpu/ImportedBvhTraversalPatch.hpp"
 #include "Renderer/Gpu/RadianceCacheShader.hpp"
 #include "Renderer/Gpu/ReflectionCacheShader.hpp"
 #include "Renderer/Gpu/TriangleTraceShader.hpp"
@@ -35,6 +36,7 @@ inline std::string lumenImportedTraceShader()
     replaceLumenRequired(&imported,
         "layout(binding=5) uniform sampler2DArray sTraceDataAtlas;",
         "layout(binding=8) uniform sampler2DArray sTraceDataAtlas;");
+    patchImportedBvhTraversal(&imported);
 
     const std::size_t rotate_at=source.find("vec3 rotateX");
     if(rotate_at==std::string::npos)

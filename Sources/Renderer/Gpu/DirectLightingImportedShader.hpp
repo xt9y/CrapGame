@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_DIRECTLIGHTINGIMPORTEDSHADER_HPP
 
 #include "Renderer/Gpu/DirectLightingShader.hpp"
+#include "Renderer/Gpu/ImportedBvhTraversalPatch.hpp"
 #include "Renderer/Gpu/ShadowTriangleShader.hpp"
 #include "Renderer/Gpu/StaticShadowShader.hpp"
 #include "Renderer/Gpu/TriangleTraceShader.hpp"
@@ -79,6 +80,7 @@ inline std::string directLightingImportedShader()
     replaceDirectRequired(&source,
         "for(int i=0;i<uLightCount;++i){LightData light=lights[i];",
         "for(int i=0;i<uLightCount;++i){if(i==uStaticSplitLightIndex)continue;LightData light=lights[i];");
+    patchImportedBvhTraversal(&source);
     return source;
 }
 

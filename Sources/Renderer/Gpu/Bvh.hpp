@@ -44,6 +44,12 @@ BvhBoundsInput primitiveBounds (
             std::uint32_t primitive_index
     );
 
+BvhBuild buildBvhSah (
+            const std::vector<BvhBoundsInput>& bounds,
+            std::size_t leaf_size = 3u,
+            std::size_t bin_count = 16u
+    );
+
 BvhBuild buildBvh (
             const std::vector<BvhBoundsInput>& bounds,
             std::size_t leaf_size = 3u
