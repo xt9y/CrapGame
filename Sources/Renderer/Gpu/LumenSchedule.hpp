@@ -65,27 +65,27 @@ public:
 
         if (!initialized_ || now_ns <= stable_since_ns_)
         {
-            return 240u;
+            return 60u;
         }
 
         const std::uint64_t stable_ns = now_ns - stable_since_ns_;
 
         if (stable_ns < 250000000ull)
         {
-            return 240u;
+            return 60u;
         }
 
         if (stable_ns < 1000000000ull)
         {
-            return 120u;
+            return 30u;
         }
 
         if (stable_ns < 3000000000ull)
         {
-            return 60u;
+            return 20u;
         }
 
-        return 30u;
+        return 15u;
     }
 
     std::uint32_t fixedHz () const
