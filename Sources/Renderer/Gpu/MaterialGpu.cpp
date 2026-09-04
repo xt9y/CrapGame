@@ -33,10 +33,26 @@ std::uint8_t encodeNormal(float value)
     return static_cast<std::uint8_t>(std::lround(clamped * 255.0f));
 }
 
-std::vector<MipLevel> normalMipChain(const Models::Tga::Image& image)
+std::vector<MipLevel> normalMipChain(
+    const Models::Tga::Image& image,
+    bool flip_y)
 {
     std::vector<MipLevel> levels;
-    levels.push_back({image.width, image.height, image.rgba});
+    MipLevel base;
+    base.width = image.width;
+    base.height = image.height;
+    base.rgba = image.rgba;
+
+    if (flip_y)
+    {
+        for (std::size_t pixel = 0; pixel < base.rgba.size() / 4u; ++pixel)
+        {
+            const std::size_t green = pixel * 4u + 1u;
+            base.rgba[green] = static_cast<std::uint8_t>(255u - base.rgba[green]);
+        }
+    }
+
+    levels.push_back(std::move(base));
 
     while (levels.back().width > 1 || levels.back().height > 1)
     {
@@ -187,7 +203,9 @@ GLuint MaterialGpu::ensureTexture(const Material::TextureBinding& binding,
 
     if (isNormalSlot(slot))
     {
-        const std::vector<MipLevel> levels = normalMipChain(asset->image);
+        const std::vector<MipLevel> levels = normalMipChain(
+            asset->image,
+            Models::normalMapUsesNegativeY(asset->path));
         for (std::size_t level = 0; level < levels.size(); ++level)
         {
             const MipLevel& mip = levels[level];
