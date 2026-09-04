@@ -4,6 +4,7 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/CpuReferencePolicy.hpp"
 #include "Renderer/GBuffer/GBuffer.hpp"
+#include "Renderer/Gpu/ConvergedFrameCache.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
@@ -11,6 +12,7 @@
 #include "Renderer/Gpu/LumenSchedule.hpp"
 #include "Renderer/Gpu/Presenter.hpp"
 #include "Renderer/Gpu/Profiler.hpp"
+#include "Renderer/Gpu/RevisionState.hpp"
 #include "Renderer/Gpu/RuntimeHotPath.hpp"
 #include "Renderer/Gpu/RuntimeHotPathV3.hpp"
 #include "Renderer/Lumen/Budget.hpp"
@@ -252,6 +254,8 @@ private:
     Gpu::DirectLightingGpu gpu_direct_lighting_;
     Gpu::LumenGpu gpu_lumen_;
     Gpu::LumenSchedule gpu_lumen_schedule_;
+    Gpu::ConvergedFrameCache gpu_converged_frame_cache_;
+    Gpu::RevisionState gpu_revisions_ = {};
     Gpu::Presenter presenter_;
     Gpu::Profiler gpu_profiler_;
 
