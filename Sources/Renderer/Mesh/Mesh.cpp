@@ -64,6 +64,12 @@ std::deque<MeshData>& loadedMeshes ()
     return meshes;
 }
 
+std::uint64_t& loadedRevision ()
+{
+    static std::uint64_t revision = 1u;
+    return revision;
+}
+
 } // namespace
 
 MeshData createCube () 
@@ -118,6 +124,7 @@ std::uint32_t registerLoadedMesh (MeshData mesh)
     std::deque<MeshData>& meshes = loadedMeshes();
     const std::uint32_t handle = static_cast<std::uint32_t>(meshes.size());
     meshes.push_back(std::move(mesh));
+    ++loadedRevision();
     return handle;
 }
 
@@ -125,6 +132,11 @@ const MeshData *loadedMesh (std::uint32_t handle)
 {
     std::deque<MeshData>& meshes = loadedMeshes();
     return handle < meshes.size() ? &meshes[handle] : nullptr;
+}
+
+std::uint64_t loadedMeshRevision ()
+{
+    return loadedRevision();
 }
 
 const MeshData& meshForComponent (const Ecs::MeshComponent& component)
@@ -143,6 +155,7 @@ const MeshData& meshForComponent (const Ecs::MeshComponent& component)
 void clearLoadedMeshes ()
 {
     loadedMeshes().clear();
+    ++loadedRevision();
 }
 
 } // namespace Mesh

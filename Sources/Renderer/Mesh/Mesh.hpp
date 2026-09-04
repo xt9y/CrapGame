@@ -39,6 +39,7 @@ MeshData createPlane ();
 const MeshData& meshForType (Ecs::MeshType mesh_type);
 std::uint32_t registerLoadedMesh (MeshData mesh);
 const MeshData *loadedMesh (std::uint32_t handle);
+std::uint64_t loadedMeshRevision ();
 const MeshData& meshForComponent (const Ecs::MeshComponent& component);
 void clearLoadedMeshes ();
 

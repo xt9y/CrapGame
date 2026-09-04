@@ -103,6 +103,7 @@ float iorToF0(float ior);
 MaterialHandle registerMaterial(Resource resource);
 const Resource *get(MaterialHandle handle);
 std::size_t count();
+std::uint64_t revision();
 void clear();
 
 } // namespace Material

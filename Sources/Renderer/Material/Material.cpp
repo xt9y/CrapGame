@@ -18,6 +18,12 @@ std::vector<Resource>& resources()
     return values;
 }
 
+std::uint64_t& resourceRevision()
+{
+    static std::uint64_t value = 1u;
+    return value;
+}
+
 } // namespace
 
 float nsToRoughness(float shininess)
@@ -37,6 +43,7 @@ MaterialHandle registerMaterial(Resource resource)
 {
     const MaterialHandle handle = static_cast<MaterialHandle>(resources().size());
     resources().push_back(std::move(resource));
+    ++resourceRevision();
     return handle;
 }
 
@@ -50,9 +57,15 @@ std::size_t count()
     return resources().size();
 }
 
+std::uint64_t revision()
+{
+    return resourceRevision();
+}
+
 void clear()
 {
     resources().clear();
+    ++resourceRevision();
 }
 
 } // namespace Material
