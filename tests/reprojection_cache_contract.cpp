@@ -64,6 +64,8 @@ int main()
             "previous material identity must be integer sampled");
     require(reprojection.find("layout(r8ui,binding=2)")!=std::string::npos,
             "reprojection must emit an integer validity mask");
+    require(reprojection.find("layout(rgba16f,binding=3)")!=std::string::npos,
+            "reprojection must seed current position history");
     require(reprojection.find("uPreviousViewProjection")!=std::string::npos,
             "reprojection must project into the previous camera");
     require(reprojection.find("normalDot < 0.94")!=std::string::npos,
@@ -92,8 +94,8 @@ int main()
     require(imported.find("constbooltemporal_history_valid=history_valid_&&scene_unchanged&&!camera_changed")
                 !=std::string::npos,
             "same-pixel temporal history must not survive semantic invalidation");
-    require(imported.find("trace_reprojection_available_location_")!=std::string::npos,
-            "imported Lumen must explicitly gate reprojected history");
+    require(imported.find("reprojection_cache_.reproject(")!=std::string::npos,
+            "camera motion must execute the reprojection cache");
 
     std::cout<<"reprojection_cache_contract=PASS\n";
     return 0;

@@ -29,6 +29,9 @@ public:
     bool reproject(const GBufferGpu& gbuffer,
                    GLuint previous_indirect,
                    GLuint previous_reflection,
+                   GLuint destination_indirect,
+                   GLuint destination_reflection,
+                   GLuint destination_position,
                    const Math::Vec3& camera_position,
                    std::string *error=nullptr);
     bool capture(const GBufferGpu& gbuffer,
@@ -39,8 +42,6 @@ public:
 
     bool ready() const;
     bool historyValid() const { return history_valid_; }
-    GLuint indirectTexture() const { return reprojected_indirect_; }
-    GLuint reflectionTexture() const { return reprojected_reflection_; }
     GLuint validMaskTexture() const { return valid_mask_; }
 
 private:
@@ -51,8 +52,6 @@ private:
     GLuint previous_position_=0;
     GLuint previous_normal_=0;
     GLuint previous_material_=0;
-    GLuint reprojected_indirect_=0;
-    GLuint reprojected_reflection_=0;
     GLuint valid_mask_=0;
 
     GLint previous_view_projection_location_=-1;

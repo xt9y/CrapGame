@@ -20,6 +20,7 @@ layout(binding=7) uniform sampler2D sPreviousReflection;
 layout(rgba16f,binding=0) writeonly uniform image2D oIndirect;
 layout(rgba16f,binding=1) writeonly uniform image2D oReflection;
 layout(r8ui,binding=2) writeonly uniform uimage2D oValid;
+layout(rgba16f,binding=3) writeonly uniform image2D oPositionHistory;
 uniform mat4 uPreviousViewProjection;
 uniform vec3 uCameraPosition;
 uniform int uHistoryValid;
@@ -27,10 +28,11 @@ void reject(ivec2 pixel){imageStore(oIndirect,pixel,vec4(0.0));imageStore(oRefle
 void main(){
     ivec2 tracePixel=ivec2(gl_GlobalInvocationID.xy),traceDimensions=imageSize(oIndirect);
     if(tracePixel.x>=traceDimensions.x||tracePixel.y>=traceDimensions.y)return;
-    if(uHistoryValid==0){reject(tracePixel);return;}
+    if(uHistoryValid==0){reject(tracePixel);imageStore(oPositionHistory,tracePixel,vec4(0.0));return;}
     ivec2 fullDimensions=textureSize(sCurrentPositionDepth,0);
     ivec2 fullPixel=min(tracePixel*2+ivec2(1),fullDimensions-ivec2(1));
     vec4 currentPosition=texelFetch(sCurrentPositionDepth,fullPixel,0);
+    imageStore(oPositionHistory,tracePixel,vec4(currentPosition.xyz,currentPosition.w>0.0?1.0:0.0));
     if(currentPosition.w<=0.0){reject(tracePixel);return;}
     vec3 currentNormal=normalize(texelFetch(sCurrentNormalRoughness,fullPixel,0).xyz);
     uint currentMaterial=texelFetch(sCurrentMaterial,fullPixel,0).r;

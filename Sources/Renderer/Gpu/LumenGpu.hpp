@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
+#include "Renderer/Gpu/DirtyTileGpu.hpp"
 #include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
@@ -40,7 +41,8 @@ public:
     bool prewarmImportedTrace (std::string *error = nullptr)
     {
         if (!ensureImportedTraceShader(error)) return false;
-        return reprojection_cache_.ensure(width_, height_, error);
+        if (!reprojection_cache_.ensure(width_, height_, error)) return false;
+        return dirty_tile_gpu_.ensure((width_ + 1) / 2, (height_ + 1) / 2, error);
     }
 
     bool traceShared (
@@ -131,6 +133,7 @@ public:
     GLuint indirectTexture () const { return indirect_history_[history_index_]; }
     GLuint reflectionTexture () const { return reflection_history_[history_index_]; }
     const ReprojectionCacheGpu& reprojectionCache () const { return reprojection_cache_; }
+    const DirtyTileGpu& dirtyTiles () const { return dirty_tile_gpu_; }
 
 private:
     bool ensureImportedTraceShader(std::string *error);
@@ -176,13 +179,14 @@ private:
     GLint trace_imported_instance_count_location_ = -1;
     GLint trace_imported_tlas_count_location_ = -1;
     GLint trace_material_count_location_ = -1;
-    GLint trace_reprojection_available_location_ = -1;
+    GLint trace_dirty_tile_dispatch_location_ = -1;
 
     Math::Mat4 last_view_ = Math::identity();
     Math::Mat4 last_projection_ = Math::identity();
     Math::Vec3 last_camera_ = {0.0f, 0.0f, 0.0f};
 
     ReprojectionCacheGpu reprojection_cache_;
+    DirtyTileGpu dirty_tile_gpu_;
     std::uint64_t reprojection_scene_revision_ = 0u;
     std::uint64_t reprojection_mesh_revision_ = 0u;
     std::uint64_t reprojection_material_revision_ = 0u;

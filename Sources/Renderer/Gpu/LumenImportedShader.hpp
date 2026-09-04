@@ -137,18 +137,13 @@ vec3 importedFallbackRadiance(){
         "layout(binding=6) uniform sampler2D sPreviousPosition;\n"
         "layout(binding=9) uniform sampler2D sSpecularIor;\n"
         "layout(binding=10) uniform sampler2D sAdvancedMaterial;\n"
-        "layout(binding=11) uniform sampler2D sReprojectedIndirect;\n"
-        "layout(binding=12) uniform sampler2D sReprojectedReflection;\n"
-        "layout(binding=13) uniform usampler2D sReprojectionValid;\n"
-        "uniform int uReprojectionAvailable;");
+        "layout(std430,binding=8) readonly buffer DirtyTileBuffer{uvec2 dirtyTiles[];};\n"
+        "uniform int uDirtyTileDispatch;");
+    replaceLumenRequired(&source,
+        "void main(){ivec2 tp=ivec2(gl_GlobalInvocationID.xy),td=imageSize(oIndirect);",
+        "void main(){ivec2 td=imageSize(oIndirect);ivec2 tp=uDirtyTileDispatch!=0?ivec2(dirtyTiles[gl_WorkGroupID.x]*8u+gl_LocalInvocationID.xy):ivec2(gl_GlobalInvocationID.xy);");
     replaceLumenRequired(&source,
         "vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0);",
-        "if(uReprojectionAvailable!=0&&texelFetch(sReprojectionValid,tp,0).r!=0u){"
-        "vec4 currentPosition=texelFetch(sPositionDepth,pixel,0);"
-        "imageStore(oIndirect,tp,texelFetch(sReprojectedIndirect,tp,0));"
-        "imageStore(oReflection,tp,texelFetch(sReprojectedReflection,tp,0));"
-        "imageStore(oPositionHistory,tp,vec4(currentPosition.xyz,currentPosition.w>0.0?1.0:0.0));"
-        "return;}"
         "vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0),si=texelFetch(sSpecularIor,pixel,0),advanced=texelFetch(sAdvancedMaterial,pixel,0);");
     replaceLumenRequired(&source,
         "if(metallic>0.08||roughness<0.45)",

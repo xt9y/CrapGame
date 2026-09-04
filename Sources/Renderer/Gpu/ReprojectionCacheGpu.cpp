@@ -103,8 +103,7 @@ bool ReprojectionCacheGpu::ensure(int width,int height,std::string *error)
 bool ReprojectionCacheGpu::resize(int width,int height,std::string *error)
 {
     const bool resources_ready=previous_position_!=0&&previous_normal_!=0
-        &&previous_material_!=0&&reprojected_indirect_!=0
-        &&reprojected_reflection_!=0&&valid_mask_!=0;
+        &&previous_material_!=0&&valid_mask_!=0;
     if(!resizeStorageRequired(width_,height_,resources_ready,width,height))
         return true;
 
@@ -116,8 +115,6 @@ bool ReprojectionCacheGpu::resize(int width,int height,std::string *error)
     const bool ok=ensureFloatTexture(&previous_position_,trace_width_,trace_height_)
         &&ensureFloatTexture(&previous_normal_,trace_width_,trace_height_)
         &&ensureUintTexture(&previous_material_,trace_width_,trace_height_,GL_R32UI,GL_UNSIGNED_INT)
-        &&ensureFloatTexture(&reprojected_indirect_,trace_width_,trace_height_)
-        &&ensureFloatTexture(&reprojected_reflection_,trace_width_,trace_height_)
         &&ensureUintTexture(&valid_mask_,trace_width_,trace_height_,GL_R8UI,GL_UNSIGNED_BYTE);
     glBindTexture(GL_TEXTURE_2D,0);
     if(!ok)
@@ -135,11 +132,16 @@ bool ReprojectionCacheGpu::reproject(
             const GBufferGpu& gbuffer,
             GLuint previous_indirect,
             GLuint previous_reflection,
+            GLuint destination_indirect,
+            GLuint destination_reflection,
+            GLuint destination_position,
             const Math::Vec3& camera_position,
             std::string *error)
 {
     if(!ready()||!gbuffer.ready()||gbuffer.width()!=width_||gbuffer.height()!=height_
-            ||previous_indirect==0||previous_reflection==0)
+            ||previous_indirect==0||previous_reflection==0
+            ||destination_indirect==0||destination_reflection==0
+            ||destination_position==0)
     {
         setError(error,"GPU reprojection resources are not ready");
         return false;
@@ -160,9 +162,10 @@ bool ReprojectionCacheGpu::reproject(
     GL20.glUniform3f(camera_position_location_,camera_position.x,
                      camera_position.y,camera_position.z);
     GL20.glUniform1i(history_valid_location_,history_valid_?1:0);
-    GL42.glBindImageTexture(0,reprojected_indirect_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
-    GL42.glBindImageTexture(1,reprojected_reflection_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
+    GL42.glBindImageTexture(0,destination_indirect,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
+    GL42.glBindImageTexture(1,destination_reflection,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
     GL42.glBindImageTexture(2,valid_mask_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_R8UI);
+    GL42.glBindImageTexture(3,destination_position,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
     GL43.glDispatchCompute(static_cast<GLuint>((trace_width_+7)/8),
                            static_cast<GLuint>((trace_height_+7)/8),1);
     GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -213,8 +216,6 @@ void ReprojectionCacheGpu::destroyTextures()
     deleteTexture(&previous_position_);
     deleteTexture(&previous_normal_);
     deleteTexture(&previous_material_);
-    deleteTexture(&reprojected_indirect_);
-    deleteTexture(&reprojected_reflection_);
     deleteTexture(&valid_mask_);
     width_=0;height_=0;trace_width_=0;trace_height_=0;
     history_valid_=false;
@@ -235,7 +236,7 @@ bool ReprojectionCacheGpu::ready() const
 {
     return reprojection_program_!=0&&capture_program_!=0
         &&previous_position_!=0&&previous_normal_!=0&&previous_material_!=0
-        &&reprojected_indirect_!=0&&reprojected_reflection_!=0&&valid_mask_!=0;
+        &&valid_mask_!=0;
 }
 
 } // namespace Gpu
