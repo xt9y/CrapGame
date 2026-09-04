@@ -27,7 +27,6 @@ GLenum surfacePixelType(SurfaceFormat format){return format==SurfaceFormat::Rgba
 bool ensureTexture(GLuint *texture,int width,int height,SurfaceFormat format){if(!texture)return false;if(*texture==0)*texture=lwcgl_glGenTexture();if(*texture==0)return false;glBindTexture(GL_TEXTURE_2D,*texture);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);glTexImage2D(GL_TEXTURE_2D,0,surfaceInternalFormat(format),width,height,0,GL_RGBA,surfacePixelType(format),nullptr);return true;}
 void deleteTexture(GLuint *texture){if(!texture||*texture==0)return;glDeleteTextures(*texture);*texture=0;}
 void setError(std::string *error,const char *message){if(error)*error=message?message:"GPU direct lighting error";}
-void bindTexture(GLuint unit,GLuint texture){GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0+unit));glBindTexture(GL_TEXTURE_2D,texture);}
 
 } // namespace
 
@@ -69,7 +68,8 @@ bool DirectLightingGpu::init(std::string *error)
     }
     transparent_=std::make_unique<TransparentGpu>();
     if(!transparent_->init(error)){shutdown();return false;}
-    if(error)error->clear();return true;
+    if(error)error->clear();
+    return true;
 }
 
 bool DirectLightingGpu::resize(int width,int height,std::string *error)
