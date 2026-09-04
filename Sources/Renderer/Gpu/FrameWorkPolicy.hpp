@@ -78,7 +78,7 @@ inline FrameWork decideFrameWork(const RevisionState& previous,
     work.view_specular=work.static_diffuse;
     work.lumen_trace=world_changed||camera_changed||!converged;
     work.composite=work.static_diffuse||work.view_specular||work.lumen_trace||transparent_dynamic;
-    work.transparent=transparent_dynamic||work.composite||camera_changed;
+    work.transparent=transparent_dynamic||camera_changed;
     return work;
 }
 
