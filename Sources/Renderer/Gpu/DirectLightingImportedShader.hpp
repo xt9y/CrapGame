@@ -21,6 +21,7 @@ inline std::string directLightingImportedShader()
     const std::string old_shadow =
         "if(light.coneShadow.z>0.5&&shadowed(position,normal,ld,maxD))continue;";
     const std::string new_shadow =
+        "if(dot(normal,ld)<=0.0)continue;"
         "if(light.coneShadow.z>0.5){"
         "if(shadowed(position,normal,ld,maxD))continue;"
         "float importedVisibility=importedShadowVisibility(position+normal*SHADOW_BIAS*2.0,ld,maxD);"
