@@ -93,6 +93,7 @@ bool LumenGpu::traceShared(
             const Math::Mat4& projection,
             const Math::Vec3& camera_position,
             std::uint64_t frame_index,
+            bool secondary_refresh_due,
             std::string *error)
 {
     if (!ready() || !gbuffer.ready() || !direct.ready() || !triangles.ready()
@@ -167,6 +168,19 @@ bool LumenGpu::traceShared(
             return false;
         if (!dirty_tile_gpu_.compact(reprojection_cache_.validMaskTexture(), error))
             return false;
+
+        if (!secondary_refresh_due)
+        {
+            if (!reprojection_cache_.capture(gbuffer, view_projection, error)) return false;
+            history_index_ = write_index;
+            history_valid_ = true;
+            reprojection_scene_revision_ = scene_revision;
+            reprojection_mesh_revision_ = mesh_revision;
+            reprojection_material_revision_ = material_revision;
+            reprojection_scene_revision_valid_ = true;
+            if (error) error->clear();
+            return true;
+        }
     }
 
     bindTextureUnitInline(0, gbuffer.positionDepthTexture());
