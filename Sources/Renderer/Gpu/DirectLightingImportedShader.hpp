@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_DIRECTLIGHTINGIMPORTEDSHADER_HPP
 
 #include "Renderer/Gpu/DirectLightingShader.hpp"
+#include "Renderer/Gpu/StaticShadowShader.hpp"
 #include "Renderer/Gpu/TriangleTraceShader.hpp"
 
 #include <stdexcept>
@@ -16,7 +17,8 @@ inline std::string directLightingImportedShader()
     const std::size_t at = source.find(insertion);
     if (at == std::string::npos)
         throw std::runtime_error("direct-light shader insertion point missing");
-    source.insert(at, IMPORTED_TRIANGLE_TRACE_GLSL);
+    source.insert(at, std::string(IMPORTED_TRIANGLE_TRACE_GLSL)
+                    + STATIC_SHADOW_DIRECT_GLSL);
 
     const std::string old_shadow =
         "if(light.coneShadow.z>0.5&&shadowed(position,normal,ld,maxD))continue;";
@@ -24,7 +26,9 @@ inline std::string directLightingImportedShader()
         "if(dot(normal,ld)<=0.0)continue;"
         "if(light.coneShadow.z>0.5){"
         "if(shadowed(position,normal,ld,maxD))continue;"
-        "float importedVisibility=importedShadowVisibility(position+normal*SHADOW_BIAS*2.0,ld,maxD);"
+        "float importedVisibility=(uStaticShadowEnabled!=0&&i==uStaticShadowLightIndex)"
+        "?staticShadowVisibility(position,normal,ld)"
+        ":importedShadowVisibility(position+normal*SHADOW_BIAS*2.0,ld,maxD);"
         "if(importedVisibility<=0.0)continue;"
         "radiance*=importedVisibility;}";
     const std::size_t shadow_at = source.find(old_shadow);
