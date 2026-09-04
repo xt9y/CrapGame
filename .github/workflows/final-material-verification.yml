@@ -79,6 +79,10 @@ jobs:
             -o /tmp/static_sponza_frame_policy_contract
           /tmp/static_sponza_frame_policy_contract
 
+          $CXX tests/direct_lighting_imported_shader_contract.cpp \
+            -o /tmp/direct_lighting_imported_shader_contract
+          /tmp/direct_lighting_imported_shader_contract
+
           $CXX tests/material_resolver_contract.cpp \
             Sources/Models/Material.cpp Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
             Sources/Renderer/Material/Material.cpp \
