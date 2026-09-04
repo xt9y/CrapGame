@@ -93,6 +93,17 @@ inline std::string directLightingImportedShader()
         "void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=imageSize(gPositionDepth);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;vec4 pd=imageLoad(gPositionDepth,pixel);if(pd.w<=0){imageStore(oDirect,pixel,vec4(0.0));return;}",
         "void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=textureSize(sGBufferDepth,0);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;float depth=texelFetch(sGBufferDepth,pixel,0).r;if(!gbufferDepthValid(depth)){imageStore(oDirect,pixel,vec4(0.0));return;}vec4 pd=vec4(gbufferReconstructWorld(pixel,dimensions,depth,uGBufferInverseViewProjection),1.0);");
     patchImportedBvhTraversal(&source);
+
+    // The compact shadow traversal is appended after the imported traversal source,
+    // but traceImportedOpaqueAny calls it. GLSL therefore needs a global prototype
+    // before the caller even though the implementation appears later in the shader.
+    const std::string shadow_prototype=
+        "bool traceImportedShadowInstanceAny(int instanceIndex,vec3 worldOrigin,"
+        "vec3 worldDirection,float maximumDistance);\n";
+    const std::size_t opaque_function_at=source.find("bool traceImportedOpaqueAny(");
+    if(opaque_function_at==std::string::npos)
+        throw std::runtime_error("direct-light opaque traversal declaration point missing");
+    source.insert(opaque_function_at,shadow_prototype);
     return source;
 }
 
