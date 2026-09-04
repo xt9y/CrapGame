@@ -258,6 +258,31 @@ Renderer::Material::Resource resolveMaterial(
             *refs[i], static_cast<Slot>(i), warnings);
     }
 
+    /* Some OBJ/MTL asset sets reference a separate map_d that is not shipped,
+     * while the corresponding 32-bit diffuse TGA already contains the cutout
+     * alpha. Reuse that resident texture rather than dropping the material to
+     * opaque or allocating a duplicate GPU copy. */
+    const std::size_t base_color_index = Renderer::Material::slotIndex(Slot::BaseColor);
+    const std::size_t opacity_index = Renderer::Material::slotIndex(Slot::Opacity);
+    if (hasPath(material.opacity_texture)
+            && out.textures[opacity_index].texture == INVALID_TEXTURE
+            && out.textures[base_color_index].texture != INVALID_TEXTURE)
+    {
+        const TextureAsset *base_asset = texture(out.textures[base_color_index].texture);
+        if (base_asset && base_asset->image.meaningful_alpha)
+        {
+            out.textures[opacity_index] = out.textures[base_color_index];
+            out.textures[opacity_index].channel = 'a';
+            if (warnings)
+            {
+                warnings->push_back(
+                    "opacity texture unavailable; using base-color alpha: "
+                    + material.base_color_texture.path
+                );
+            }
+        }
+    }
+
     /* map_Ns is intentionally converted into a cached linear roughness map.
      * That makes it visible in GBuffer, transparency and ray-material paths
      * without requiring a seventeenth live material sampler. */
@@ -300,7 +325,7 @@ Renderer::Material::Resource resolveMaterial(
 
     const bool transmission = out.transmission > 0.0001f
         || out.textures[Renderer::Material::slotIndex(Slot::Transmission)].texture != INVALID_TEXTURE;
-    const bool opacity_map = hasPath(material.opacity_texture);
+    const bool opacity_map = out.textures[opacity_index].texture != INVALID_TEXTURE;
 
     if (transmission)
     {
@@ -308,7 +333,7 @@ Renderer::Material::Resource resolveMaterial(
     }
     else if (opacity_map)
     {
-        const auto& binding = out.textures[Renderer::Material::slotIndex(Slot::Opacity)];
+        const auto& binding = out.textures[opacity_index];
         out.render_class = opacityIsBinary(binding)
             ? RenderClass::Masked
             : RenderClass::Transparent;
