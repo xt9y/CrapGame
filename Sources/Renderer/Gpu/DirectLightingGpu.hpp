@@ -32,6 +32,10 @@ public:
     bool init(std::string *error=nullptr);
     bool resize(int width,int height,std::string *error=nullptr);
     bool updateScene(const Ecs::World& world,std::string *error=nullptr);
+    bool prewarm(const Ecs::World& world,std::string *error=nullptr)
+    {
+        return updateScene(world,error);
+    }
     bool bindImportedScene(const TriangleScene& triangles,std::string *error=nullptr);
     bool dispatch(const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error=nullptr);
     bool render(const Ecs::World& world,const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error=nullptr);
