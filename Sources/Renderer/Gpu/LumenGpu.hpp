@@ -24,6 +24,13 @@ namespace Gpu
 
 class TriangleScene;
 
+inline bool importedTraceSampleDue(
+    bool camera_changed,
+    std::uint64_t frame_index)
+{
+    return !camera_changed || frame_index % 3u == 0u;
+}
+
 class LumenGpu
 {
 public:
