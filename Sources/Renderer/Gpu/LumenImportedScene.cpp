@@ -8,6 +8,10 @@
 #include <exception>
 #include <string>
 
+#ifndef GL_SHADER_STORAGE_BARRIER_BIT
+#define GL_SHADER_STORAGE_BARRIER_BIT 0x00002000
+#endif
+
 namespace Renderer { namespace Gpu {
 namespace {
 
@@ -50,11 +54,13 @@ bool LumenGpu::ensureImportedTraceShader(std::string *error)
     const GLint imported_tlas = GL20.glGetUniformLocation(candidate, "uImportedTlasNodeCount");
     const GLint trace_materials = GL20.glGetUniformLocation(candidate, "uTraceMaterialCount");
     const GLint dirty_tile_dispatch = GL20.glGetUniformLocation(candidate, "uDirtyTileDispatch");
+    const GLint radiance_generation = GL20.glGetUniformLocation(candidate, "uRadianceGeneration");
 
     if (view_projection < 0 || camera < 0 || primitive_count < 0
             || bvh_count < 0 || frame < 0 || history < 0
             || imported_instances < 0 || imported_tlas < 0
-            || trace_materials < 0 || dirty_tile_dispatch < 0)
+            || trace_materials < 0 || dirty_tile_dispatch < 0
+            || radiance_generation < 0)
     {
         destroyProgram(&candidate);
         setInlineError(error, "GPU imported Lumen uniforms are unavailable");
@@ -73,6 +79,7 @@ bool LumenGpu::ensureImportedTraceShader(std::string *error)
     trace_imported_tlas_count_location_ = imported_tlas;
     trace_material_count_location_ = trace_materials;
     trace_dirty_tile_dispatch_location_ = dirty_tile_dispatch;
+    trace_radiance_generation_location_ = radiance_generation;
     bvh_trace_active_ = true;
     if (error) error->clear();
     return true;
@@ -98,6 +105,7 @@ bool LumenGpu::traceShared(
     if (!ensureImportedTraceShader(error)) return false;
     if (!reprojection_cache_.ensure(width_, height_, error)) return false;
     if (!dirty_tile_gpu_.ensure(trace_width_, trace_height_, error)) return false;
+    if (!radiance_cache_.ensure(error)) return false;
 
     if (!history_valid_)
     {
@@ -110,6 +118,15 @@ bool LumenGpu::traceShared(
     const std::uint64_t scene_revision = direct.sceneRevision();
     const std::uint64_t mesh_revision = Mesh::loadedMeshRevision();
     const std::uint64_t material_revision = Material::revision();
+
+    RevisionState radiance_revisions = {};
+    radiance_revisions.geometry = scene_revision;
+    radiance_revisions.material = scene_revision;
+    radiance_revisions.lighting = scene_revision;
+    radiance_revisions.mesh_registry = mesh_revision;
+    radiance_revisions.material_registry = material_revision;
+    if (!radiance_cache_.updateGeneration(radiance_revisions,error)) return false;
+
     const bool scene_unchanged = reprojection_scene_revision_valid_
         && scene_revision == reprojection_scene_revision_
         && mesh_revision == reprojection_mesh_revision_
@@ -186,6 +203,8 @@ bool LumenGpu::traceShared(
     GL20.glUniform1i(trace_material_count_location_,
                      static_cast<GLint>(triangles.traceMaterialCount()));
     GL20.glUniform1i(trace_dirty_tile_dispatch_location_, reprojection_active ? 1 : 0);
+    GL20.glUniform1i(trace_radiance_generation_location_,
+                     static_cast<GLint>(radiance_cache_.generation()));
 
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangles.triangleBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, triangles.meshBuffer());
@@ -197,6 +216,8 @@ bool LumenGpu::traceShared(
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, direct.bvhNodeBuffer());
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, triangles.traceRecordBuffer());
     if (reprojection_active) dirty_tile_gpu_.bindTiles(8);
+    if (!radiance_cache_.bind(static_cast<GLuint>(RadianceCachePolicy::BUFFER_BINDING),error))
+        return false;
 
     GL42.glBindImageTexture(0, indirect_history_[write_index], 0, GL_FALSE, 0,
                             GL_WRITE_ONLY, imageFormatInline(LUMEN_HISTORY_FORMAT));
@@ -210,7 +231,8 @@ bool LumenGpu::traceShared(
         GL43.glDispatchCompute(static_cast<GLuint>((trace_width_ + 7) / 8),
                                static_cast<GLuint>((trace_height_ + 7) / 8), 1);
     GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
-                         | GL_TEXTURE_FETCH_BARRIER_BIT);
+                         | GL_TEXTURE_FETCH_BARRIER_BIT
+                         | GL_SHADER_STORAGE_BARRIER_BIT);
 
     if (conservativeGpuCleanupRequired(true))
     {
@@ -223,6 +245,8 @@ bool LumenGpu::traceShared(
         }
         GLModern.glActiveTexture(GL_TEXTURE0);
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, 0);
+        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
+                              static_cast<GLuint>(RadianceCachePolicy::BUFFER_BINDING),0);
     }
 
     if (!reprojection_cache_.capture(gbuffer, view_projection, error)) return false;

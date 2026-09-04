@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_LUMENIMPORTEDSHADER_HPP
 
 #include "Renderer/Gpu/BvhShadersV2.hpp"
+#include "Renderer/Gpu/RadianceCacheShader.hpp"
 #include "Renderer/Gpu/TriangleTraceShader.hpp"
 
 #include <stdexcept>
@@ -105,6 +106,8 @@ bool traceScene(vec3 ro,vec3 rd,float maximumDistance,
     if(hash_at==std::string::npos)
         throw std::runtime_error("Lumen combined-trace insertion point missing");
     source.insert(hash_at,combined);
+    const std::size_t radiance_at=source.find("uint hashValue");
+    source.insert(radiance_at,RADIANCE_CACHE_GLSL);
 
     const char *material_eval=R"GLSL(
 vec3 importedFallbackRadiance(){
@@ -145,6 +148,11 @@ vec3 importedFallbackRadiance(){
     replaceLumenRequired(&source,
         "vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0);",
         "vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0),si=texelFetch(sSpecularIor,pixel,0),advanced=texelFetch(sAdvancedMaterial,pixel,0);");
+
+    replaceLumenRequired(&source,
+        "vec3 origin=position+normal*TRACE_BIAS*2.0,giDirection=hemisphereDirection(normal,pixel),indirect=vec3(0);int giHit;float giDistance;vec3 giNormal;if(traceScene(origin,giDirection,28.0,giHit,giDistance,giNormal)){vec3 hp=origin+giDirection*giDistance,source=screenRadiance(hp,giHit);indirect=source*albedo*(1.0-metallic)*0.32;}else{float sky=clamp(normal.y*0.5+0.5,0.0,1.0);indirect=albedo*(1.0-metallic)*mix(0.008,0.028,sky);}",
+        "vec3 origin=position+normal*TRACE_BIAS*2.0,giDirection=hemisphereDirection(normal,pixel),giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,giSource);if(!giCached){int giHit;float giDistance;vec3 giNormal,cacheSource;if(traceScene(origin,giDirection,28.0,giHit,giDistance,giNormal)){vec3 hp=origin+giDirection*giDistance;giSource=screenRadiance(hp,giHit);cacheSource=primitiveFallbackRadiance(giHit);}else{float sky=clamp(normal.y*0.5+0.5,0.0,1.0);giSource=vec3(mix(0.008,0.028,sky)/0.32);cacheSource=giSource;}radianceCacheUpdate(position,normal,cacheSource);}indirect=giSource*albedo*(1.0-metallic)*0.32;");
+
     replaceLumenRequired(&source,
         "if(metallic>0.08||roughness<0.45)",
         "if(metallic>0.08||roughness<0.45||advanced.w>0.01||advanced.x>0.01)");
