@@ -1,3 +1,4 @@
+#include "Camera.hpp"
 #include "Renderer/Render.hpp"
 #include "Renderer/CpuReferencePolicy.hpp"
 #include "Renderer/PerformanceMetrics.hpp"
@@ -289,6 +290,8 @@ int main ()
         renderer.resize(renderer_width, renderer_height);
     }
 
+    Camera camera;
+
     using Clock = std::chrono::steady_clock;
 
     const auto runtime_start = Clock::now();
@@ -304,6 +307,7 @@ int main ()
         Renderer::PerformanceMetrics::durationMilliseconds();
 
     std::uint64_t last_window_maintenance_ns = 0u;
+    std::uint64_t camera_previous_ns = runtime_start_ns;
     std::uint64_t simulation_previous_ns = runtime_start_ns;
     std::uint64_t simulation_phase = 0u;
     std::uint64_t simulation_tick = 0u;
@@ -362,6 +366,20 @@ int main ()
                     renderer.resize(renderer_width, renderer_height);
                 }
             }
+        }
+
+        if (!renderercheck_mode && !performance_mode)
+        {
+            const std::uint64_t camera_delta_ns =
+                frame_time_ns >= camera_previous_ns
+                ? frame_time_ns - camera_previous_ns
+                : 0u;
+
+            camera_previous_ns = frame_time_ns;
+            camera.update(
+                    world,
+                    static_cast<float>(camera_delta_ns) / 1000000000.0f
+                );
         }
 
         if (!renderercheck_mode && !performance_static_scene)
