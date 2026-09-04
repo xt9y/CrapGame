@@ -3,9 +3,11 @@
 #include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Gpu/ResourceLifecycle.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
+#include "Renderer/Gpu/TransparentGpu.hpp"
 
 #include <algorithm>
 #include <exception>
+#include <memory>
 #include <string>
 
 namespace Renderer { namespace Gpu { namespace {
@@ -15,6 +17,8 @@ bool ensureTexture(GLuint *texture,int width,int height,SurfaceFormat format){if
 void deleteTexture(GLuint *texture){if(!texture||*texture==0)return;glDeleteTextures(*texture);*texture=0;}
 void setError(std::string *error,const char *message){if(error)*error=message?message:"GPU direct lighting error";}
 } // namespace
+
+DirectLightingGpu::~DirectLightingGpu(){shutdown();}
 
 bool DirectLightingGpu::init(std::string *error)
 {
@@ -36,14 +40,19 @@ bool DirectLightingGpu::init(std::string *error)
     if(camera_location_<0||light_count_location_<0||primitive_count_location_<0){setError(error,"GPU direct lighting uniforms are unavailable");shutdown();return false;}
     GL15.glGenBuffers(1,&light_buffer_);GL15.glGenBuffers(1,&primitive_buffer_);
     if(light_buffer_==0||primitive_buffer_==0){setError(error,"failed to allocate GPU lighting scene buffers");shutdown();return false;}
+    transparent_=std::make_unique<TransparentGpu>();
+    if(!transparent_->init(error)){shutdown();return false;}
     if(error)error->clear();return true;
 }
 
 bool DirectLightingGpu::resize(int width,int height,std::string *error)
 {
-    if(!resizeStorageRequired(width_,height_,direct_color_!=0,width,height))return true;
-    width_=normalizedExtent(width);height_=normalizedExtent(height);
+    const int target_width=normalizedExtent(width),target_height=normalizedExtent(height);
+    if(!resizeStorageRequired(width_,height_,direct_color_!=0,width,height))
+        return !transparent_||transparent_->resize(target_width,target_height,error);
+    width_=target_width;height_=target_height;
     if(!ensureTexture(&direct_color_,width_,height_,DIRECT_COLOR_FORMAT)){setError(error,"failed to allocate GPU direct lighting texture");return false;}
+    if(transparent_&&!transparent_->resize(width_,height_,error))return false;
     glBindTexture(GL_TEXTURE_2D,0);if(error)error->clear();return true;
 }
 
@@ -59,6 +68,6 @@ bool DirectLightingGpu::uploadBuffer(GLuint buffer,std::size_t *capacity,const v
 bool DirectLightingGpu::render(const Ecs::World& world,const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error){return updateScene(world,error)&&dispatch(gbuffer,camera_position,error);}
 void DirectLightingGpu::destroyTextures(){deleteTexture(&direct_color_);}
 void DirectLightingGpu::releaseAcceleration(){if(bvh_node_buffer_!=0)GL15.glDeleteBuffers(1,&bvh_node_buffer_);bvh_node_buffer_=0;bvh_node_capacity_=0;bvh_primitive_count_=0;bvh_nodes_.clear();uploaded_bvh_nodes_.clear();use_bvh_=false;}
-void DirectLightingGpu::shutdown(){triangle_scene_.shutdown();scene_world_=nullptr;scene_revision_=0u;releaseAcceleration();destroyTextures();if(light_buffer_!=0){GL15.glDeleteBuffers(1,&light_buffer_);light_buffer_=0;}if(primitive_buffer_!=0){GL15.glDeleteBuffers(1,&primitive_buffer_);primitive_buffer_=0;}destroyProgram(&program_);light_capacity_=0;primitive_capacity_=0;lights_.clear();primitives_.clear();uploaded_lights_.clear();uploaded_primitives_.clear();primitive_bounds_.clear();camera_location_=-1;light_count_location_=-1;primitive_count_location_=-1;bench_config_={};bench_config_initialized_=false;bench_reported_=false;use_bvh_=false;width_=0;height_=0;}
+void DirectLightingGpu::shutdown(){if(transparent_){transparent_->shutdown();transparent_.reset();}triangle_scene_.shutdown();scene_world_=nullptr;scene_revision_=0u;releaseAcceleration();destroyTextures();if(light_buffer_!=0){GL15.glDeleteBuffers(1,&light_buffer_);light_buffer_=0;}if(primitive_buffer_!=0){GL15.glDeleteBuffers(1,&primitive_buffer_);primitive_buffer_=0;}destroyProgram(&program_);light_capacity_=0;primitive_capacity_=0;lights_.clear();primitives_.clear();uploaded_lights_.clear();uploaded_primitives_.clear();primitive_bounds_.clear();camera_location_=-1;light_count_location_=-1;primitive_count_location_=-1;bench_config_={};bench_config_initialized_=false;bench_reported_=false;use_bvh_=false;width_=0;height_=0;}
 
 } }

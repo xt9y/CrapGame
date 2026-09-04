@@ -79,6 +79,11 @@ bool LumenGpu::traceShared(
     }
     if (!ensureImportedTraceShader(error)) return false;
 
+    last_view_ = view;
+    last_projection_ = projection;
+    last_camera_ = camera_position;
+    final_output_ = final_color_;
+
     const Math::Mat4 view_projection = Math::multiply(projection, view);
     const int read_index = history_index_;
     const int write_index = 1 - history_index_;

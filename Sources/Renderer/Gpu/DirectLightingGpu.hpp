@@ -13,14 +13,22 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace Renderer { namespace Gpu {
 
+class TransparentGpu;
+
 class DirectLightingGpu
 {
 public:
+    DirectLightingGpu() = default;
+    ~DirectLightingGpu();
+    DirectLightingGpu(const DirectLightingGpu&) = delete;
+    DirectLightingGpu& operator=(const DirectLightingGpu&) = delete;
+
     bool init(std::string *error=nullptr);
     bool resize(int width,int height,std::string *error=nullptr);
     bool updateScene(const Ecs::World& world,std::string *error=nullptr);
@@ -44,6 +52,7 @@ public:
     const TriangleScene& triangleScene() const { return triangle_scene_; }
     const Ecs::World *sceneWorld() const { return scene_world_; }
     std::uint64_t sceneRevision() const { return scene_revision_; }
+    TransparentGpu *transparentPass() const { return transparent_.get(); }
 
 private:
     static constexpr std::size_t BVH_THRESHOLD=8u;
@@ -70,6 +79,7 @@ private:
     std::vector<BvhBoundsInput> primitive_bounds_;
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
     TriangleScene triangle_scene_;
+    mutable std::unique_ptr<TransparentGpu> transparent_;
     const Ecs::World *scene_world_=nullptr;
     std::uint64_t scene_revision_=0u;
     BvhBenchConfig bench_config_={};

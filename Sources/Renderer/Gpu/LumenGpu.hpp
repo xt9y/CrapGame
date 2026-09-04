@@ -7,6 +7,7 @@
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
+#include "Renderer/Gpu/TransparentGpu.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -88,6 +89,21 @@ public:
             unbindTextureUnitsInline(5);
         }
 
+        final_output_ = final_color_;
+        if (const Ecs::World *world = direct.sceneWorld())
+        {
+            if (TransparentGpu *transparent = direct.transparentPass())
+            {
+                if (!transparent->render(
+                        *world, gbuffer, direct, final_color_,
+                        last_view_, last_projection_, last_camera_, error))
+                {
+                    return false;
+                }
+                final_output_ = transparent->finalTexture();
+            }
+        }
+
         if (error) error->clear();
         return true;
     }
@@ -95,7 +111,10 @@ public:
     void shutdown ();
 
     bool ready () const;
-    GLuint finalTexture () const { return final_color_; }
+    GLuint finalTexture () const
+    {
+        return final_output_ != 0 ? final_output_ : final_color_;
+    }
     GLuint indirectTexture () const { return indirect_history_[history_index_]; }
     GLuint reflectionTexture () const { return reflection_history_[history_index_]; }
 
@@ -132,6 +151,7 @@ private:
     GLuint reflection_history_[2] = {0, 0};
     GLuint position_history_[2] = {0, 0};
     GLuint final_color_ = 0;
+    GLuint final_output_ = 0;
 
     GLint trace_view_projection_location_ = -1;
     GLint trace_camera_location_ = -1;
@@ -142,6 +162,10 @@ private:
     GLint trace_imported_instance_count_location_ = -1;
     GLint trace_imported_tlas_count_location_ = -1;
     GLint trace_material_count_location_ = -1;
+
+    Math::Mat4 last_view_ = Math::identity();
+    Math::Mat4 last_projection_ = Math::identity();
+    Math::Vec3 last_camera_ = {0.0f, 0.0f, 0.0f};
 
     int history_index_ = 0;
     bool history_valid_ = false;

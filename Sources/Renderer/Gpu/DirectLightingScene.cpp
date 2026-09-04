@@ -1,6 +1,7 @@
 #include "DirectLightingGpu.hpp"
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
+#include "Renderer/Gpu/TransparentGpu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -28,6 +29,7 @@ bool DirectLightingGpu::updateScene(const Ecs::World& world,std::string *error)
     if(program_==0||light_buffer_==0||primitive_buffer_==0){sceneError(error,"GPU direct-light scene buffers are not initialized");return false;}
     scene_world_=&world;scene_revision_=world.changeRevision();
     if(!triangle_scene_.update(world,error))return false;
+    if(transparent_&&!transparent_->updateScene(world,error))return false;
     lights_.clear();primitives_.clear();primitive_bounds_.clear();
     for(const Ecs::Entity entity:world.entities())
     {
