@@ -173,7 +173,7 @@ bool TraceMaterialGpu::rebuildAtlases(std::string *error)
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        GL12.glTexImage3D(
+        GLModern.glTexImage3D(
             GL_TEXTURE_2D_ARRAY, 0,
             color ? static_cast<GLint>(GL_SRGB8_ALPHA8)
                   : static_cast<GLint>(GL_RGBA8),
@@ -200,9 +200,9 @@ bool TraceMaterialGpu::rebuildAtlases(std::string *error)
         const int height = color ? color_page_height_ : data_page_height_;
         std::vector<std::uint8_t> page = pageWithGutter(*asset, width, height);
         glBindTexture(GL_TEXTURE_2D_ARRAY, color ? color_atlas_ : data_atlas_);
-        GL12.glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, packed.layer,
-                            width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                            page.data());
+        GLModern.glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, packed.layer,
+                                width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                page.data());
     }
     glBindTexture(GL_TEXTURE_2D_ARRAY, color_atlas_);
     GL30.glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
