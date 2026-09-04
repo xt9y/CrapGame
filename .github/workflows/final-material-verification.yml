@@ -36,14 +36,18 @@ jobs:
       - name: Install lwcgl v2.9.3
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch v2.9.3 https://github.com/xt9y/lwcgl.git /tmp/lwcgl
+          mkdir -p /tmp/lwcgl
+          curl -fsSL https://codeload.github.com/xt9y/lwcgl/tar.gz/refs/heads/v2.9.3 \
+            | tar -xz --strip-components=1 -C /tmp/lwcgl
           make -C /tmp/lwcgl -j2
           sudo make -C /tmp/lwcgl install
 
       - name: Install RendererCheck
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/xt9y/RendererCheck.git /tmp/renderercheck
+          mkdir -p /tmp/renderercheck
+          curl -fsSL https://codeload.github.com/xt9y/RendererCheck/tar.gz/refs/heads/main \
+            | tar -xz --strip-components=1 -C /tmp/renderercheck
           make -C /tmp/renderercheck -j2
           sudo make -C /tmp/renderercheck install
           renderercheck version
