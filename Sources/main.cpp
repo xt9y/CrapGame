@@ -290,6 +290,21 @@ int main ()
         renderer.resize(renderer_width, renderer_height);
     }
 
+    if (!runtime_plan.fixed_reference_size && !renderer.prewarm(world))
+    {
+        renderer.shutdown();
+        if (runtime_plan.input_required)
+        {
+            Mouse.destroy();
+            Keyboard.destroy();
+        }
+        if (runtime_plan.display_required)
+        {
+            Display.destroy();
+        }
+        return 2;
+    }
+
     Camera camera;
 
     using Clock = std::chrono::steady_clock;

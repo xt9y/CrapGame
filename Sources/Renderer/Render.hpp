@@ -15,6 +15,7 @@
 #include "Renderer/Gpu/RevisionState.hpp"
 #include "Renderer/Gpu/RuntimeHotPath.hpp"
 #include "Renderer/Gpu/RuntimeHotPathV3.hpp"
+#include "Renderer/Gpu/ScenePrewarm.hpp"
 #include "Renderer/Lumen/Budget.hpp"
 #include "Renderer/Lumen/Cards.hpp"
 #include "Renderer/Lumen/RadianceCache.hpp"
@@ -52,6 +53,35 @@ public:
     bool init ();
     void resize (int width, int height);
     void render (const Ecs::World& world, std::uint64_t frame_time_ns);
+
+    bool prewarm (const Ecs::World& world)
+    {
+        if (!test_name_.empty() || gpu_scene_prewarm_.complete())
+        {
+            return true;
+        }
+
+        std::string error;
+        if (!gpu_scene_prewarm_.run(
+                world,
+                gpu_gbuffer_,
+                gpu_direct_lighting_,
+                gpu_lumen_,
+                width_,
+                height_,
+                &error
+            ))
+        {
+            std::fprintf(
+                    stderr,
+                    "GPU scene prewarm failed: %s\n",
+                    error.c_str()
+                );
+            return false;
+        }
+
+        return true;
+    }
 
     bool initHeadlessReference () const
     {
@@ -315,6 +345,7 @@ private:
     Gpu::LumenSchedule gpu_lumen_schedule_;
     Gpu::ConvergedFrameCache gpu_converged_frame_cache_;
     Gpu::RevisionState gpu_revisions_ = {};
+    Gpu::ScenePrewarm gpu_scene_prewarm_;
     Gpu::Presenter presenter_;
     Gpu::Profiler gpu_profiler_;
 
