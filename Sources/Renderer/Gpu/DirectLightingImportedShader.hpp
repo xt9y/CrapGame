@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_DIRECTLIGHTINGIMPORTEDSHADER_HPP
 
 #include "Renderer/Gpu/DirectLightingShader.hpp"
+#include "Renderer/Gpu/GBufferReconstruct.hpp"
 #include "Renderer/Gpu/ImportedBvhTraversalPatch.hpp"
 #include "Renderer/Gpu/ShadowTriangleShader.hpp"
 #include "Renderer/Gpu/StaticShadowShader.hpp"
@@ -80,6 +81,17 @@ inline std::string directLightingImportedShader()
     replaceDirectRequired(&source,
         "for(int i=0;i<uLightCount;++i){LightData light=lights[i];",
         "for(int i=0;i<uLightCount;++i){if(i==uStaticSplitLightIndex)continue;LightData light=lights[i];");
+
+    replaceDirectRequired(&source,
+        "layout(rgba16f,binding=0) readonly uniform image2D gPositionDepth;",
+        "layout(binding=15) uniform sampler2D sGBufferDepth;uniform mat4 uGBufferInverseViewProjection;");
+    const std::size_t light_struct=source.find("struct LightData");
+    if(light_struct==std::string::npos)
+        throw std::runtime_error("direct-light GBuffer reconstruction insertion point missing");
+    source.insert(light_struct,GBUFFER_RECONSTRUCT_GLSL);
+    replaceDirectRequired(&source,
+        "void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=imageSize(gPositionDepth);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;vec4 pd=imageLoad(gPositionDepth,pixel);if(pd.w<=0){imageStore(oDirect,pixel,vec4(0.0));return;}",
+        "void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=textureSize(sGBufferDepth,0);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;float depth=texelFetch(sGBufferDepth,pixel,0).r;if(!gbufferDepthValid(depth)){imageStore(oDirect,pixel,vec4(0.0));return;}vec4 pd=vec4(gbufferReconstructWorld(pixel,dimensions,depth,uGBufferInverseViewProjection),1.0);");
     patchImportedBvhTraversal(&source);
     return source;
 }

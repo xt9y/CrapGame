@@ -50,10 +50,12 @@ public:
     bool render(const Ecs::World& world,const Math::Mat4& view,const Math::Mat4& projection,std::string* error=nullptr);
     void shutdown();
 
-    bool ready() const { return program_!=0 && framebuffer_!=0 && material_identity_!=0; }
+    bool ready() const { return program_!=0 && framebuffer_!=0 && material_identity_!=0 && depth_!=0 && material_buffer_!=0; }
     int width() const { return width_; }
     int height() const { return height_; }
-    GLuint positionDepthTexture() const { return position_depth_; }
+    /* Stage A keeps this compatibility name for existing Lumen binding code;
+     * the returned resource is the depth attachment, not a world-position MRT. */
+    GLuint positionDepthTexture() const { return depth_; }
     GLuint normalRoughnessTexture() const { return normal_roughness_; }
     GLuint albedoMetallicTexture() const { return albedo_metallic_; }
     GLuint emissiveTexture() const { return emissive_opacity_; }
@@ -63,13 +65,12 @@ public:
     GLuint tangentAnisotropyTexture() const { return tangent_anisotropy_; }
     GLuint materialIdentityTexture() const { return material_identity_; }
     GLuint depthTexture() const { return depth_; }
+    const Math::Mat4& inverseViewProjection() const { return inverse_view_projection_; }
 
 private:
     struct MeshGpu { GLuint vao=0, vertex_buffer=0, index_buffer=0; GLsizei index_count=0; };
-    struct InstanceGpu
+    struct MaterialDataGpu
     {
-        float model[16];
-        float normal_matrix[16];
         float albedo_metallic[4];
         float emissive_roughness[4];
         float ambient_opacity[4];
@@ -77,6 +78,11 @@ private:
         float advanced[4];
         float transmission[4];
         float extra[4];
+    };
+    struct InstanceGpu
+    {
+        float model[16];
+        float normal_matrix[16];
         std::uint32_t identity[4];
     };
     struct Batch
@@ -104,6 +110,8 @@ private:
     LoadedBatch* loadedBatch(std::uint32_t handle,Material::MaterialHandle material,Material::RenderClass render_class,std::string* error);
     bool uploadBatch(Batch* batch,std::string* error);
     bool uploadBatch(LoadedBatch* batch,std::string* error);
+    bool uploadMaterials(std::string* error);
+    std::uint32_t materialRecord(const MaterialDataGpu& material);
     bool bindMaterial(Material::MaterialHandle material,std::string* error);
     bool createAttachments(std::string* error);
     void destroyAttachments();
@@ -112,10 +120,13 @@ private:
     void destroyBatch(LoadedBatch* batch);
 
     GLuint program_=0, framebuffer_=0;
-    GLuint position_depth_=0, normal_roughness_=0, albedo_metallic_=0,
+    GLuint normal_roughness_=0, albedo_metallic_=0,
            emissive_opacity_=0, specular_ior_=0, advanced_=0,
            ambient_transmission_=0, tangent_anisotropy_=0,
-           material_identity_=0, depth_=0;
+           material_identity_=0, depth_=0, material_buffer_=0;
+    std::size_t material_capacity_=0;
+    std::vector<MaterialDataGpu> materials_, uploaded_materials_;
+    Math::Mat4 inverse_view_projection_=Math::identity();
     GLint view_location_=-1, projection_location_=-1;
     GLint texture_mask_location_=-1, alpha_cutoff_location_=-1, masked_location_=-1;
     GLint sampler_locations_[MaterialGpu::LIVE_TEXTURE_COUNT] = {};

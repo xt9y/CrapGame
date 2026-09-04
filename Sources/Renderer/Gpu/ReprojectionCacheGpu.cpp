@@ -76,11 +76,16 @@ bool ReprojectionCacheGpu::init(std::string *error)
 
     previous_view_projection_location_=GL20.glGetUniformLocation(
         reprojection_program_,"uPreviousViewProjection");
+    current_inverse_view_projection_location_=GL20.glGetUniformLocation(
+        reprojection_program_,"uCurrentInverseViewProjection");
+    capture_inverse_view_projection_location_=GL20.glGetUniformLocation(
+        capture_program_,"uCurrentInverseViewProjection");
     camera_position_location_=GL20.glGetUniformLocation(
         reprojection_program_,"uCameraPosition");
     history_valid_location_=GL20.glGetUniformLocation(
         reprojection_program_,"uHistoryValid");
-    if(previous_view_projection_location_<0||camera_position_location_<0
+    if(previous_view_projection_location_<0||current_inverse_view_projection_location_<0
+            ||capture_inverse_view_projection_location_<0||camera_position_location_<0
             ||history_valid_location_<0)
     {
         setError(error,"GPU reprojection uniforms are unavailable");
@@ -147,7 +152,7 @@ bool ReprojectionCacheGpu::reproject(
         return false;
     }
 
-    bindTextureUnit(0,gbuffer.positionDepthTexture());
+    bindTextureUnit(0,gbuffer.depthTexture());
     bindTextureUnit(1,gbuffer.normalRoughnessTexture());
     bindTextureUnit(2,gbuffer.materialIdentityTexture());
     bindTextureUnit(3,previous_position_);
@@ -159,6 +164,8 @@ bool ReprojectionCacheGpu::reproject(
     GL20.glUseProgram(reprojection_program_);
     GL20.glUniformMatrix4fv(previous_view_projection_location_,1,GL_FALSE,
                             previous_view_projection_.value);
+    GL20.glUniformMatrix4fv(current_inverse_view_projection_location_,1,GL_FALSE,
+                            gbuffer.inverseViewProjection().value);
     GL20.glUniform3f(camera_position_location_,camera_position.x,
                      camera_position.y,camera_position.z);
     GL20.glUniform1i(history_valid_location_,history_valid_?1:0);
@@ -187,10 +194,12 @@ bool ReprojectionCacheGpu::capture(
         return false;
     }
 
-    bindTextureUnit(0,gbuffer.positionDepthTexture());
+    bindTextureUnit(0,gbuffer.depthTexture());
     bindTextureUnit(1,gbuffer.normalRoughnessTexture());
     bindTextureUnit(2,gbuffer.materialIdentityTexture());
     GL20.glUseProgram(capture_program_);
+    GL20.glUniformMatrix4fv(capture_inverse_view_projection_location_,1,GL_FALSE,
+                            gbuffer.inverseViewProjection().value);
     GL42.glBindImageTexture(0,previous_position_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
     GL42.glBindImageTexture(1,previous_normal_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
     GL42.glBindImageTexture(2,previous_material_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_R32UI);
@@ -228,6 +237,8 @@ void ReprojectionCacheGpu::shutdown()
     destroyProgram(&reprojection_program_);
     destroyProgram(&capture_program_);
     previous_view_projection_location_=-1;
+    current_inverse_view_projection_location_=-1;
+    capture_inverse_view_projection_location_=-1;
     camera_position_location_=-1;
     history_valid_location_=-1;
 }

@@ -59,6 +59,8 @@ private:
     GLuint valid_mask_=0;
 
     GLint previous_view_projection_location_=-1;
+    GLint current_inverse_view_projection_location_=-1;
+    GLint capture_inverse_view_projection_location_=-1;
     GLint camera_position_location_=-1;
     GLint history_valid_location_=-1;
 

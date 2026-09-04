@@ -7,6 +7,8 @@
 #include "Renderer/Gpu/FrameHotPath.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
+#include "Renderer/Gpu/LumenImportedStageAShader.hpp"
+#include "Renderer/Gpu/LumenStageAComposite.hpp"
 #include "Renderer/Gpu/RadianceCacheGpu.hpp"
 #include "Renderer/Gpu/ReflectionCacheGpu.hpp"
 #include "Renderer/Gpu/ReprojectionCacheGpu.hpp"
@@ -19,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <string>
 
 namespace Renderer
@@ -42,7 +45,8 @@ public:
     bool resize (int width, int height, std::string *error = nullptr);
     bool prewarmImportedTrace (std::string *error = nullptr)
     {
-        if (!ensureImportedTraceShader(error)) return false;
+        if (!ensureStageAImportedTraceShader(error)) return false;
+        if (!ensureStageACompositeShader(error)) return false;
         if (!reprojection_cache_.ensure(width_, height_, error)) return false;
         if (!dirty_tile_gpu_.ensure((width_ + 1) / 2, (height_ + 1) / 2, error)) return false;
         return radiance_cache_.ensure(error);
@@ -80,7 +84,9 @@ public:
         )
     {
         if (!ready() || !gbuffer.ready() || !direct.ready()
-                || gbuffer.width() != width_ || gbuffer.height() != height_)
+                || gbuffer.width() != width_ || gbuffer.height() != height_
+                || composite_program_ != composite_stage_a_program_
+                || composite_inverse_view_projection_location_ < 0)
         {
             setInlineError(error, "GPU Lumen composite resources are not ready");
             return false;
@@ -93,6 +99,8 @@ public:
         bindTextureUnitInline(4, reflection_history_[history_index_]);
 
         GL20.glUseProgram(composite_program_);
+        GL20.glUniformMatrix4fv(composite_inverse_view_projection_location_,1,GL_FALSE,
+                                gbuffer.inverseViewProjection().value);
         GL42.glBindImageTexture(0, final_color_, 0, GL_FALSE, 0, GL_WRITE_ONLY, imageFormatInline(LUMEN_FINAL_FORMAT));
         GL43.glDispatchCompute(
                 static_cast<GLuint>((width_ + 7) / 8),
@@ -143,6 +151,86 @@ public:
 private:
     bool ensureImportedTraceShader(std::string *error);
 
+    bool ensureStageAImportedTraceShader(std::string *error)
+    {
+        if (trace_program_ != 0 && trace_program_ == trace_stage_a_program_
+                && bvh_trace_active_)
+            return true;
+
+        GLuint candidate=0;
+        try
+        {
+            const std::string source=lumenImportedStageATraceShader();
+            candidate=createComputeProgram(source.c_str(),error);
+        }
+        catch(const std::exception& exception)
+        {
+            if(error)*error=exception.what();
+            return false;
+        }
+        if(candidate==0)return false;
+
+        const GLint view_projection=GL20.glGetUniformLocation(candidate,"uViewProjection");
+        const GLint camera=GL20.glGetUniformLocation(candidate,"uCameraPosition");
+        const GLint primitive_count=GL20.glGetUniformLocation(candidate,"uPrimitiveCount");
+        const GLint bvh_count=GL20.glGetUniformLocation(candidate,"uBvhNodeCount");
+        const GLint frame=GL20.glGetUniformLocation(candidate,"uFrameIndex");
+        const GLint history=GL20.glGetUniformLocation(candidate,"uHistoryValid");
+        const GLint imported_instances=GL20.glGetUniformLocation(candidate,"uImportedInstanceCount");
+        const GLint imported_tlas=GL20.glGetUniformLocation(candidate,"uImportedTlasNodeCount");
+        const GLint trace_materials=GL20.glGetUniformLocation(candidate,"uTraceMaterialCount");
+        const GLint dirty_tile_dispatch=GL20.glGetUniformLocation(candidate,"uDirtyTileDispatch");
+        const GLint radiance_generation=GL20.glGetUniformLocation(candidate,"uRadianceGeneration");
+        if(view_projection<0||camera<0||primitive_count<0||bvh_count<0||frame<0
+                ||history<0||imported_instances<0||imported_tlas<0
+                ||trace_materials<0||dirty_tile_dispatch<0||radiance_generation<0)
+        {
+            destroyProgram(&candidate);
+            setInlineError(error,"GPU Stage-A imported Lumen uniforms are unavailable");
+            return false;
+        }
+
+        destroyProgram(&trace_program_);
+        trace_program_=candidate;
+        trace_stage_a_program_=candidate;
+        trace_view_projection_location_=view_projection;
+        trace_camera_location_=camera;
+        trace_primitive_count_location_=primitive_count;
+        trace_bvh_node_count_location_=bvh_count;
+        trace_frame_location_=frame;
+        trace_history_valid_location_=history;
+        trace_imported_instance_count_location_=imported_instances;
+        trace_imported_tlas_count_location_=imported_tlas;
+        trace_material_count_location_=trace_materials;
+        trace_dirty_tile_dispatch_location_=dirty_tile_dispatch;
+        trace_radiance_generation_location_=radiance_generation;
+        bvh_trace_active_=true;
+        if(error)error->clear();
+        return true;
+    }
+
+    bool ensureStageACompositeShader(std::string *error)
+    {
+        if(composite_program_!=0&&composite_program_==composite_stage_a_program_
+                &&composite_inverse_view_projection_location_>=0)
+            return true;
+        GLuint candidate=createComputeProgram(LUMEN_STAGE_A_COMPOSITE_COMPUTE,error);
+        if(candidate==0)return false;
+        const GLint inverse_location=GL20.glGetUniformLocation(candidate,"uGBufferInverseViewProjection");
+        if(inverse_location<0)
+        {
+            destroyProgram(&candidate);
+            setInlineError(error,"GPU Stage-A Lumen composite uniforms are unavailable");
+            return false;
+        }
+        destroyProgram(&composite_program_);
+        composite_program_=candidate;
+        composite_stage_a_program_=candidate;
+        composite_inverse_view_projection_location_=inverse_location;
+        if(error)error->clear();
+        return true;
+    }
+
     static void bindTextureUnitInline (GLuint unit, GLuint texture)
     {
         GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
@@ -169,6 +257,8 @@ private:
 
     GLuint trace_program_ = 0;
     GLuint composite_program_ = 0;
+    GLuint trace_stage_a_program_ = 0;
+    GLuint composite_stage_a_program_ = 0;
     GLuint indirect_history_[2] = {0, 0};
     GLuint reflection_history_[2] = {0, 0};
     GLuint position_history_[2] = {0, 0};
@@ -186,6 +276,7 @@ private:
     GLint trace_material_count_location_ = -1;
     GLint trace_dirty_tile_dispatch_location_ = -1;
     GLint trace_radiance_generation_location_ = -1;
+    GLint composite_inverse_view_projection_location_ = -1;
 
     Math::Mat4 last_view_ = Math::identity();
     Math::Mat4 last_projection_ = Math::identity();

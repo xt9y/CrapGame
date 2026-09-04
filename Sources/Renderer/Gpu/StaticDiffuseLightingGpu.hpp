@@ -45,6 +45,7 @@ private:
     GLint static_light_index_location_=-1;
     GLint shadow_enabled_location_=-1;
     GLint shadow_matrix_location_=-1;
+    GLint inverse_view_projection_location_=-1;
     RevisionState revisions_={};
     int static_light_index_=-1;
     int width_=0,height_=0;

@@ -90,6 +90,7 @@ private:
            direct_color_=0, dynamic_color_=0;
     GLint camera_location_=-1, light_count_location_=-1, primitive_count_location_=-1;
     GLint static_split_light_index_location_=-1;
+    GLint inverse_view_projection_location_=-1;
     std::size_t light_capacity_=0, primitive_capacity_=0, bvh_node_capacity_=0, bvh_primitive_count_=0u;
     std::vector<LightGpu> lights_, uploaded_lights_;
     std::vector<PrimitiveGpu> primitives_, uploaded_primitives_;
