@@ -264,6 +264,7 @@ Renderer::Material::Resource resolveMaterial(
      * opaque or allocating a duplicate GPU copy. */
     const std::size_t base_color_index = Renderer::Material::slotIndex(Slot::BaseColor);
     const std::size_t opacity_index = Renderer::Material::slotIndex(Slot::Opacity);
+    bool opacity_recovered_from_base_alpha = false;
     if (hasPath(material.opacity_texture)
             && out.textures[opacity_index].texture == INVALID_TEXTURE
             && out.textures[base_color_index].texture != INVALID_TEXTURE)
@@ -273,6 +274,7 @@ Renderer::Material::Resource resolveMaterial(
         {
             out.textures[opacity_index] = out.textures[base_color_index];
             out.textures[opacity_index].channel = 'a';
+            opacity_recovered_from_base_alpha = true;
             if (warnings)
             {
                 warnings->push_back(
@@ -334,7 +336,11 @@ Renderer::Material::Resource resolveMaterial(
     else if (opacity_map)
     {
         const auto& binding = out.textures[opacity_index];
-        out.render_class = opacityIsBinary(binding)
+        /* A declared map_d recovered from embedded diffuse alpha still carries
+         * cutout semantics. Antialiased edge texels must not silently promote
+         * foliage/chain materials into the sorted transparent pass. */
+        out.render_class = opacity_recovered_from_base_alpha
+            || opacityIsBinary(binding)
             ? RenderClass::Masked
             : RenderClass::Transparent;
     }
