@@ -22,7 +22,7 @@ RevisionState staticShadowRevisions(std::uint64_t scene_revision)
 
 int DirectLightingGpu::staticShadowLightIndex() const
 {
-    if (!scene_world_ || !static_shadow_cache_.enabled()) return -1;
+    if (!scene_world_ || !static_shadow_cache_.enabled() || !primitives_.empty()) return -1;
     int index = 0;
     for (const Ecs::Entity entity : scene_world_->entities())
     {

@@ -2,6 +2,8 @@
 #include "Renderer/Gpu/DirtyRanges.hpp"
 #include "Renderer/Gpu/SurfaceFormats.hpp"
 #include "Renderer/Gpu/TransparentGpu.hpp"
+#include "Renderer/Material/Material.hpp"
+#include "Renderer/Mesh/Mesh.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +13,7 @@
 namespace Renderer { namespace Gpu { namespace {
 GLenum directImageFormat(SurfaceFormat format){return format==SurfaceFormat::Rgba8?GL_RGBA8:GL_RGBA16F;}
 void sceneError(std::string *error,const char *message){if(error)*error=message?message:"GPU direct-light scene error";}
+void bindDirectTexture(GLuint unit,GLuint texture){GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0+unit));glBindTexture(GL_TEXTURE_2D,texture);}
 } // namespace
 
 const BvhBenchConfig& DirectLightingGpu::benchConfig(){if(!bench_config_initialized_){bench_config_=bvhBenchConfig();bench_config_initialized_=true;}return bench_config_;}
@@ -50,8 +53,33 @@ bool DirectLightingGpu::dispatch(const GBufferGpu& g,const Math::Vec3& camera,st
 {
     if(!ready()||!g.ready()||g.width()!=width_||g.height()!=height_){sceneError(error,"GPU direct lighting resources are not ready for this GBuffer");return false;}
     if(!bindImportedScene(triangle_scene_,error))return false;
+
+    const int static_light_index=staticShadowLightIndex();
+    RevisionState revisions={};
+    revisions.geometry=scene_revision_;
+    revisions.material=scene_revision_;
+    revisions.lighting=scene_revision_;
+    revisions.mesh_registry=Mesh::loadedMeshRevision();
+    revisions.material_registry=Material::revision();
+    static_diffuse_.setLightSource(light_buffer_,static_light_index);
+    view_specular_.setLightSource(light_buffer_,static_light_index);
+    static_diffuse_.invalidate();
+    if(!static_diffuse_.updateIfNeeded(g,static_shadow_cache_,revisions,error))return false;
+    if(!view_specular_.render(g,static_shadow_cache_,camera,nullptr,error))return false;
+
     GLModern.glActiveTexture(GL_TEXTURE0+0);glBindTexture(GL_TEXTURE_2D,g.specularIorTexture());GLModern.glActiveTexture(GL_TEXTURE0+1);glBindTexture(GL_TEXTURE_2D,g.advancedMaterialTexture());GLModern.glActiveTexture(GL_TEXTURE0+2);glBindTexture(GL_TEXTURE_2D,g.transmissionTexture());GLModern.glActiveTexture(GL_TEXTURE0+3);glBindTexture(GL_TEXTURE_2D,g.tangentAnisotropyTexture());GLModern.glActiveTexture(GL_TEXTURE0+4);glBindTexture(GL_TEXTURE_2D_ARRAY,triangle_scene_.colorAtlas());GLModern.glActiveTexture(GL_TEXTURE0+5);glBindTexture(GL_TEXTURE_2D_ARRAY,triangle_scene_.dataAtlas());GLModern.glActiveTexture(GL_TEXTURE0);
-    GL20.glUseProgram(program_);GL20.glUniform3f(camera_location_,camera.x,camera.y,camera.z);GL20.glUniform1i(light_count_location_,static_cast<GLint>(lights_.size()));GL20.glUniform1i(primitive_count_location_,static_cast<GLint>(primitives_.size()));GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,5,light_buffer_);GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,6,primitive_buffer_);GL42.glBindImageTexture(0,g.positionDepthTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_POSITION_DEPTH_FORMAT));GL42.glBindImageTexture(1,g.normalRoughnessTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_NORMAL_ROUGHNESS_FORMAT));GL42.glBindImageTexture(2,g.albedoMetallicTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_ALBEDO_METALLIC_FORMAT));GL42.glBindImageTexture(3,g.emissiveTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_EMISSIVE_FORMAT));GL42.glBindImageTexture(4,direct_color_,0,GL_FALSE,0,GL_WRITE_ONLY,directImageFormat(DIRECT_COLOR_FORMAT));GL43.glDispatchCompute(static_cast<GLuint>((width_+7)/8),static_cast<GLuint>((height_+7)/8),1);GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);GL20.glUseProgram(0);if(error)error->clear();return true;
+    GL20.glUseProgram(program_);GL20.glUniform3f(camera_location_,camera.x,camera.y,camera.z);GL20.glUniform1i(light_count_location_,static_cast<GLint>(lights_.size()));GL20.glUniform1i(primitive_count_location_,static_cast<GLint>(primitives_.size()));GL20.glUniform1i(static_split_light_index_location_,static_light_index);GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,5,light_buffer_);GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,6,primitive_buffer_);GL42.glBindImageTexture(0,g.positionDepthTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_POSITION_DEPTH_FORMAT));GL42.glBindImageTexture(1,g.normalRoughnessTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_NORMAL_ROUGHNESS_FORMAT));GL42.glBindImageTexture(2,g.albedoMetallicTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_ALBEDO_METALLIC_FORMAT));GL42.glBindImageTexture(3,g.emissiveTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_EMISSIVE_FORMAT));GL42.glBindImageTexture(4,dynamic_color_,0,GL_FALSE,0,GL_WRITE_ONLY,directImageFormat(DIRECT_COLOR_FORMAT));GL43.glDispatchCompute(static_cast<GLuint>((width_+7)/8),static_cast<GLuint>((height_+7)/8),1);GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);GL20.glUseProgram(0);
+
+    bindDirectTexture(0,static_diffuse_.texture());
+    bindDirectTexture(1,view_specular_.texture());
+    bindDirectTexture(2,dynamic_color_);
+    GL20.glUseProgram(combine_program_);
+    GL42.glBindImageTexture(0,direct_color_,0,GL_FALSE,0,GL_WRITE_ONLY,directImageFormat(DIRECT_COLOR_FORMAT));
+    GL43.glDispatchCompute(static_cast<GLuint>((width_+7)/8),static_cast<GLuint>((height_+7)/8),1);
+    GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);
+    GL20.glUseProgram(0);
+    bindDirectTexture(0,0);bindDirectTexture(1,0);bindDirectTexture(2,0);GLModern.glActiveTexture(GL_TEXTURE0);
+    if(error)error->clear();return true;
 }
 
 bool DirectLightingGpu::ensureBvhBuffer(std::string *error){if(bvh_node_buffer_==0)GL15.glGenBuffers(1,&bvh_node_buffer_);if(bvh_node_buffer_==0){sceneError(error,"failed to allocate shared GPU BVH buffer");return false;}return true;}

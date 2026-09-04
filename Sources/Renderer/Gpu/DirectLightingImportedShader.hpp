@@ -10,6 +10,16 @@
 
 namespace Renderer { namespace Gpu {
 
+inline void replaceDirectRequired(std::string *source,
+                                  const std::string& from,
+                                  const std::string& to)
+{
+    const std::size_t at=source?source->find(from):std::string::npos;
+    if(at==std::string::npos)
+        throw std::runtime_error("direct-light shader patch point missing");
+    source->replace(at,from.size(),to);
+}
+
 inline std::string directLightingImportedShader()
 {
     std::string source = DIRECT_LIGHTING_COMPUTE;
@@ -38,12 +48,19 @@ inline std::string directLightingImportedShader()
 
     const std::string old_material =
         "vec3 position=pd.xyz,normal=normalize(nr.xyz),albedo=am.xyz,viewDirection=normalize(uCameraPosition-position),emissive=eo.xyz;float roughness=nr.w,metallic=am.w;vec3 direct=emissive;";
-    const std::string new_material =
-        "vec3 position=pd.xyz,normal=normalize(nr.xyz),albedo=am.xyz,viewDirection=normalize(uCameraPosition-position),emissive=eo.xyz,ambient=texelFetch(sAmbientTransmission,pixel,0).rgb;float roughness=nr.w,metallic=am.w;vec3 direct=emissive+ambient*albedo*0.025;";
-    const std::size_t material_at = source.find(old_material);
-    if (material_at == std::string::npos)
-        throw std::runtime_error("direct-light ambient material patch point missing");
-    source.replace(material_at, old_material.size(), new_material);
+    const std::string dynamic_material =
+        "vec3 position=pd.xyz,normal=normalize(nr.xyz),albedo=am.xyz,viewDirection=normalize(uCameraPosition-position);float roughness=nr.w,metallic=am.w;vec3 direct=vec3(0.0);";
+    replaceDirectRequired(&source,old_material,dynamic_material);
+    replaceDirectRequired(&source,",eo=imageLoad(gEmissive,pixel)","");
+    replaceDirectRequired(&source,
+        "uniform int uPrimitiveCount;",
+        "uniform int uPrimitiveCount;uniform int uStaticSplitLightIndex;");
+    replaceDirectRequired(&source,
+        "if(pd.w<=0){imageStore(oDirect,pixel,vec4(0.055,0.070,0.105,1));return;}",
+        "if(pd.w<=0){imageStore(oDirect,pixel,vec4(0.0));return;}");
+    replaceDirectRequired(&source,
+        "for(int i=0;i<uLightCount;++i){LightData light=lights[i];",
+        "for(int i=0;i<uLightCount;++i){if(i==uStaticSplitLightIndex)continue;LightData light=lights[i];");
     return source;
 }
 

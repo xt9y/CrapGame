@@ -5,8 +5,10 @@
 #include "Renderer/Gpu/Bvh.hpp"
 #include "Renderer/Gpu/BvhBench.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/StaticDiffuseLightingGpu.hpp"
 #include "Renderer/Gpu/StaticShadowCacheGpu.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
+#include "Renderer/Gpu/ViewSpecularGpu.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -44,7 +46,7 @@ public:
     void shutdown();
     void releaseAcceleration();
 
-    bool ready() const { return program_!=0 && direct_color_!=0; }
+    bool ready() const { return program_!=0 && combine_program_!=0 && direct_color_!=0 && dynamic_color_!=0; }
     GLuint directTexture() const { return direct_color_; }
     GLuint lightBuffer() const { return light_buffer_; }
     std::size_t lightCount() const { return lights_.size(); }
@@ -60,6 +62,8 @@ public:
     std::uint64_t sceneRevision() const { return scene_revision_; }
     TransparentGpu *transparentPass() const { return transparent_.get(); }
     const StaticShadowCacheGpu& staticShadowCache() const { return static_shadow_cache_; }
+    const StaticDiffuseLightingGpu& staticDiffuse() const { return static_diffuse_; }
+    const ViewSpecularGpu& viewSpecular() const { return view_specular_; }
 
 private:
     static constexpr std::size_t BVH_THRESHOLD=8u;
@@ -79,9 +83,11 @@ private:
     template <typename T>
     bool uploadChangedRecords(GLuint buffer,std::size_t *capacity,const std::vector<T>& current,std::vector<T> *uploaded,std::string *error);
 
-    GLuint program_=0;
-    GLuint light_buffer_=0, primitive_buffer_=0, bvh_node_buffer_=0, direct_color_=0;
+    GLuint program_=0, combine_program_=0;
+    GLuint light_buffer_=0, primitive_buffer_=0, bvh_node_buffer_=0,
+           direct_color_=0, dynamic_color_=0;
     GLint camera_location_=-1, light_count_location_=-1, primitive_count_location_=-1;
+    GLint static_split_light_index_location_=-1;
     std::size_t light_capacity_=0, primitive_capacity_=0, bvh_node_capacity_=0, bvh_primitive_count_=0u;
     std::vector<LightGpu> lights_, uploaded_lights_;
     std::vector<PrimitiveGpu> primitives_, uploaded_primitives_;
@@ -89,6 +95,8 @@ private:
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
     TriangleScene triangle_scene_;
     StaticShadowCacheGpu static_shadow_cache_;
+    StaticDiffuseLightingGpu static_diffuse_;
+    ViewSpecularGpu view_specular_;
     mutable std::unique_ptr<TransparentGpu> transparent_;
     const Ecs::World *scene_world_=nullptr;
     std::uint64_t scene_revision_=0u;
