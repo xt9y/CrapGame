@@ -5,6 +5,7 @@
 #include "Renderer/Gpu/Bvh.hpp"
 #include "Renderer/Gpu/BvhBench.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/TriangleScene.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -16,8 +17,6 @@
 #include <vector>
 
 namespace Renderer { namespace Gpu {
-
-class TriangleScene;
 
 class DirectLightingGpu
 {
@@ -42,6 +41,9 @@ public:
     bool benchmarkActive() const { return bench_config_initialized_ && bench_config_.stress_primitives>0u; }
     GLuint bvhNodeBuffer() const { return bvh_node_buffer_; }
     std::size_t bvhNodeCount() const { return bvh_nodes_.size(); }
+    const TriangleScene& triangleScene() const { return triangle_scene_; }
+    const Ecs::World *sceneWorld() const { return scene_world_; }
+    std::uint64_t sceneRevision() const { return scene_revision_; }
 
 private:
     static constexpr std::size_t BVH_THRESHOLD=8u;
@@ -67,6 +69,9 @@ private:
     std::vector<PrimitiveGpu> primitives_, uploaded_primitives_;
     std::vector<BvhBoundsInput> primitive_bounds_;
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
+    TriangleScene triangle_scene_;
+    const Ecs::World *scene_world_=nullptr;
+    std::uint64_t scene_revision_=0u;
     BvhBenchConfig bench_config_={};
     bool bench_config_initialized_=false, bench_reported_=false, use_bvh_=false;
     int width_=0,height_=0;

@@ -26,6 +26,8 @@ void DirectLightingGpu::appendStressPrimitives(std::size_t count)
 bool DirectLightingGpu::updateScene(const Ecs::World& world,std::string *error)
 {
     if(program_==0||light_buffer_==0||primitive_buffer_==0){sceneError(error,"GPU direct-light scene buffers are not initialized");return false;}
+    scene_world_=&world;scene_revision_=world.changeRevision();
+    if(!triangle_scene_.update(world,error))return false;
     lights_.clear();primitives_.clear();primitive_bounds_.clear();
     for(const Ecs::Entity entity:world.entities())
     {
@@ -37,7 +39,7 @@ bool DirectLightingGpu::updateScene(const Ecs::World& world,std::string *error)
     const std::size_t scene_count=primitives_.size();const BvhBenchConfig& cfg=benchConfig();appendStressPrimitives(cfg.stress_primitives);use_bvh_=shouldUseBvh(cfg.mode,primitives_.size(),BVH_THRESHOLD);
     if(!bench_reported_&&(cfg.stress_primitives>0u||cfg.mode!=BvhMode::Auto)){std::fprintf(stderr,"GPU BVH benchmark: scene %zu + stress %zu = %zu primitives, mode %s, traversal %s\n",scene_count,cfg.stress_primitives,primitives_.size(),bvhModeName(cfg.mode),use_bvh_?"bvh":"linear");bench_reported_=true;}
     if(!uploadChangedRecords(light_buffer_,&light_capacity_,lights_,&uploaded_lights_,error)||!uploadChangedRecords(primitive_buffer_,&primitive_capacity_,primitives_,&uploaded_primitives_,error))return false;
-    if(use_bvh_){if(!ensureBvhBuffer(error))return false;const bool match=!bvh_nodes_.empty()&&bvh_primitive_count_==primitives_.size();bool refit=match&&refitBvh(&bvh_nodes_,primitive_bounds_);if(!refit){BvhBuild build=buildBvh(primitive_bounds_,BVH_LEAF_SIZE);bvh_nodes_=std::move(build.nodes);bvh_primitive_count_=primitives_.size();}if(!uploadChangedRecords(bvh_node_buffer_,&bvh_node_capacity_,bvh_nodes_,&uploaded_bvh_nodes_,error))return false;use_bvh_=false;}else{bvh_nodes_.clear();bvh_primitive_count_=0;}
+    if(use_bvh_){if(!ensureBvhBuffer(error))return false;const bool match=!bvh_nodes_.empty()&&bvh_primitive_count_==primitives_.size();bool refit=match&&refitBvh(&bvh_nodes_,primitive_bounds_);if(!refit){BvhBuild build=buildBvh(primitive_bounds_,BVH_LEAF_SIZE);bvh_nodes_=std::move(build.nodes);bvh_primitive_count_=primitives_.size();}if(!uploadChangedRecords(bvh_node_buffer_,&bvh_node_capacity_,bvh_nodes_,&uploaded_bvh_nodes_,error))return false;}else{bvh_nodes_.clear();bvh_primitive_count_=0;}
     if(error) error->clear();
     return true;
 }
@@ -45,7 +47,8 @@ bool DirectLightingGpu::updateScene(const Ecs::World& world,std::string *error)
 bool DirectLightingGpu::dispatch(const GBufferGpu& g,const Math::Vec3& camera,std::string *error)
 {
     if(!ready()||!g.ready()||g.width()!=width_||g.height()!=height_){sceneError(error,"GPU direct lighting resources are not ready for this GBuffer");return false;}
-    GLModern.glActiveTexture(GL_TEXTURE0+0);glBindTexture(GL_TEXTURE_2D,g.specularIorTexture());GLModern.glActiveTexture(GL_TEXTURE0+1);glBindTexture(GL_TEXTURE_2D,g.advancedMaterialTexture());GLModern.glActiveTexture(GL_TEXTURE0+2);glBindTexture(GL_TEXTURE_2D,g.transmissionTexture());GLModern.glActiveTexture(GL_TEXTURE0+3);glBindTexture(GL_TEXTURE_2D,g.tangentAnisotropyTexture());GLModern.glActiveTexture(GL_TEXTURE0);
+    if(!bindImportedScene(triangle_scene_,error))return false;
+    GLModern.glActiveTexture(GL_TEXTURE0+0);glBindTexture(GL_TEXTURE_2D,g.specularIorTexture());GLModern.glActiveTexture(GL_TEXTURE0+1);glBindTexture(GL_TEXTURE_2D,g.advancedMaterialTexture());GLModern.glActiveTexture(GL_TEXTURE0+2);glBindTexture(GL_TEXTURE_2D,g.transmissionTexture());GLModern.glActiveTexture(GL_TEXTURE0+3);glBindTexture(GL_TEXTURE_2D,g.tangentAnisotropyTexture());GLModern.glActiveTexture(GL_TEXTURE0+4);glBindTexture(GL_TEXTURE_2D_ARRAY,triangle_scene_.colorAtlas());GLModern.glActiveTexture(GL_TEXTURE0+5);glBindTexture(GL_TEXTURE_2D_ARRAY,triangle_scene_.dataAtlas());GLModern.glActiveTexture(GL_TEXTURE0);
     GL20.glUseProgram(program_);GL20.glUniform3f(camera_location_,camera.x,camera.y,camera.z);GL20.glUniform1i(light_count_location_,static_cast<GLint>(lights_.size()));GL20.glUniform1i(primitive_count_location_,static_cast<GLint>(primitives_.size()));GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,5,light_buffer_);GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,6,primitive_buffer_);GL42.glBindImageTexture(0,g.positionDepthTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_POSITION_DEPTH_FORMAT));GL42.glBindImageTexture(1,g.normalRoughnessTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_NORMAL_ROUGHNESS_FORMAT));GL42.glBindImageTexture(2,g.albedoMetallicTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_ALBEDO_METALLIC_FORMAT));GL42.glBindImageTexture(3,g.emissiveTexture(),0,GL_FALSE,0,GL_READ_ONLY,directImageFormat(GBUFFER_EMISSIVE_FORMAT));GL42.glBindImageTexture(4,direct_color_,0,GL_FALSE,0,GL_WRITE_ONLY,directImageFormat(DIRECT_COLOR_FORMAT));GL43.glDispatchCompute(static_cast<GLuint>((width_+7)/8),static_cast<GLuint>((height_+7)/8),1);GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);GL20.glUseProgram(0);if(error)error->clear();return true;
 }
 
