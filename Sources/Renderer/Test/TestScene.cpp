@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -16,6 +17,12 @@ namespace
 bool isTest (const char *test_name, const char *expected)
 {
     return test_name && expected && std::strcmp(test_name, expected) == 0;
+}
+
+bool environmentFlag (const char *name)
+{
+    const char *value = std::getenv(name);
+    return value && *value && !(value[0] == '0' && value[1] == '\0');
 }
 
 Ecs::Entity addCamera (Ecs::World *world)
@@ -150,13 +157,14 @@ bool buildScene (const char *test_name, Ecs::World *world, SceneState *state)
     state->renderercheck = test_name && *test_name;
 
     const Ecs::Entity camera = addCamera(world);
+    const bool performance_scene = environmentFlag("RENDERCHECK_PERF");
 
-    if (!state->renderercheck)
+    if (!state->renderercheck && !performance_scene)
     {
         if (Ecs::TransformComponent *camera_transform = world->getTransform(camera))
         {
-            camera_transform->position = {0.0f, 2.5f, 8.0f};
-            camera_transform->rotation = {0.0f, 0.0f, 0.0f};
+            camera_transform->position = {0.0f, 2.5f, 0.0f};
+            camera_transform->rotation = {0.0f, 90.0f, 0.0f};
         }
         if (Ecs::CameraComponent *camera_component = world->getCamera(camera))
         {
