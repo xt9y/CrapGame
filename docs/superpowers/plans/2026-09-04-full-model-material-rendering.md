@@ -41,7 +41,12 @@
 - `tests/material_resolver_contract.cpp`
 - `tests/tangent_displacement_contract.cpp`
 - `tests/gpu_material_contract.cpp`
+- `tests/gpu_gbuffer_material_contract.cpp`
+- `tests/direct_material_brdf_contract.cpp`
+- `tests/transparent_material_contract.cpp`
 - `tests/triangle_scene_contract.cpp`
+- `tests/imported_shadow_contract.cpp`
+- `tests/lumen_imported_material_contract.cpp`
 - `tests/sponza_material_contract.cpp`
 
 ### Existing files modified
@@ -70,7 +75,6 @@
 - Create: `tests/tga_contract.cpp`
 
 **Interfaces:**
-- Produces:
 
 ```cpp
 namespace Models::Tga {
@@ -113,8 +117,6 @@ Also require malformed/truncated RLE and invalid dimensions to fail with a non-e
 
 - [ ] **Step 2: Run the failing contract**
 
-Run:
-
 ```bash
 c++ -std=c++17 -Wall -Wextra -Werror -I Sources \
   tests/tga_contract.cpp Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
@@ -124,8 +126,6 @@ c++ -std=c++17 -Wall -Wextra -Werror -I Sources \
 Expected: compile/link failure because `Tga`/`Texture` interfaces do not exist.
 
 - [ ] **Step 3: Implement header parsing and normalized RGBA8 decoding**
-
-Implement explicit little-endian reads and bounds checks. Normalize all decoded output to top-left RGBA8 order:
 
 ```cpp
 bool load(const std::string& path, Image *image, std::string *error)
@@ -138,7 +138,7 @@ bool load(const std::string& path, Image *image, std::string *error)
 }
 ```
 
-Cover TGA image types 1/2/3 and RLE 9/10/11, 15/16/24/32-bit true-color, valid 8-bit gray/index data, palette decode, descriptor alpha bits, and both horizontal/vertical origin flags.
+Cover TGA image types 1/2/3 and RLE 9/10/11, 15/16/24/32-bit true-color, valid 8-bit gray/index data, palette decode, descriptor alpha bits, and both horizontal/vertical origin flags. Normalize all output to top-left RGBA8.
 
 - [ ] **Step 4: Implement normalized-path CPU cache**
 
@@ -146,7 +146,7 @@ Use `std::filesystem::absolute(...).lexically_normal()` as the cache key. `loadT
 
 - [ ] **Step 5: Run strict decoder/cache tests**
 
-Run the command from Step 2. Expected: PASS with all fixture assertions, including duplicate normalized-path reuse.
+Run Step 2. Expected: PASS including duplicate normalized-path reuse.
 
 - [ ] **Step 6: Commit**
 
@@ -170,8 +170,6 @@ git commit -m "Models: add native TGA texture decoding"
 - Create: `tests/material_resolver_contract.cpp`
 
 **Interfaces:**
-- Consumes: `Models::TextureHandle`, decoded texture pixels and existing `Models::MaterialData`.
-- Produces:
 
 ```cpp
 namespace Renderer::Material {
@@ -180,7 +178,6 @@ constexpr MaterialHandle INVALID_MATERIAL = UINT32_MAX;
 
 enum class RenderClass { Opaque, Masked, Transparent, Transmissive };
 enum class ColorSpace { Linear, Srgb };
-
 enum class Slot : std::uint8_t {
     BaseColor, Ambient, Specular, Emissive, Metallic, Roughness,
     Shininess, Opacity, Normal, Bump, Displacement, Reflection,
@@ -216,15 +213,13 @@ void clear();
 }
 ```
 
-Add to `Ecs::MaterialComponent` at the end so current aggregate initialization remains source-compatible:
+Append to `Ecs::MaterialComponent` so existing aggregate initializers remain valid:
 
 ```cpp
 std::uint32_t renderer_material = Ecs::INVALID_ASSET_HANDLE;
 ```
 
 - [ ] **Step 1: Write failing resolver tests**
-
-Require exact precedence and classifications:
 
 ```cpp
 require(resolveNsRoughness(7.843137f) == approx(std::sqrt(2.0f / 9.843137f)));
@@ -235,7 +230,7 @@ require(resource.textures[slot(Opacity)].texture != Models::INVALID_TEXTURE);
 
 Construct a 25-material Sponza-like document where at least 80% of textured non-alpha/non-transmissive materials use `d == 0`, all `map_d` materials use `d == 1`, and no competing `Tr`/`Pt` semantics exist. Require ordinary `d == 0` materials to resolve opaque only in that detected document pattern.
 
-For opacity-map classification, use exact normalized byte thresholds: values `<= 5/255` count as zero and `>= 250/255` count as one; any selected-channel pixel between those limits makes the material `Transparent` rather than `Masked`.
+For opacity-map classification, normalized byte values `<= 5/255` count as zero and `>= 250/255` count as one; any selected-channel pixel between those limits makes the material `Transparent` instead of `Masked`.
 
 - [ ] **Step 2: Run resolver tests and confirm failure**
 
@@ -247,11 +242,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -I Sources \
   -o /tmp/material_resolver_contract && /tmp/material_resolver_contract
 ```
 
-Expected: failure because registry/resolver APIs are absent.
-
-- [ ] **Step 3: Implement material registry and legacy/PBR conversions**
-
-Use:
+- [ ] **Step 3: Implement exact legacy/PBR conversions**
 
 ```cpp
 float nsToRoughness(float ns) {
@@ -265,19 +256,17 @@ float iorToF0(float ior) {
 }
 ```
 
-Resolve explicit roughness texture/scalar before `Ns`, explicit metallic before default 0, `Ks`/specular texture before dielectric-IOR fallback, `Pt`/transmission texture before zero, and preserve raw values in `Models::MaterialData` for diagnostics.
+Resolve explicit roughness texture/scalar before `Ns`, explicit metallic before default 0, `Ks`/specular texture before dielectric-IOR fallback, `Pt`/transmission texture before zero, and preserve raw values in `Models::MaterialData`.
 
-- [ ] **Step 4: Implement Sponza dissolve compatibility at document scope**
+- [ ] **Step 4: Implement document-scope Sponza dissolve compatibility**
 
-In `Obj::Document`, carry a boolean such as `legacy_zero_d_is_opaque`. Compute it after all MTL materials are parsed using the exact 80% pattern above. Do not globally invert `d`; apply the compatibility only to ordinary non-alpha/non-transmissive materials in that document.
+Add `bool legacy_zero_d_is_opaque = false;` to `Obj::Document`. Set it only when the exact 80% pattern from Step 1 is satisfied. Do not globally invert `d`.
 
-- [ ] **Step 5: Register imported materials during `Models::load()`**
+- [ ] **Step 5: Register imported renderer materials during `Models::load()`**
 
-Change model parts to store both mesh handle and renderer material handle. `Models::spawn()` copies scalar fallback fields as today and sets `renderer_material` to the resolved registry handle.
+Each model part stores mesh handle plus `Renderer::Material::MaterialHandle`. `Models::spawn()` copies existing scalar fallback fields and assigns `renderer_material`.
 
 - [ ] **Step 6: Run resolver and existing model contracts**
-
-Run the resolver command plus:
 
 ```bash
 c++ -std=c++17 -Wall -Wextra -Werror -I Sources \
@@ -288,7 +277,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -I Sources \
   -o /tmp/models_contract && /tmp/models_contract
 ```
 
-Expected: all existing model behavior remains green and renderer material handles are valid.
+Expected: existing model contract plus renderer-material assertions pass.
 
 - [ ] **Step 7: Commit**
 
@@ -305,24 +294,20 @@ git commit -m "Models: resolve complete renderer materials"
 - Create: `Sources/Renderer/Mesh/Tangent.hpp`
 - Create: `Sources/Renderer/Mesh/Tangent.cpp`
 - Modify: `Sources/Renderer/Mesh/Mesh.hpp`
+- Modify: `Sources/Renderer/Mesh/Mesh.cpp`
 - Modify: `Sources/Models/Models.cpp`
 - Create: `tests/tangent_displacement_contract.cpp`
 
 **Interfaces:**
-- Modify vertex layout:
 
 ```cpp
 struct Vertex {
     Math::Vec3 position;
     Math::Vec3 normal;
-    Math::Vec4 tangent; // xyz direction, w handedness
+    Math::Vec4 tangent;
     Math::Vec2 uv;
 };
-```
 
-- Produce:
-
-```cpp
 void generateTangents(MeshData *mesh);
 bool applyDisplacement(MeshData *mesh,
                        const Renderer::Material::TextureBinding& binding,
@@ -332,7 +317,7 @@ bool applyDisplacement(MeshData *mesh,
 
 - [ ] **Step 1: Write failing tangent/displacement tests**
 
-Require a UV-mapped quad to generate tangent approximately `(1,0,0,+1)`. Require a degenerate-UV triangle to produce finite normalized tangent values. Create a 2x2 height TGA and require displacement to move vertices along normals by selected-channel height times strength.
+Require a UV-mapped quad to generate tangent approximately `(1,0,0,+1)`, a degenerate-UV triangle to produce finite normalized tangent values, and a 2x2 height texture to move vertices along normals by sampled selected-channel height times strength.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -344,21 +329,21 @@ c++ -std=c++17 -Wall -Wextra -Werror -I Sources \
   -o /tmp/tangent_contract && /tmp/tangent_contract
 ```
 
-- [ ] **Step 3: Implement tangent accumulation/orthogonalization**
+- [ ] **Step 3: Implement tangent accumulation and fallback**
 
-For each indexed triangle compute UV determinant, accumulate tangent/bitangent, Gram-Schmidt tangent against final normal, derive handedness from `dot(cross(n,t), b)`. For degenerate UVs, choose a deterministic axis least aligned with the normal and cross it with the normal.
+For each indexed triangle compute UV determinant, accumulate tangent/bitangent, Gram-Schmidt tangent against final normal, and derive handedness from `dot(cross(n,t), b)`. Degenerate UVs choose the axis least aligned with the normal and cross it with the normal.
 
 - [ ] **Step 4: Implement `_ddn` reclassification and real height displacement**
 
-Before displacement, treat `map_Disp` paths containing `_ddn` immediately before the extension, case-insensitively, as normal/detail-normal input. For true displacement, sample transformed/clamped/repeated UVs using the selected channel, offset along current normal, recompute normals, then regenerate tangents.
+`map_Disp` whose filename stem ends in `_ddn`, case-insensitively, becomes normal/detail-normal input. Other displacement samples transformed/clamped/repeated UV, applies selected channel and strength along the current normal, recomputes normals, then regenerates tangents.
 
-- [ ] **Step 5: Update procedural meshes for the new vertex layout**
+- [ ] **Step 5: Update procedural mesh vertex initialization**
 
-Ensure `createCube()` and `createPlane()` initialize valid tangent data so existing procedural rendering remains compatible.
+Make `createCube()` and `createPlane()` initialize valid tangent data.
 
-- [ ] **Step 6: Run strict tests**
+- [ ] **Step 6: Run Task 3 and existing mesh/model contracts**
 
-Run Task 3 command and existing mesh/model contracts. Expected: all pass with no NaN/Inf values.
+Expected: all pass and no NaN/Inf tangent values exist.
 
 - [ ] **Step 7: Commit**
 
@@ -389,27 +374,27 @@ public:
 };
 ```
 
-Internally cache GL texture objects by `(Models::TextureHandle, ColorSpace)` because the same decoded pixels may need sRGB vs linear interpretation in different semantic slots.
+Cache GL textures by `(Models::TextureHandle, Renderer::Material::ColorSpace)`.
 
-- [ ] **Step 1: Write a source/behavior contract**
+- [ ] **Step 1: Write failing fake-GL contract**
 
-Require material upload records to distinguish sRGB base/emissive/specular color slots from linear data slots; require repeated `ensure()` for one material not to allocate new GL texture objects. Use fake lwcgl function tables as existing GPU contracts do.
+Require sRGB base/emissive/specular-color upload, linear data upload, wrap policy, and no extra GL allocation on repeated `ensure()` for the same material.
 
-- [ ] **Step 2: Run and verify RED**
+- [ ] **Step 2: Run RED contract**
 
-Compile `tests/gpu_material_contract.cpp` with the new file paths; expect missing `MaterialGpu` failure.
+Compile `tests/gpu_material_contract.cpp` against `MaterialGpu.cpp`. Expected: missing implementation.
 
-- [ ] **Step 3: Implement GL upload policy**
+- [ ] **Step 3: Implement upload policy**
 
-Use `GL_SRGB8_ALPHA8` for sRGB RGBA8 color textures, `GL_RGBA8` for linear textures, semantic wrap from `TextureBinding::clamp`, linear mipmapped minification and linear magnification. Generate CPU-renormalized normal-map mip chains before upload; other slots may use `glGenerateMipmap` if available in lwcgl GL4.3 tables.
+Use `GL_SRGB8_ALPHA8` for sRGB RGBA8, `GL_RGBA8` for linear RGBA8, `TextureBinding::clamp` for wrapping, mipmapped linear minification and linear magnification. Generate CPU-renormalized normal-map mip chains; other slots may use GL mip generation.
 
-- [ ] **Step 4: Bind a fixed slot layout**
+- [ ] **Step 4: Implement stable slot binding**
 
-Reserve consecutive units in the GBuffer/transparent shaders with a stable order matching `Renderer::Material::Slot`. Missing textures bind texture 0 and a `uTextureMask` bitfield tells the shader to use scalar fallbacks.
+Bind slots in `Renderer::Material::Slot` order. Missing textures bind texture 0 and a bitfield uniform selects scalar fallback.
 
-- [ ] **Step 5: Run strict fake-GL contract**
+- [ ] **Step 5: Run fake-GL contract**
 
-Expected: PASS and allocation count remains constant across repeated `ensure()`/`bind()` calls.
+Expected: PASS with stable allocation counts.
 
 - [ ] **Step 6: Commit**
 
@@ -430,8 +415,6 @@ git commit -m "Renderer: add GPU material texture cache"
 - Create: `tests/gpu_gbuffer_material_contract.cpp`
 
 **Interfaces:**
-- `GBufferGpu` owns/uses `MaterialGpu` for opaque/masked batches.
-- Batch key becomes:
 
 ```cpp
 struct BatchKey {
@@ -441,25 +424,27 @@ struct BatchKey {
 };
 ```
 
+`GBufferGpu` owns or receives one `MaterialGpu` cache and only emits Opaque/Masked batches.
+
 - [ ] **Step 1: Write failing shader/source contract**
 
-Require the committed GBuffer shader source to carry `aUv`, `aTangent`, material texture samplers, alpha discard, and resolved outputs. Require loaded entities with the same mesh but different renderer materials to form different batches.
+Require `aUv`, `aTangent`, material samplers, alpha discard, and separate batches for one mesh with different renderer materials.
 
 - [ ] **Step 2: Run RED contract**
 
-Compile the contract against current `GBufferGpu.cpp`; expected failure because UV/tangent/material sampling is absent.
+Expected: current GBuffer lacks material texture sampling.
 
-- [ ] **Step 3: Extend vertex upload and shader inputs**
+- [ ] **Step 3: Extend vertex upload and shader varyings**
 
-Add attribute 3 for tangent and forward UV/tangent/world-normal into the fragment stage. Reconstruct TBN in GLSL and apply normal map, then bump finite differences if a bump map is present.
+Add tangent attribute location 3; forward UV, transformed tangent and world normal. Build TBN in the fragment stage and apply normal then bump perturbation.
 
-- [ ] **Step 4: Resolve all opaque/masked material channels in the fragment shader**
+- [ ] **Step 4: Resolve every opaque/masked channel**
 
-Sample/apply base color, ambient, specular, emissive, metallic, roughness/shininess fallback, opacity, normal, bump, reflection scalar/color, transmission metadata, clearcoat, clearcoat roughness, sheen and anisotropy. Apply per-slot `-o`, `-s`, `-t`, clamp/repeat, `-bm` and selected channel.
+Sample/apply base color, ambient, specular, emissive, metallic, roughness/shininess, opacity, normal, bump, reflection, transmission metadata, clearcoat, clearcoat roughness, sheen and anisotropy. Apply `-o`, `-s`, `-t`, clamp/repeat, `-bm` and selected channel.
 
-- [ ] **Step 5: Implement expanded GBuffer attachments**
+- [ ] **Step 5: Add expanded GBuffer attachments**
 
-Use up to eight GL4.3 draw buffers with the spec semantics. Keep exact accessors in `GBufferGpu.hpp` for downstream passes:
+Provide:
 
 ```cpp
 GLuint specularIorTexture() const;
@@ -468,17 +453,19 @@ GLuint transmissionTexture() const;
 GLuint tangentAnisotropyTexture() const;
 ```
 
-- [ ] **Step 6: Implement masked alpha behavior**
+Keep position/depth, normal/roughness, albedo/metallic and emissive/opacity attachments from the spec.
 
-For `RenderClass::Masked`, compute resolved opacity and `discard` below `resource.alpha_cutoff` (default 0.5). Opaque never enters blend mode. Transparent/transmissive entities are skipped by this pass and collected later by `TransparentGpu`.
+- [ ] **Step 6: Add masked alpha discard**
 
-- [ ] **Step 7: Update change tracking**
+Default cutoff is `0.5f`. Opaque never blends. Transparent/Transmissive entities are excluded from GBuffer.
 
-Treat a changed `renderer_material` handle as material change, while retaining comparison of existing scalar fields.
+- [ ] **Step 7: Update scene-change tracking**
 
-- [ ] **Step 8: Run fake-GL/source contracts and procedural contracts**
+Compare `renderer_material` in addition to existing scalar material state.
 
-Expected: GBuffer material contract passes; existing RendererCheck procedural source contracts continue to compile.
+- [ ] **Step 8: Run fake-GL/source and procedural contracts**
+
+Expected: new GBuffer contract passes and procedural RendererCheck contracts still compile.
 
 - [ ] **Step 9: Commit**
 
@@ -499,32 +486,32 @@ git commit -m "Renderer: shade textured imported materials in GBuffer"
 - Create: `tests/direct_material_brdf_contract.cpp`
 
 **Interfaces:**
-- Consume the expanded GBuffer channels from Task 5.
-- Keep existing `dispatch(const GBufferGpu&, const Math::Vec3&, std::string*)` public signature.
+- Keep `dispatch(const GBufferGpu&, const Math::Vec3&, std::string*)` unchanged.
+- Consume Task 5 GBuffer attachments.
 
-- [ ] **Step 1: Write failing BRDF source/math contracts**
+- [ ] **Step 1: Write failing BRDF source/math contract**
 
-Require shader functions/paths for dielectric IOR F0, explicit specular, clearcoat GGX, sheen and anisotropic tangent-space roughness. Require no hardcoded-only `vec3(0.04)` path when explicit specular/IOR data exists.
+Require dielectric IOR F0, explicit specular, clearcoat GGX, sheen and anisotropic tangent-space roughness; reject a hardcoded-only `vec3(0.04)` material path.
 
-- [ ] **Step 2: Run and confirm RED**
+- [ ] **Step 2: Run RED contract**
 
-Compile the source contract; expect missing advanced channels/functions.
+Expected: advanced channels/functions absent.
 
 - [ ] **Step 3: Implement energy-aware base BRDF**
 
-Compute dielectric F0 from resolved specular/IOR, metallic colored F0 from albedo, GGX NDF/Smith visibility, diffuse energy scaled by `(1-F)*(1-metallic)`.
+Use resolved specular/IOR for dielectric F0, metallic colored F0 from albedo, GGX NDF/Smith visibility, and diffuse weight `(1-F)*(1-metallic)`.
 
 - [ ] **Step 4: Add clearcoat, sheen and anisotropy**
 
-Use tangent/bitangent from GBuffer for anisotropic distribution. Add a separate clearcoat Fresnel/GGX lobe and reduce base-layer energy by clearcoat Fresnel. Add sheen at grazing angles without adding it to metallic materials unless the material explicitly requests it.
+Use tangent/bitangent for anisotropic distribution, add a second clearcoat Fresnel/GGX lobe and reduce base-layer energy by clearcoat Fresnel, then add sheen at grazing angles.
 
-- [ ] **Step 5: Preserve emissive and material reflectivity outputs**
+- [ ] **Step 5: Preserve emissive and reflection controls**
 
-Direct lighting starts from emissive as today; reflection strength is not baked into direct diffuse but remains available for the Lumen/reflection composite.
+Direct starts from emissive; reflectivity remains available to Lumen/reflection composite instead of being folded into diffuse.
 
-- [ ] **Step 6: Run contracts**
+- [ ] **Step 6: Run BRDF and existing lighting contracts**
 
-Expected: strict BRDF source/math contract passes and existing light-type contracts remain green.
+Expected: all pass.
 
 - [ ] **Step 7: Commit**
 
@@ -568,33 +555,31 @@ public:
 
 - [ ] **Step 1: Write failing classification/order contract**
 
-Create three transparent submeshes at different camera distances and require back-to-front ordering. Require masked materials not to enter this list and transmissive materials to carry IOR/Tf/transmission.
+Require three transparent submeshes to sort back-to-front, Masked materials to stay out of this pass, and Transmissive materials to preserve IOR/Tf/transmission.
 
 - [ ] **Step 2: Run RED contract**
 
-Expected: missing `TransparentGpu`.
+Expected: `TransparentGpu` absent.
 
-- [ ] **Step 3: Implement persistent transparent batches and sorting**
+- [ ] **Step 3: Implement persistent batches and camera-depth sorting**
 
-Reuse loaded mesh VAO/VBO/EBO data or share a mesh GPU resource interface rather than duplicating uploads. Sort transparent instances by camera-space depth each frame; only order records change.
+Share loaded mesh GPU resources rather than re-uploading geometry. Sort only instance/order records each frame.
 
-- [ ] **Step 4: Implement forward shader**
+- [ ] **Step 4: Implement forward material shader**
 
-Sample all relevant material textures, evaluate direct BRDF, sample opaque final color for screen-space refraction using IOR-derived offset, apply transmission color/amount, Fresnel reflection, emissive and fractional alpha. Use premultiplied-alpha blending and read-only opaque depth.
+Sample complete material textures, evaluate direct BRDF, sample opaque color for screen-space refraction, apply IOR, transmission color/amount, Fresnel reflection, emissive and fractional alpha. Use premultiplied-alpha blending and read-only opaque depth.
 
 - [ ] **Step 5: Integrate render order**
-
-In normal GPU rendering:
 
 ```text
 GBuffer opaque/masked -> DirectLighting -> Lumen trace/composite -> TransparentGpu -> Presenter
 ```
 
-Presenter receives `TransparentGpu::finalTexture()` when transparent geometry exists; otherwise keep the existing Lumen final texture fast path.
+Use the existing Lumen final texture directly when no transparent geometry exists.
 
 - [ ] **Step 6: Run contracts**
 
-Expected: sorting/classification/source contract passes; no RendererCheck path initializes this subsystem.
+Expected: transparent contract passes and RendererCheck never initializes this pass.
 
 - [ ] **Step 7: Commit**
 
@@ -637,27 +622,27 @@ public:
 
 - [ ] **Step 1: Write failing BLAS/TLAS tests**
 
-Build a two-triangle loaded mesh with two instances. Require one mesh-local BLAS to be reused by both instances, TLAS leaf bounds to reflect transforms, and transform-only scene updates to refit/rebuild TLAS without recreating triangle records.
+A two-triangle loaded mesh with two instances must reuse one mesh-local BLAS, create transformed TLAS bounds per instance, and update transforms without recreating triangle records.
 
 - [ ] **Step 2: Run RED contract**
 
-Compile `tests/triangle_scene_contract.cpp` with `TriangleScene.cpp`; expected missing implementation.
+Expected: `TriangleScene` absent.
 
-- [ ] **Step 3: Implement mesh-local triangle extraction and BLAS**
+- [ ] **Step 3: Implement immutable local triangle records and one BLAS per loaded mesh**
 
-Build one immutable triangle array and BVH per loaded mesh handle. Store local positions, normals, UVs and renderer material handle. Reuse existing `Bvh` build/refit primitives where layouts permit; do not duplicate analytic cube/plane records.
+Store local positions, normals, UVs and material handle. Reuse existing BVH build/refit helpers where layouts permit.
 
 - [ ] **Step 4: Implement instance records and TLAS**
 
-Each imported renderable entity references mesh BLAS root, model/inverse transforms and material. TLAS bounds are transformed BLAS bounds. Geometry/topology change rebuilds affected BLAS/TLAS; transform-only change refits TLAS.
+Instance records contain BLAS root, model/inverse transform and material. Geometry/topology changes rebuild affected BLAS/TLAS; transform-only changes refit TLAS.
 
 - [ ] **Step 5: Upload persistent SSBOs with dirty ranges**
 
-Use capacity growth and `forEachDirtyRange` patterns already used by the renderer. No full re-upload on unchanged frames.
+Use existing capacity-growth and `forEachDirtyRange` patterns.
 
-- [ ] **Step 6: Run tests**
+- [ ] **Step 6: Run triangle-scene contract**
 
-Expected: BLAS reuse, TLAS transform update and stable triangle storage tests all pass.
+Expected: BLAS reuse, TLAS update and stable triangle storage pass.
 
 - [ ] **Step 7: Commit**
 
@@ -679,31 +664,31 @@ git commit -m "Renderer: add imported triangle acceleration"
 - Create: `tests/imported_shadow_contract.cpp`
 
 **Interfaces:**
-- `DirectLightingGpu` receives/binds shared `TriangleScene` buffers during dispatch without changing the public scene-facing ECS API.
+- `DirectLightingGpu` binds shared `TriangleScene` buffers; ECS API remains unchanged.
 
 - [ ] **Step 1: Write failing shadow-source contract**
 
-Require the GPU shadow function to test both analytic primitives and imported triangle TLAS/BLAS. Require masked intersections to sample opacity coverage and continue the ray when the sampled alpha is below cutoff.
+Require both analytic and imported triangle traversal and require masked intersections below cutoff to continue the ray.
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Run RED contract**
 
-Expected: current shader only intersects analytic cube/plane primitives.
+Expected: current shader only intersects analytic cubes/planes.
 
-- [ ] **Step 3: Add TLAS/BLAS traversal and triangle intersection to direct-light shader**
+- [ ] **Step 3: Add TLAS/BLAS traversal and triangle intersection**
 
-Use Möller-Trumbore or equivalent watertight-enough triangle intersection, transforming rays into instance local space before BLAS traversal. Return hit distance, barycentrics and material/UV information.
+Transform rays into instance-local space, traverse BLAS and return nearest distance, barycentrics, UV and material handle.
 
 - [ ] **Step 4: Add alpha-aware shadow continuation**
 
-Resolve material opacity at hit UV. Masked holes do not terminate shadow rays. Opaque hits terminate. Transparent/transmissive hits attenuate shadow energy according to resolved opacity/transmission rather than becoming binary blockers.
+Masked holes continue; opaque hits terminate; transparent/transmissive hits attenuate according to resolved opacity/transmission.
 
-- [ ] **Step 5: Share `TriangleScene` lifetime in renderer**
+- [ ] **Step 5: Integrate `TriangleScene` lifetime**
 
-Update it only when geometry/material/transform changes require it and bind its buffers for direct lighting.
+Update shared triangle state only on geometry/material/transform changes that require it and bind it for direct lighting.
 
-- [ ] **Step 6: Run contracts**
+- [ ] **Step 6: Run imported-shadow and analytic-BVH contracts**
 
-Expected: imported shadow source contract and existing analytic BVH contracts both pass.
+Expected: both pass.
 
 - [ ] **Step 7: Commit**
 
@@ -725,7 +710,6 @@ git commit -m "Renderer: trace imported mesh shadows"
 - Create: `tests/lumen_imported_material_contract.cpp`
 
 **Interfaces:**
-- `LumenGpu::traceShared()` additionally consumes the renderer's shared `TriangleScene` through a const reference:
 
 ```cpp
 bool traceShared(const GBufferGpu& gbuffer,
@@ -740,31 +724,31 @@ bool traceShared(const GBufferGpu& gbuffer,
 
 - [ ] **Step 1: Write failing Lumen source contract**
 
-Require shared trace shader code to traverse imported TLAS/BLAS after/alongside screen and analytic scene tests, return imported hit UV/material, and evaluate textured base/emissive/roughness/metallic/reflectivity at the hit.
+Require imported TLAS/BLAS traversal, nearest imported hit UV/material, textured base/emissive/roughness/metallic/reflectivity evaluation, and alpha-aware continuation.
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Run RED contract**
 
-Expected: current Lumen path only has analytic primitive buffer and screen/GBuffer data.
+Expected: current Lumen trace only has procedural analytic primitives plus screen/GBuffer data.
 
-- [ ] **Step 3: Add imported ray traversal to Lumen shader**
+- [ ] **Step 3: Add imported traversal to Lumen shader**
 
-Bind TriangleScene buffers and choose the nearest valid analytic/imported hit. Preserve existing BVH benchmark path for procedural primitives.
+Bind TriangleScene buffers and choose the nearest valid analytic/imported hit while preserving existing procedural BVH benchmark behavior.
 
-- [ ] **Step 4: Add GL4.3 trace texture access without bindless textures**
+- [ ] **Step 4: Add GL4.3 trace texture pages**
 
-Build semantic texture-array/atlas pages from imported material textures for ray shading. Store per-material page/layer plus UV scale/bias in a material SSBO. Repeat textures tile in material UV space before atlas remap; clamp textures clamp before remap. Use separate sRGB-decoded color sampling behavior and linear data pages.
+Build semantic texture arrays/atlas pages for ray shading. Store per-material page/layer and UV scale/bias in a material SSBO. Repeat in material UV space before page remap; clamp before remap. Separate color and linear-data pages.
 
 - [ ] **Step 5: Evaluate imported hit material**
 
-At off-screen hits use textured base color, mapped/geometry normal as available, metallic, roughness, emissive, specular/IOR, reflectivity and clearcoat-relevant response. Masked holes continue tracing; transmissive hits use a bounded continuation approximation rather than becoming opaque.
+Use textured base color, normal, metallic, roughness, emissive, specular/IOR, reflectivity and clearcoat-relevant response. Masked holes continue tracing; transmissive hits use bounded continuation instead of becoming opaque.
 
-- [ ] **Step 6: Update reflection composite weighting**
+- [ ] **Step 6: Weight reflection composite by material**
 
-Use GBuffer reflectivity/specular/roughness/clearcoat channels to control reflection contribution rather than applying one generic reflection strength.
+Use reflectivity/specular/roughness/clearcoat channels instead of one generic reflection strength.
 
-- [ ] **Step 7: Run contracts**
+- [ ] **Step 7: Run imported-Lumen and existing Lumen hot-path contracts**
 
-Expected: imported Lumen material contract and existing GPU Lumen scheduling/hot-path contracts pass.
+Expected: all pass.
 
 - [ ] **Step 8: Commit**
 
@@ -780,14 +764,12 @@ git commit -m "Lumen: trace textured imported geometry"
 
 **Files:**
 - Create: `tests/sponza_material_contract.cpp`
-- Modify only if required by verified failure: `Sources/Models/Models.cpp`, `Sources/Models/Obj.cpp`, renderer material/GPU files from prior tasks.
+- Candidate verified-fix files only after a failing acceptance check: `Sources/Models/Models.cpp`, `Sources/Models/Obj.cpp`, `Sources/Renderer/Material/Material.cpp`, `Sources/Renderer/Gpu/GBufferGpu.cpp`, `Sources/Renderer/Gpu/MaterialGpu.cpp`, `Sources/Renderer/Gpu/DirectLightingGpu.cpp`, `Sources/Renderer/Gpu/LumenGpu.cpp`, `Sources/Renderer/Gpu/TransparentGpu.cpp`, `Sources/Renderer/Gpu/TriangleScene.cpp`.
 
 **Interfaces:**
-- Uses `Assets/Sponza/sponza.obj` and `Assets/Sponza/sponza.mtl` as the first real imported asset.
+- Uses `Assets/Sponza/sponza.obj` and `Assets/Sponza/sponza.mtl`.
 
 - [ ] **Step 1: Write Sponza asset contract**
-
-Load the real submodule asset and assert:
 
 ```cpp
 require(model != Models::INVALID_MODEL);
@@ -798,7 +780,7 @@ require(allReferencedSponzaTgaFilesDecode());
 require(noOrdinarySponzaMaterialResolvedFullyTransparent());
 ```
 
-Also assert `leaf`, `chain`, and `Material__57` become masked/alpha-aware and ordinary arch/floor/column/fabric materials resolve opaque.
+Also require `leaf`, `chain`, and `Material__57` to be alpha-aware and ordinary arch/floor/column/fabric materials to resolve opaque.
 
 - [ ] **Step 2: Run CPU Sponza contract**
 
@@ -820,7 +802,7 @@ git submodule update --init --recursive
 c build
 ```
 
-Expected: exit 0 with all production `.cpp` files compiled by the existing generic source globs.
+Expected: exit 0.
 
 - [ ] **Step 4: Launch interactive Sponza**
 
@@ -828,80 +810,70 @@ Expected: exit 0 with all production `.cpp` files compiled by the existing gener
 c build run
 ```
 
-Visual acceptance requires:
-
-- colored diffuse textures are visible instead of gray scalar-only shading;
-- columns/floor/brick/curtains show normal/detail-map response;
-- leaves/chains/plants show cutout holes rather than solid cards;
-- specular/roughness response varies materially under the scene light;
-- imported Sponza geometry casts/receives GPU shadows;
-- indirect/reflection response respects imported geometry/materials;
-- no widespread disappearance from the Sponza `d 0` exporter convention.
-
-Capture a screenshot for review but do not add it to the repository unless explicitly requested.
+Visual acceptance requires colored diffuse textures, normal/detail response on architecture/floor/curtains, cutout foliage/chain holes, material-varying specular/roughness, imported geometry shadows, imported GI/reflection participation, and no widespread disappearance from `d 0`.
 
 - [ ] **Step 5: Run RendererCheck regression suite once at phase end**
 
-Do not trigger per-commit workflows. Run the local/offline RendererCheck suite or the repository's existing final validation command once after all tasks are complete. Named fixtures must remain unchanged unless a new dedicated test was intentionally added.
+Use the repository's existing local/offline RendererCheck validation once after all tasks; do not trigger a workflow per commit.
 
-- [ ] **Step 6: Commit any acceptance-only fixes**
+- [ ] **Step 6: Fix only a reproduced acceptance failure and commit**
 
-If Step 4 reveals a verified asset-specific bug, fix only the root cause, rerun Steps 2-5, then commit:
+After reproducing a failure, modify only the relevant candidate file(s), rerun Steps 2-5, then stage exactly the changed candidate paths:
 
 ```bash
-git add <verified-fix-files>
+git diff --name-only -- \
+  Sources/Models/Models.cpp Sources/Models/Obj.cpp \
+  Sources/Renderer/Material/Material.cpp Sources/Renderer/Gpu \
+  | xargs -r git add --
 git commit -m "Models: finish Sponza material rendering"
 ```
 
-If no fixes are needed, do not create an empty commit.
+Skip the commit when no acceptance fix is required.
 
 ---
 
 ### Task 12: Cleanup, Lifetime, Performance, and Final Verification
 
 **Files:**
-- Modify as required by measured leaks/redundant work: material/texture/triangle GPU lifecycle files.
-- Test existing performance/hot-path contracts plus any new lifecycle contract needed.
+- Potentially modify after a failing lifecycle contract: `Sources/Models/Texture.cpp`, `Sources/Models/Models.cpp`, `Sources/Renderer/Material/Material.cpp`, `Sources/Renderer/Gpu/MaterialGpu.cpp`, `Sources/Renderer/Gpu/TriangleScene.cpp`, `Sources/Renderer/Gpu/TransparentGpu.cpp`, `Sources/Renderer/Render.cpp`.
+- Create: `tests/imported_material_lifecycle_contract.cpp`.
 
 **Interfaces:**
-- `Models::clearCache()` must clear model CPU state and renderer material registrations only when caller explicitly requests teardown.
-- `renderer.shutdown()` owns GL resource deletion for GPU material textures, triangle buffers and transparent targets.
+- `Models::clearCache()` clears model CPU state and renderer material registrations only on explicit teardown.
+- `renderer.shutdown()` deletes GPU material textures, triangle buffers and transparent targets.
 
-- [ ] **Step 1: Add lifecycle contract**
+- [ ] **Step 1: Write lifecycle contract**
 
-Require repeated model/material lookup not to grow CPU/GPU registries, repeated unchanged frames not to upload static texture/mesh/triangle data, and shutdown to delete every allocated GL object exactly once under fake GL counters.
+Require repeated model/material lookup not to grow registries, unchanged frames not to upload static texture/mesh/triangle data, and shutdown to delete each fake-GL object exactly once.
 
-- [ ] **Step 2: Run RED if lifecycle gaps are found**
+- [ ] **Step 2: Run lifecycle contract before production changes**
 
-Use existing fake-GL patterns; expect the test to fail on the exact leak/redundant upload before changing production code.
+If it passes, no lifecycle production change is needed. If it fails, record the exact counter/assertion and proceed to Step 3.
 
-- [ ] **Step 3: Fix only measured lifecycle/hot-path issues**
+- [ ] **Step 3: Fix only the failing lifetime/hot-path assertion**
 
-Keep normalized path caches, material registry stability, persistent buffers, dirty-range uploads, and no per-frame TGA decoding. Do not introduce speculative streaming/async systems in this phase.
+Preserve normalized path caches, stable material handles, persistent buffers, dirty-range uploads, and zero per-frame TGA decoding. Do not add streaming or asynchronous loading in this phase.
 
-- [ ] **Step 4: Run strict focused contracts**
+- [ ] **Step 4: Run all focused contracts**
 
-Run all new contracts:
+Run the exact per-task compile commands above for:
 
-```bash
-for test in \
-  tga_contract \
-  material_resolver_contract \
-  tangent_displacement_contract \
-  gpu_material_contract \
-  gpu_gbuffer_material_contract \
-  direct_material_brdf_contract \
-  transparent_material_contract \
-  triangle_scene_contract \
-  imported_shadow_contract \
-  lumen_imported_material_contract \
-  sponza_material_contract
-  do
-    ./build/tests/$test
-  done
+```text
+tga_contract
+material_resolver_contract
+tangent_displacement_contract
+gpu_material_contract
+gpu_gbuffer_material_contract
+direct_material_brdf_contract
+transparent_material_contract
+triangle_scene_contract
+imported_shadow_contract
+lumen_imported_material_contract
+sponza_material_contract
+imported_material_lifecycle_contract
 ```
 
-If the project does not generate standalone test binaries automatically, compile each with the exact per-task command above and require exit 0.
+Require exit 0 for every contract.
 
 - [ ] **Step 5: Run final build and runtime verification**
 
@@ -910,23 +882,26 @@ c build
 c build run
 ```
 
-Require build exit 0 and visually verify the Task 11 criteria.
+Require build exit 0 and visually re-check Task 11.
 
-- [ ] **Step 6: Verify branch diff and no dependency drift**
+- [ ] **Step 6: Verify branch diff and dependency constraints**
 
 ```bash
 git status --short
-git diff --stat <plan-start-commit>..HEAD
+git diff --stat b6aefac9339a9aab7522b31184722bb269abdd07..HEAD
 grep -RniE 'stb_image|tinyobj|assimp' Sources build.c || true
 ```
 
-Expected: clean worktree; only intended model/material/renderer/tests/docs changes; no third-party image/model dependency.
+Expected: clean worktree, intended files only, no prohibited dependency.
 
-- [ ] **Step 7: Commit final lifecycle/performance fixes if any**
+- [ ] **Step 7: Commit lifecycle/performance fixes only if Step 3 changed code**
 
 ```bash
-git add Sources tests
+git add Sources/Models/Texture.cpp Sources/Models/Models.cpp \
+  Sources/Renderer/Material/Material.cpp Sources/Renderer/Gpu/MaterialGpu.cpp \
+  Sources/Renderer/Gpu/TriangleScene.cpp Sources/Renderer/Gpu/TransparentGpu.cpp \
+  Sources/Renderer/Render.cpp tests/imported_material_lifecycle_contract.cpp
 git commit -m "Renderer: finalize imported material pipeline"
 ```
 
-Skip this commit if Step 3 required no code changes.
+If Step 2 was already green, add only `tests/imported_material_lifecycle_contract.cpp` to the most recent task commit rather than creating a production-code cleanup commit.
