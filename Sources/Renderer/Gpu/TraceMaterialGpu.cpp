@@ -51,6 +51,7 @@ std::vector<std::uint8_t> pageWithGutter(
     std::vector<std::uint8_t> page(
         static_cast<std::size_t>(page_width) *
         static_cast<std::size_t>(page_height) * 4u, 0u);
+    const bool flip_normal_y = Models::normalMapUsesNegativeY(asset.path);
     for (int y = -GUTTER; y < asset.image.height + GUTTER; ++y)
     {
         const int sy = std::max(0, std::min(asset.image.height - 1, y));
@@ -67,6 +68,11 @@ std::vector<std::uint8_t> pageWithGutter(
                 (static_cast<std::size_t>(dy) * page_width + dx) * 4u;
             std::memcpy(page.data() + destination,
                         asset.image.rgba.data() + source, 4u);
+            if (flip_normal_y)
+            {
+                page[destination + 1u] = static_cast<std::uint8_t>(
+                    255u - page[destination + 1u]);
+            }
         }
     }
     return page;
