@@ -1,0 +1,144 @@
+name: Final material verification
+
+on:
+  push:
+    branches:
+      - final-check
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev xvfb
+
+      - name: Install C-BuildSystem
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/xt9y/C-BuildSystem.git /tmp/c-buildsystem
+          make -C /tmp/c-buildsystem -j2
+          sudo make -C /tmp/c-buildsystem install
+          c --help >/dev/null
+
+      - name: Install lwcgl v2.9.3
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v2.9.3 https://github.com/xt9y/lwcgl.git /tmp/lwcgl
+          make -C /tmp/lwcgl -j2
+          sudo make -C /tmp/lwcgl install
+
+      - name: Install RendererCheck
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/xt9y/RendererCheck.git /tmp/renderercheck
+          make -C /tmp/renderercheck -j2
+          sudo make -C /tmp/renderercheck install
+          renderercheck version
+
+      - name: CPU material contracts
+        run: |
+          set -euo pipefail
+          CXX='c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -ISources'
+
+          $CXX tests/tga_contract.cpp \
+            Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
+            -o /tmp/tga_contract
+          /tmp/tga_contract
+
+          $CXX tests/material_resolver_contract.cpp \
+            Sources/Models/Material.cpp Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
+            Sources/Renderer/Material/Material.cpp \
+            -o /tmp/material_resolver_contract
+          /tmp/material_resolver_contract
+
+          $CXX tests/tangent_displacement_contract.cpp \
+            Sources/Models/Material.cpp Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
+            Sources/Renderer/Material/Material.cpp \
+            Sources/Renderer/Mesh/Tangent.cpp Sources/Renderer/Math/Math.cpp \
+            -o /tmp/tangent_displacement_contract
+          /tmp/tangent_displacement_contract
+
+          $CXX tests/models_contract.cpp \
+            Sources/Models/Obj.cpp Sources/Models/Models.cpp Sources/Models/Material.cpp \
+            Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
+            Sources/Renderer/Material/Material.cpp Sources/Renderer/Mesh/Mesh.cpp \
+            Sources/Renderer/Mesh/Tangent.cpp Sources/Renderer/Math/Math.cpp Sources/Ecs/Ecs.cpp \
+            -o /tmp/models_contract
+          /tmp/models_contract
+
+          $CXX tests/sponza_material_contract.cpp \
+            Sources/Models/Obj.cpp Sources/Models/Models.cpp Sources/Models/Material.cpp \
+            Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
+            Sources/Renderer/Material/Material.cpp Sources/Renderer/Mesh/Mesh.cpp \
+            Sources/Renderer/Mesh/Tangent.cpp Sources/Renderer/Math/Math.cpp Sources/Ecs/Ecs.cpp \
+            -o /tmp/sponza_material_contract
+          /tmp/sponza_material_contract Assets/Sponza/sponza.obj
+
+          $CXX tests/imported_material_lifecycle_contract.cpp \
+            Sources/Models/Obj.cpp Sources/Models/Models.cpp Sources/Models/Material.cpp \
+            Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
+            Sources/Renderer/Material/Material.cpp Sources/Renderer/Mesh/Mesh.cpp \
+            Sources/Renderer/Mesh/Tangent.cpp Sources/Renderer/Math/Math.cpp Sources/Ecs/Ecs.cpp \
+            -o /tmp/imported_material_lifecycle_contract
+          /tmp/imported_material_lifecycle_contract
+
+      - name: GPU material contracts
+        run: |
+          set -euo pipefail
+          CXX='c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -ISources -I/usr/local/include'
+
+          $CXX tests/gpu_material_contract.cpp Sources/Renderer/Gpu/MaterialGpu.cpp \
+            -o /tmp/gpu_material_contract
+          /tmp/gpu_material_contract
+
+          for test in gpu_gbuffer_material_contract direct_material_brdf_contract transparent_material_contract; do
+            $CXX tests/${test}.cpp -o /tmp/${test}
+            /tmp/${test}
+          done
+
+          $CXX tests/imported_shadow_contract.cpp -o /tmp/imported_shadow_contract
+          /tmp/imported_shadow_contract
+
+          $CXX tests/lumen_imported_material_contract.cpp -o /tmp/lumen_imported_material_contract
+          /tmp/lumen_imported_material_contract
+
+          $CXX -ffunction-sections -fdata-sections \
+            tests/triangle_scene_contract.cpp \
+            Sources/Renderer/Gpu/TriangleScene.cpp Sources/Renderer/Gpu/Bvh.cpp \
+            Sources/Renderer/Mesh/Mesh.cpp Sources/Renderer/Math/Math.cpp \
+            Sources/Renderer/Material/Material.cpp Sources/Ecs/Ecs.cpp \
+            -Wl,--gc-sections -o /tmp/triangle_scene_contract
+          /tmp/triangle_scene_contract
+
+      - name: Full strict build
+        run: |
+          set -euo pipefail
+          c build
+
+      - name: RendererCheck regression suite
+        run: |
+          set -euo pipefail
+          xvfb-run -a renderercheck run
+
+      - name: Dependency and tree audit
+        run: |
+          set -euo pipefail
+          test -z "$(git status --short)"
+          if grep -RniE 'stb_image|tinyobj|assimp' Sources build.c; then
+            echo 'prohibited model/image dependency detected' >&2
+            exit 1
+          fi
+          git diff --check
