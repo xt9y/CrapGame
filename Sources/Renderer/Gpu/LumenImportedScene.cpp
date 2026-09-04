@@ -2,10 +2,24 @@
 #include "Renderer/Gpu/LumenImportedShader.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
 
+#include <cmath>
 #include <exception>
 #include <string>
 
 namespace Renderer { namespace Gpu {
+namespace {
+
+bool matrixChanged(const Math::Mat4& a, const Math::Mat4& b)
+{
+    for (int index = 0; index < 16; ++index)
+    {
+        if (std::fabs(a.value[index] - b.value[index]) > 1.0e-5f)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
 
 bool LumenGpu::ensureImportedTraceShader(std::string *error)
 {
@@ -79,10 +93,21 @@ bool LumenGpu::traceShared(
     }
     if (!ensureImportedTraceShader(error)) return false;
 
+    const bool camera_changed =
+        matrixChanged(view, last_view_)
+        || matrixChanged(projection, last_projection_);
+
     last_view_ = view;
     last_projection_ = projection;
     last_camera_ = camera_position;
     final_output_ = final_color_;
+
+    if (history_valid_
+            && !importedTraceSampleDue(camera_changed, frame_index))
+    {
+        if (error) error->clear();
+        return true;
+    }
 
     const Math::Mat4 view_projection = Math::multiply(projection, view);
     const int read_index = history_index_;
