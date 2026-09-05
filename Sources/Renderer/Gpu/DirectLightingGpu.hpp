@@ -5,11 +5,12 @@
 #include "Renderer/Gpu/Bvh.hpp"
 #include "Renderer/Gpu/BvhBench.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/SmrtShadowGpu.hpp"
 #include "Renderer/Gpu/StaticDiffuseLightingGpu.hpp"
-#include "Renderer/Gpu/StaticShadowCacheGpu.hpp"
 #include "Renderer/Gpu/TraceGeometryGpu.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
 #include "Renderer/Gpu/ViewSpecularGpu.hpp"
+#include "Renderer/Gpu/VirtualShadowMapGpu.hpp"
 #include "Renderer/Math/Math.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -38,16 +39,32 @@ public:
     bool updateScene(const Ecs::World& world,std::string *error=nullptr);
     bool prewarm(const Ecs::World& world,std::string *error=nullptr)
     {
-        if(!updateScene(world,error)) return false;
-        return ensureStaticShadowCache(error);
+        return updateScene(world,error);
     }
     bool bindImportedScene(const TriangleScene& triangles,std::string *error=nullptr);
-    bool dispatch(const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error=nullptr);
-    bool render(const Ecs::World& world,const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error=nullptr);
+    bool dispatch(const GBufferGpu& gbuffer,const Math::Vec3& camera_position,
+                  std::uint64_t frame_index,std::string *error=nullptr);
+    bool dispatch(const GBufferGpu& gbuffer,const Math::Vec3& camera_position,
+                  std::string *error=nullptr)
+    {
+        return dispatch(gbuffer,camera_position,0u,error);
+    }
+    bool render(const Ecs::World& world,const GBufferGpu& gbuffer,
+                const Math::Vec3& camera_position,std::uint64_t frame_index,
+                std::string *error=nullptr);
+    bool render(const Ecs::World& world,const GBufferGpu& gbuffer,
+                const Math::Vec3& camera_position,std::string *error=nullptr)
+    {
+        return render(world,gbuffer,camera_position,0u,error);
+    }
     void shutdown();
     void releaseAcceleration();
 
-    bool ready() const { return program_!=0 && combine_program_!=0 && direct_color_!=0 && dynamic_color_!=0; }
+    bool ready() const
+    {
+        return program_!=0&&combine_program_!=0&&direct_color_!=0&&dynamic_color_!=0
+            &&virtual_shadow_map_.ready()&&smrt_shadow_.ready();
+    }
     GLuint directTexture() const { return direct_color_; }
     GLuint lightBuffer() const { return light_buffer_; }
     std::size_t lightCount() const { return lights_.size(); }
@@ -62,7 +79,8 @@ public:
     const Ecs::World *sceneWorld() const { return scene_world_; }
     std::uint64_t sceneRevision() const { return scene_revision_; }
     TransparentGpu *transparentPass() const { return transparent_.get(); }
-    const StaticShadowCacheGpu& staticShadowCache() const { return static_shadow_cache_; }
+    const VirtualShadowMapGpu& virtualShadowMap() const { return virtual_shadow_map_; }
+    const SmrtShadowGpu& smrtShadow() const { return smrt_shadow_; }
     const StaticDiffuseLightingGpu& staticDiffuse() const { return static_diffuse_; }
     const ViewSpecularGpu& viewSpecular() const { return view_specular_; }
     const TraceGeometryGpu& traceGeometry() const { return trace_geometry_; }
@@ -77,8 +95,6 @@ private:
     const BvhBenchConfig& benchConfig();
     void appendStressPrimitives(std::size_t count);
     bool ensureBvhBuffer(std::string *error);
-    bool ensureStaticShadowCache(std::string *error);
-    int staticShadowLightIndex() const;
     bool uploadBuffer(GLuint buffer,std::size_t *capacity,const void *data,std::size_t size,std::string *error);
     void destroyTextures();
 
@@ -98,7 +114,8 @@ private:
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
     TriangleScene triangle_scene_;
     TraceGeometryGpu trace_geometry_;
-    StaticShadowCacheGpu static_shadow_cache_;
+    VirtualShadowMapGpu virtual_shadow_map_;
+    SmrtShadowGpu smrt_shadow_;
     StaticDiffuseLightingGpu static_diffuse_;
     ViewSpecularGpu view_specular_;
     mutable std::unique_ptr<TransparentGpu> transparent_;
