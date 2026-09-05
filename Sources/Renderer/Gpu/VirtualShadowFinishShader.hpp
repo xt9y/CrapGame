@@ -34,7 +34,7 @@ layout(std430,binding=2) buffer ShadowAllocator
     uint nextPhysical;uint requested;uint rendered;uint cached;
     uint evicted;uint previousRequested;uint overflow;uint allocatorPadding;
 };
-layout(std430,binding=3) readonly buffer ShadowRasterCommands
+layout(std430,binding=6) readonly buffer ShadowRasterCommands
 {
     uint rasterTriangleCount;
     uint rasterOverflow;
@@ -59,5 +59,7 @@ void main()
 
 } // namespace Gpu
 } // namespace Renderer
+
+#define VIRTUAL_SHADOW_FINISH_COMPUTE VIRTUAL_SHADOW_FINISH_CACHE_COMPUTE
 
 #endif
