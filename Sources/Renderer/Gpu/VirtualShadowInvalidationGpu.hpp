@@ -68,6 +68,10 @@ private:
                 Ecs::Entity entity
         ) const;
     LightSnapshot lightSnapshot (const Ecs::World& world) const;
+    bool sameCaster (
+                const CasterSnapshot& a,
+                const CasterSnapshot& b
+        ) const;
     void appendRegion (const CasterSnapshot& snapshot, bool *overflow);
     bool uploadRegions (std::string *error);
 
@@ -80,7 +84,8 @@ private:
           right_location_ = -1,
           up_location_ = -1;
 
-    std::vector<CasterSnapshot> snapshots_;
+    std::vector<CasterSnapshot> snapshots_,
+                                current_snapshots_;
     std::vector<RegionGpu> regions_;
     LightSnapshot light_ = {};
 
