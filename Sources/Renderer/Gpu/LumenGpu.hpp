@@ -213,9 +213,11 @@ private:
         const GLint trace_materials=GL20.glGetUniformLocation(candidate,"uTraceMaterialCount");
         const GLint dirty_tile_dispatch=GL20.glGetUniformLocation(candidate,"uDirtyTileDispatch");
         const GLint radiance_generation=GL20.glGetUniformLocation(candidate,"uRadianceGeneration");
+        const GLint light_count=GL20.glGetUniformLocation(candidate,"uLightCount");
         if(view_projection<0||camera<0||primitive_count<0||bvh_count<0||frame<0
                 ||history<0||imported_instances<0||imported_tlas<0
-                ||trace_materials<0||dirty_tile_dispatch<0||radiance_generation<0)
+                ||trace_materials<0||dirty_tile_dispatch<0||radiance_generation<0
+                ||light_count<0)
         {
             destroyProgram(&candidate);
             setInlineError(error,"GPU Stage-A imported Lumen uniforms are unavailable");
@@ -236,6 +238,7 @@ private:
         trace_material_count_location_=trace_materials;
         trace_dirty_tile_dispatch_location_=dirty_tile_dispatch;
         trace_radiance_generation_location_=radiance_generation;
+        trace_light_count_location_=light_count;
         bvh_trace_active_=true;
         if(error)error->clear();
         return true;
@@ -308,6 +311,7 @@ private:
     GLint trace_material_count_location_ = -1;
     GLint trace_dirty_tile_dispatch_location_ = -1;
     GLint trace_radiance_generation_location_ = -1;
+    GLint trace_light_count_location_ = -1;
     GLint composite_inverse_view_projection_location_ = -1;
 
     Math::Mat4 last_view_ = Math::identity();

@@ -17,13 +17,19 @@ layout(binding=4) uniform sampler2D sReflection;
 layout(rgba8,binding=0) writeonly uniform image2D oFinal;
 uniform mat4 uGBufferInverseViewProjection;
 
+const float OUTPUT_EXPOSURE=1.15;
 bool gbufferDepthValid(float depthValue){return depthValue<0.999999;}
 vec3 gbufferReconstructWorld(ivec2 pixel,ivec2 dimensions,float depthValue){
     vec2 uv=(vec2(pixel)+vec2(0.5))/vec2(dimensions);
     vec4 world=uGBufferInverseViewProjection*vec4(uv*2.0-1.0,depthValue*2.0-1.0,1.0);
     return abs(world.w)>1e-8?world.xyz/world.w:world.xyz;
 }
-vec3 toneMap(vec3 colorValue){vec3 positive=max(colorValue,vec3(0.0));vec3 mapped=positive/(vec3(1.0)+positive);return pow(clamp(mapped,vec3(0.0),vec3(1.0)),vec3(1.0/2.2));}
+vec3 acesToneMap(vec3 colorValue){
+    vec3 x=max(colorValue,vec3(0.0))*OUTPUT_EXPOSURE;
+    const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e),vec3(0.0),vec3(1.0));
+}
+vec3 toneMap(vec3 colorValue){return pow(acesToneMap(colorValue),vec3(1.0/2.2));}
 float shortRangeAo(ivec2 pixel,vec3 position,vec3 normal){
     ivec2 dimensions=textureSize(sPositionDepth,0);
     const ivec2 offsets[8]=ivec2[8](ivec2(2,0),ivec2(-2,0),ivec2(0,2),ivec2(0,-2),ivec2(2,2),ivec2(-2,2),ivec2(2,-2),ivec2(-2,-2));
@@ -45,7 +51,7 @@ void main(){
     if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;
     float depth=texelFetch(sPositionDepth,pixel,0).r;
     vec3 direct=texelFetch(sDirect,pixel,0).xyz;
-    if(!gbufferDepthValid(depth)){imageStore(oFinal,pixel,vec4(direct,1.0));return;}
+    if(!gbufferDepthValid(depth)){imageStore(oFinal,pixel,vec4(toneMap(direct),1.0));return;}
     vec3 position=gbufferReconstructWorld(pixel,dimensions,depth);
     vec3 normal=normalize(texelFetch(sNormalRoughness,pixel,0).xyz);
     ivec2 halfDimensions=textureSize(sIndirect,0);

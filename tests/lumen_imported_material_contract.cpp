@@ -1,4 +1,4 @@
-#include "Renderer/Gpu/LumenImportedShader.hpp"
+#include "Renderer/Gpu/LumenImportedStageAShader.hpp"
 #include "Renderer/Gpu/LumenStageAComposite.hpp"
 
 #include <cstdlib>
@@ -18,7 +18,7 @@ void require(bool condition,const char *message)
 
 int main(int argc,char **argv)
 {
-    const std::string shader=Renderer::Gpu::lumenImportedTraceShader();
+    const std::string shader=Renderer::Gpu::lumenImportedStageATraceShader();
     require(shader.find("traceImportedNearest")!=std::string::npos,
             "imported TLAS/BLAS traversal missing");
     require(shader.find("traceMaterialRejectsHit")!=std::string::npos,
@@ -60,6 +60,8 @@ int main(int argc,char **argv)
             "light indirect intensity is not applied to GI");
     require(shader.find("lumenEnvironmentRadiance")!=std::string::npos,
             "environment radiance source missing");
+    require(shader.find("indirect=giSource*albedo*(1.0-metallic);")!=std::string::npos,
+            "cosine-weighted diffuse estimator still loses a pi factor");
 
     const std::string composite=Renderer::Gpu::LUMEN_STAGE_A_COMPOSITE_COMPUTE;
     require(composite.find("acesToneMap")!=std::string::npos,
@@ -71,6 +73,11 @@ int main(int argc,char **argv)
     {
         std::ofstream out(argv[1]);
         out<<shader;
+    }
+    if(argc>2)
+    {
+        std::ofstream out(argv[2]);
+        out<<composite;
     }
 
     std::cout<<"lumen_imported_material_contract=PASS\n";

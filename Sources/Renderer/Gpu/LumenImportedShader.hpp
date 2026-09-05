@@ -138,6 +138,77 @@ vec3 importedFallbackRadiance(){
         "vec3 primitiveFallbackRadiance(int i){",
         "vec3 primitiveFallbackRadiance(int i){if(gImportedHit)return importedFallbackRadiance();");
 
+    const char *world_radiance=R"GLSL(
+struct LumenLightData{vec4 positionType;vec4 directionRange;vec4 colorIntensity;vec4 coneShadow;};
+layout(std430,binding=10) readonly buffer LumenLightBuffer{LumenLightData lumenLights[];};
+uniform int uLightCount;
+const float LUMEN_PI=3.14159265358979323846;
+
+float lumenPointAttenuation(float distanceValue,float rangeValue){
+    if(rangeValue<=EPSILON||distanceValue>=rangeValue)return 0.0;
+    float q=distanceValue/rangeValue,q2=q*q,falloff=clamp(1.0-q2*q2,0.0,1.0);
+    return falloff*falloff/(distanceValue*distanceValue+1.0);
+}
+
+vec3 lumenEnvironmentRadiance(vec3 direction){
+    float up=clamp(direction.y*0.5+0.5,0.0,1.0);
+    float horizon=pow(clamp(1.0-abs(direction.y),0.0,1.0),2.0);
+    vec3 sky=mix(vec3(0.025,0.030,0.040),vec3(0.16,0.21,0.30),up);
+    return sky+vec3(0.030,0.024,0.016)*horizon;
+}
+
+vec3 lumenWorldHitRadiance(vec3 position,vec3 normal,int materialHandle,vec2 uv){
+    if(materialHandle<0||materialHandle>=uTraceMaterialCount)return lumenEnvironmentRadiance(normal)*0.08;
+    TraceRecord material=traceRecords[materialHandle];
+    vec3 base=traceColor(material,TRACE_SLOT_BASE_COLOR,uv,material.baseMetallic.rgb);
+    vec3 emissive=traceColor(material,TRACE_SLOT_EMISSIVE,uv,material.emissiveRoughness.rgb);
+    float metallic=clamp(material.baseMetallic.a*traceScalar(material,TRACE_SLOT_METALLIC,uv,1.0),0.0,1.0);
+    vec3 n=normalize(normal),outgoing=max(emissive,vec3(0.0));
+    for(int lightIndex=0;lightIndex<uLightCount;++lightIndex){
+        LumenLightData light=lumenLights[lightIndex];
+        float indirectScale=max(light.coneShadow.w,0.0);
+        if(indirectScale<=0.0)continue;
+        int type=int(light.positionType.w+0.5);
+        vec3 lightDirection=vec3(0.0),radiance=vec3(0.0);
+        float maximumDistance=10000.0;
+        if(type==0){
+            lightDirection=normalize(-light.directionRange.xyz);
+            radiance=light.colorIntensity.xyz*light.colorIntensity.w*indirectScale;
+        }else{
+            vec3 toLight=light.positionType.xyz-position;
+            float distanceValue=length(toLight);
+            if(distanceValue<=EPSILON)continue;
+            float attenuation=lumenPointAttenuation(distanceValue,light.directionRange.w);
+            if(attenuation<=0.0)continue;
+            lightDirection=toLight/distanceValue;
+            maximumDistance=max(TRACE_BIAS,distanceValue-TRACE_BIAS*3.0);
+            float cone=1.0;
+            if(type==2){
+                vec3 fromLight=normalize(position-light.positionType.xyz);
+                float coneValue=dot(normalize(light.directionRange.xyz),fromLight);
+                float inner=light.coneShadow.x,outer=light.coneShadow.y;
+                cone=inner<=outer+EPSILON?(coneValue>=outer?1.0:0.0):clamp((coneValue-outer)/(inner-outer),0.0,1.0);
+            }
+            if(cone<=0.0)continue;
+            radiance=light.colorIntensity.xyz*light.colorIntensity.w*attenuation*cone*indirectScale;
+        }
+        float nl=max(dot(n,lightDirection),0.0);
+        if(nl<=0.0||dot(radiance,radiance)<=EPSILON)continue;
+        if(light.coneShadow.z>0.5){
+            int blockerIndex;float blockerDistance;vec3 blockerNormal;
+            if(traceScene(position+n*TRACE_BIAS*3.0,lightDirection,maximumDistance,
+                          blockerIndex,blockerDistance,blockerNormal))continue;
+        }
+        outgoing+=base*(1.0-metallic)*radiance*(nl/LUMEN_PI);
+    }
+    return max(outgoing,vec3(0.0));
+}
+)GLSL";
+    const std::size_t world_radiance_at=source.find("uint hashValue");
+    if(world_radiance_at==std::string::npos)
+        throw std::runtime_error("Lumen world-radiance insertion point missing");
+    source.insert(world_radiance_at,world_radiance);
+
     const std::size_t reflection_at=source.find("void main(){");
     if(reflection_at==std::string::npos)
         throw std::runtime_error("Lumen reflection insertion point missing");
@@ -159,7 +230,7 @@ vec3 importedFallbackRadiance(){
 
     replaceLumenRequired(&source,
         "vec3 origin=position+normal*TRACE_BIAS*2.0,giDirection=hemisphereDirection(normal,pixel),indirect=vec3(0);int giHit;float giDistance;vec3 giNormal;if(traceScene(origin,giDirection,28.0,giHit,giDistance,giNormal)){vec3 hp=origin+giDirection*giDistance,source=screenRadiance(hp,giHit);indirect=source*albedo*(1.0-metallic)*0.32;}else{float sky=clamp(normal.y*0.5+0.5,0.0,1.0);indirect=albedo*(1.0-metallic)*mix(0.008,0.028,sky);}",
-        "vec3 origin=position+normal*TRACE_BIAS*2.0,giDirection=hemisphereDirection(normal,pixel),giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,giSource);if(!giCached){int giHit;float giDistance;vec3 giNormal,cacheSource;if(traceScene(origin,giDirection,28.0,giHit,giDistance,giNormal)){vec3 hp=origin+giDirection*giDistance;giSource=screenRadiance(hp,giHit);cacheSource=primitiveFallbackRadiance(giHit);}else{float sky=clamp(normal.y*0.5+0.5,0.0,1.0);giSource=vec3(mix(0.008,0.028,sky)/0.32);cacheSource=giSource;}radianceCacheUpdate(position,normal,cacheSource);}indirect=giSource*albedo*(1.0-metallic)*0.32;");
+        "vec3 origin=position+normal*TRACE_BIAS*2.0,giDirection=hemisphereDirection(normal,pixel),giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,giSource);if(!giCached){int giHit;float giDistance;vec3 giNormal,cacheSource;if(traceScene(origin,giDirection,28.0,giHit,giDistance,giNormal)){vec3 hp=origin+giDirection*giDistance;bool importedSource=gImportedHit;int hitMaterial=gImportedMaterial;vec2 hitUv=gImportedUv;if(importedSource)giSource=lumenWorldHitRadiance(hp,giNormal,hitMaterial,hitUv);else giSource=screenRadiance(hp,giHit);cacheSource=giSource;}else{giSource=lumenEnvironmentRadiance(giDirection);cacheSource=giSource;}radianceCacheUpdate(position,normal,cacheSource);}indirect=giSource*albedo*(1.0-metallic);");
 
     replaceLumenRequired(&source,
         "vec3 incident=normalize(position-uCameraPosition),reflectionDirection=normalize(reflect(incident,normal)),reflection=vec3(0);if(metallic>0.08||roughness<0.45){int ri;float rd;vec3 rn;if(traceScene(origin,reflectionDirection,48.0,ri,rd,rn)){vec3 hp=origin+reflectionDirection*rd,source=screenRadiance(hp,ri),f0=mix(vec3(0.04),albedo,metallic);float fresnel=pow(1.0-clamp(dot(normal,normalize(uCameraPosition-position)),0.0,1.0),5.0);vec3 weight=f0+(vec3(1.0)-f0)*fresnel;reflection=source*weight*(1.0-roughness*0.82);}}",

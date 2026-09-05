@@ -139,7 +139,9 @@ jobs:
           /tmp/imported_shadow_contract
 
           $CXX tests/lumen_imported_material_contract.cpp -o /tmp/lumen_imported_material_contract
-          /tmp/lumen_imported_material_contract
+          /tmp/lumen_imported_material_contract /tmp/lumen_imported.comp /tmp/lumen_composite.comp
+          glslangValidator -S comp /tmp/lumen_imported.comp
+          glslangValidator -S comp /tmp/lumen_composite.comp
 
           $CXX -ffunction-sections -fdata-sections \
             tests/triangle_scene_contract.cpp \
