@@ -269,6 +269,7 @@ bool VirtualShadowInvalidationGpu::uploadRegions (std::string *error)
 bool VirtualShadowInvalidationGpu::update (
         const Ecs::World& world,
         VirtualShadowMapGpu& virtual_shadow_map,
+        std::uint64_t scene_revision,
         std::string *error)
 {
     if (!ready() || !virtual_shadow_map.ready())
@@ -277,11 +278,18 @@ bool VirtualShadowInvalidationGpu::update (
         return false;
     }
 
-    const std::uint64_t world_revision = world.changeRevision(),
-                        mesh_revision = Mesh::loadedMeshRevision(),
+    const std::uint64_t mesh_revision = Mesh::loadedMeshRevision(),
                         material_revision = Material::revision();
-    const LightSnapshot current_light = lightSnapshot(world);
+    if (initialized_
+            && scene_revision == scene_revision_
+            && mesh_revision == mesh_revision_
+            && material_revision == material_revision_)
+    {
+        if (error) error->clear();
+        return true;
+    }
 
+    const LightSnapshot current_light = lightSnapshot(world);
     std::size_t entity_capacity = snapshots_.size();
     for (const Ecs::Entity entity : world.entities())
         entity_capacity = std::max(entity_capacity, static_cast<std::size_t>(entity) + 1u);
@@ -295,7 +303,7 @@ bool VirtualShadowInvalidationGpu::update (
     {
         snapshots_.swap(current_snapshots_);
         light_ = current_light;
-        world_revision_ = world_revision;
+        scene_revision_ = scene_revision;
         mesh_revision_ = mesh_revision;
         material_revision_ = material_revision;
         initialized_ = true;
@@ -318,7 +326,7 @@ bool VirtualShadowInvalidationGpu::update (
     snapshots_.resize(count);
     current_snapshots_.resize(count);
 
-    if (world_revision != world_revision_ || registry_changed)
+    if (scene_revision != scene_revision_ || registry_changed)
     {
         for (std::size_t index = 0; index < count; ++index)
         {
@@ -375,7 +383,7 @@ bool VirtualShadowInvalidationGpu::update (
 
     snapshots_.swap(current_snapshots_);
     light_ = current_light;
-    world_revision_ = world_revision;
+    scene_revision_ = scene_revision;
     mesh_revision_ = mesh_revision;
     material_revision_ = material_revision;
     if (error) error->clear();
@@ -397,7 +405,7 @@ void VirtualShadowInvalidationGpu::shutdown ()
     regions_.clear();
     light_ = {};
     region_capacity_ = 0u;
-    world_revision_ = 0u;
+    scene_revision_ = 0u;
     mesh_revision_ = 0u;
     material_revision_ = 0u;
     initialized_ = false;
