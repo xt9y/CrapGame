@@ -18,7 +18,9 @@ out vec2 vUv;
 void main()
 {
     vUv = aUv;
-    gl_Position = uLightViewProjection * uModel * vec4(aPosition, 1.0);
+    vec4 clip = uLightViewProjection * uModel * vec4(aPosition, 1.0);
+    clip.z += 0.00045 * clip.w;
+    gl_Position = clip;
 }
 )GLSL";
 
@@ -55,11 +57,11 @@ void main()
 }
 )GLSL";
 
-/* Canonical receiver-side static-shadow comparison.  The shadow-map caster
- * pass applies slope-scale polygon offset, so this path intentionally avoids
- * deriving bias from the normal-mapped shading normal.  Doing that made brick
- * and stone normal-map detail modulate the shadow test itself and produced the
- * speckled/acne pattern visible on Sponza. */
+/* Canonical receiver-side static-shadow comparison.  Caster depth is offset
+ * in the shadow vertex shader, so this path intentionally avoids deriving bias
+ * from the normal-mapped shading normal.  Doing that made brick and stone
+ * normal-map detail modulate the shadow test itself and produced the speckled
+ * acne pattern visible on Sponza. */
 constexpr const char *STATIC_SHADOW_VISIBILITY_GLSL = R"GLSL(
 float staticShadowVisibility(vec3 position)
 {
