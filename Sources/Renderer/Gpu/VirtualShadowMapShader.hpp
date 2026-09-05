@@ -60,6 +60,8 @@ layout(local_size_x=8,local_size_y=8,local_size_z=1) in;
 #define INVALID_PAGE 0xffffffffu
 #define LOCKED_PAGE 0xfffffffeu
 #define PAGE_VALID 1u
+#define PAGE_DIRTY 2u
+#define PAGE_QUEUED 8u
 layout(binding=0) uniform sampler2D sDepth;
 uniform mat4 uGBufferInverseViewProjection;
 uniform vec3 uCameraPosition;
@@ -128,6 +130,21 @@ bool shadowPageMatches(uint physical,ivec4 key,uint mip)
     ShadowPhysicalPage page=shadowPages[physical];
     return (page.state.z&PAGE_VALID)!=0u&&all(equal(page.key,key))&&page.state.w==mip;
 }
+bool queueShadowPage(uint physical,int clipmapIndex,ivec2 localPage)
+{
+    uint oldFlags=atomicOr(shadowPages[physical].state.z,PAGE_QUEUED);
+    if((oldFlags&PAGE_QUEUED)!=0u)return true;
+    uint requestIndex=atomicAdd(requested,1u);
+    if(requestIndex>=MAX_PHYSICAL_PAGES)
+    {
+        atomicAnd(shadowPages[physical].state.z,~PAGE_QUEUED);
+        atomicAdd(overflow,1u);
+        return false;
+    }
+    dirtyPages[requestIndex].data=uvec4(physical,uint(clipmapIndex),uvec2(localPage));
+    atomicMax(dirtyPageCount,requestIndex+1u);
+    return true;
+}
 uint chooseShadowPhysicalPage()
 {
     uint frameIndex=uint(max(uFrameIndex,0));
@@ -161,20 +178,14 @@ bool requestDirectionalPage(vec3 worldPosition,int clipmapIndex,uint mip)
         if(shadowPageMatches(mapped,key,mip))
         {
             atomicMax(shadowPages[mapped].state.y,frameIndex);
+            if((shadowPages[mapped].state.z&PAGE_DIRTY)!=0u)
+                return queueShadowPage(mapped,clipmapIndex,localPage);
             atomicAdd(cached,1u);
             return true;
         }
 
         uint locked=atomicCompSwap(shadowPageTable[tableSlot],mapped,LOCKED_PAGE);
         if(locked!=mapped)continue;
-
-        uint requestIndex=atomicAdd(requested,1u);
-        if(requestIndex>=MAX_PHYSICAL_PAGES)
-        {
-            atomicAdd(overflow,1u);
-            atomicExchange(shadowPageTable[tableSlot],mapped);
-            return false;
-        }
 
         uint physical=mapped;
         if(mapped==INVALID_PAGE||mapped>=MAX_PHYSICAL_PAGES)
@@ -199,11 +210,19 @@ bool requestDirectionalPage(vec3 worldPosition,int clipmapIndex,uint mip)
         }
 
         shadowPages[physical].key=key;
-        shadowPages[physical].state=uvec4(tableSlot,frameIndex,PAGE_VALID|2u,mip);
-        dirtyPages[requestIndex].data=uvec4(physical,uint(clipmapIndex),uvec2(localPage));
-        atomicMax(dirtyPageCount,requestIndex+1u);
+        shadowPages[physical].state=uvec4(tableSlot,frameIndex,PAGE_VALID|PAGE_DIRTY|PAGE_QUEUED,mip);
         memoryBarrierBuffer();
         atomicExchange(shadowPageTable[tableSlot],physical);
+
+        uint requestIndex=atomicAdd(requested,1u);
+        if(requestIndex>=MAX_PHYSICAL_PAGES)
+        {
+            atomicAnd(shadowPages[physical].state.z,~PAGE_QUEUED);
+            atomicAdd(overflow,1u);
+            return false;
+        }
+        dirtyPages[requestIndex].data=uvec4(physical,uint(clipmapIndex),uvec2(localPage));
+        atomicMax(dirtyPageCount,requestIndex+1u);
         return true;
     }
 
