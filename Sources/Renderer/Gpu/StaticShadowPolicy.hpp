@@ -11,6 +11,8 @@ struct StaticShadowPolicy
     static constexpr int SIZE = 2048;
     static constexpr int PCF_RADIUS = 2;
     static constexpr float PADDING = 0.05f;
+    static constexpr float RASTER_SLOPE_BIAS = 1.5f;
+    static constexpr float RASTER_CONSTANT_BIAS = 2.0f;
 };
 
 } // namespace Gpu
