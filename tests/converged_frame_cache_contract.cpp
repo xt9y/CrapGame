@@ -1,4 +1,5 @@
 #include "Renderer/Gpu/ConvergedFrameCache.hpp"
+#include "Renderer/Gpu/ProgressiveTracePolicy.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -18,16 +19,26 @@ int main ()
 
     RevisionState revisions = {};
     ConvergedFrameCache cache;
+    const std::uint32_t slice_scale =
+        ProgressiveTracePolicy::STATIONARY_SLICE_COUNT;
+    const std::uint32_t target =
+        ConvergencePolicy::DEFAULT_SAMPLES * slice_scale;
 
     require(cache.needsSample(revisions), "first sample required");
 
-    for (int index = 0; index < 8; ++index)
+    for (std::uint32_t index = 0; index + 1u < target; ++index)
         cache.recordSample(revisions, true);
 
-    require(cache.sampleCount() == 8u,
-            "default path records eight samples");
+    require(cache.sampleCount() == target - 1u,
+            "progressive slices were not counted toward complete-sweep convergence");
+    require(!cache.frozen(revisions),
+            "static GI froze before all configured progressive sweeps completed");
+
+    cache.recordSample(revisions, true);
+    require(cache.sampleCount() == target,
+            "default progressive convergence count is wrong");
     require(cache.frozen(revisions),
-            "default static convergence freezes at eight");
+            "default static convergence did not freeze after complete sweeps");
 
     RevisionState moved = revisions;
     ++moved.camera;
@@ -35,13 +46,15 @@ int main ()
             "camera revision wakes final frame");
 
     cache.begin(revisions);
-    for (int index = 0; index < 4; ++index)
-        cache.recordSample(revisions, index < 3);
+    const std::uint32_t mandatory =
+        ConvergencePolicy::MIN_SAMPLES * slice_scale;
+    for (std::uint32_t index = 0; index < mandatory; ++index)
+        cache.recordSample(revisions, index + 1u < mandatory);
 
-    require(cache.sampleCount() == 4u,
-            "minimum samples are recorded");
+    require(cache.sampleCount() == mandatory,
+            "minimum progressive samples are recorded");
     require(cache.frozen(revisions),
-            "history can declare stable after mandatory samples");
+            "history can declare stable after mandatory complete-sweep work");
 
     cache.invalidate();
     require(cache.needsSample(revisions),
