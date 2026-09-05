@@ -95,6 +95,10 @@ inline bool movingSecondaryRefreshDue(std::uint64_t now_ns,
                                       std::uint32_t configured_hz,
                                       bool invalidated)
 {
+    /* The default path is budgeted spatially, so one small secondary slice is
+     * allowed every rendered camera frame. CRAPGAME_LUMEN_HZ remains an
+     * explicit temporal throttle when the user requests one. */
+    if(configured_hz==0u)return true;
     if(invalidated||last_refresh_ns==0u||now_ns<last_refresh_ns)return true;
     return now_ns-last_refresh_ns>=movingSecondaryIntervalNanoseconds(configured_hz);
 }

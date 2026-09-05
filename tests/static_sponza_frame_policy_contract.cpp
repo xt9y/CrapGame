@@ -37,11 +37,16 @@ int main()
     require(relight.shadow&&relight.static_diffuse&&relight.lumen_trace,"lighting invalidation did not schedule affected work");
     require(!relight.reprojection,"lighting invalidation must not be treated as camera-only reprojection");
 
-    require(movingSecondaryIntervalNanoseconds(0u)==66666667ull,"default moving refresh is not 15 Hz");
-    require(!movingSecondaryRefreshDue(66666666ull,1ull,0u,false),"secondary refresh fired before 15 Hz interval");
-    require(movingSecondaryRefreshDue(66666668ull,1ull,0u,false),"secondary refresh missed 15 Hz interval");
-    require(movingSecondaryRefreshDue(2ull,1ull,0u,true),"revision invalidation must force secondary refresh");
-    require(movingSecondaryIntervalNanoseconds(30u)==33333333ull,"configured Lumen Hz must override moving interval");
+    require(movingSecondaryIntervalNanoseconds(0u)==66666667ull,"reference 15 Hz interval changed");
+    require(movingSecondaryRefreshDue(2ull,1ull,0u,false),
+            "default moving GI must launch one budgeted secondary slice per rendered frame");
+    require(!movingSecondaryRefreshDue(33333333ull,1ull,30u,false),
+            "explicit 30 Hz secondary throttle fired early");
+    require(movingSecondaryRefreshDue(33333334ull,1ull,30u,false),
+            "explicit 30 Hz secondary throttle missed its interval");
+    require(movingSecondaryRefreshDue(2ull,1ull,30u,true),
+            "revision invalidation must force secondary refresh");
+    require(movingSecondaryIntervalNanoseconds(30u)==33333333ull,"configured Lumen Hz interval changed");
 
     std::ifstream main_source("Sources/main.cpp");
     std::string source((std::istreambuf_iterator<char>(main_source)),{});

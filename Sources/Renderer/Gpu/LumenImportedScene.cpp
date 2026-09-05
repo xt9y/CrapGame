@@ -1,5 +1,6 @@
 #include "Renderer/Gpu/LumenGpu.hpp"
 #include "Renderer/Gpu/LumenImportedShader.hpp"
+#include "Renderer/Gpu/ProgressiveTracePolicy.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
 #include "Renderer/Material/Material.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
@@ -105,7 +106,7 @@ bool LumenGpu::traceShared(
         setInlineError(error, "GPU Lumen imported trace resources are not ready");
         return false;
     }
-    if (!ensureImportedTraceShader(error)) return false;
+    if (!ensureStageAImportedTraceShader(error)) return false;
     if (!reprojection_cache_.ensure(width_, height_, error)) return false;
     if (!dirty_tile_gpu_.ensure(trace_width_, trace_height_, error)) return false;
     if (!radiance_cache_.ensure(error)) return false;
@@ -168,8 +169,6 @@ bool LumenGpu::traceShared(
                 camera_position,
                 error))
             return false;
-        if (!dirty_tile_gpu_.compact(reprojection_cache_.validMaskTexture(), error))
-            return false;
 
         if (!secondary_refresh_due)
         {
@@ -183,6 +182,39 @@ bool LumenGpu::traceShared(
             if (error) error->clear();
             return true;
         }
+    }
+
+    const bool progressive_invalidated = !scene_unchanged
+        || !history_valid_ || !reprojection_cache_.historyValid();
+    const TraceSlice trace_slice = traceSliceForFrame(
+        frame_index, camera_changed, progressive_invalidated);
+
+    const bool stationary_history_seed = !reprojection_active
+        && trace_slice.count > 1u
+        && !camera_changed && scene_unchanged && history_valid_
+        && reprojection_cache_.historyValid();
+    if (stationary_history_seed)
+    {
+        if (!reprojection_cache_.reproject(
+                gbuffer,
+                indirect_history_[read_index],
+                reflection_history_[read_index],
+                indirect_history_[write_index],
+                reflection_history_[write_index],
+                position_history_[write_index],
+                camera_position,
+                error))
+            return false;
+    }
+
+    if (reprojection_active)
+    {
+        if (!dirty_tile_gpu_.compact(
+                reprojection_cache_.validMaskTexture(),
+                trace_slice.index,
+                trace_slice.count,
+                error))
+            return false;
     }
 
     bindTextureUnitInline(0, gbuffer.positionDepthTexture());
@@ -220,7 +252,12 @@ bool LumenGpu::traceShared(
                      static_cast<GLint>(triangles.tlasNodeCount()));
     GL20.glUniform1i(trace_material_count_location_,
                      static_cast<GLint>(triangles.traceMaterialCount()));
-    GL20.glUniform1i(trace_dirty_tile_dispatch_location_, reprojection_active ? 1 : 0);
+    const GLint trace_dispatch_mode = reprojection_active
+        ? 1
+        : (trace_slice.count > 1u
+            ? -static_cast<GLint>(trace_slice.count)
+            : 0);
+    GL20.glUniform1i(trace_dirty_tile_dispatch_location_, trace_dispatch_mode);
     GL20.glUniform1i(trace_radiance_generation_location_,
                      static_cast<GLint>(radiance_cache_.generation()));
     GL20.glUniform1i(trace_light_count_location_,
@@ -251,10 +288,19 @@ bool LumenGpu::traceShared(
     GL42.glBindImageTexture(2, position_history_[write_index], 0, GL_FALSE, 0,
                             GL_WRITE_ONLY, imageFormatInline(LUMEN_POSITION_HISTORY_FORMAT));
     if (reprojection_active)
+    {
         dirty_tile_gpu_.dispatchIndirect();
+    }
     else
-        GL43.glDispatchCompute(static_cast<GLuint>((trace_width_ + 7) / 8),
-                               static_cast<GLuint>((trace_height_ + 7) / 8), 1);
+    {
+        const std::uint32_t group_rows =
+            static_cast<std::uint32_t>((trace_height_ + 7) / 8);
+        GL43.glDispatchCompute(
+            static_cast<GLuint>((trace_width_ + 7) / 8),
+            static_cast<GLuint>(traceSliceDispatchGroups(
+                group_rows, trace_slice.count)),
+            1);
+    }
     GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
                          | GL_TEXTURE_FETCH_BARRIER_BIT
                          | GL_SHADER_STORAGE_BARRIER_BIT);
