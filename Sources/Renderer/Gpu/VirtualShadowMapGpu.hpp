@@ -2,6 +2,7 @@
 #define CRAPGAME_RENDERER_GPU_VIRTUALSHADOWMAPGPU_HPP
 
 #include "Renderer/Gpu/ShadowPageCacheGpu.hpp"
+#include "Renderer/Gpu/VirtualShadowFinishShader.hpp"
 #include "Renderer/Gpu/VirtualShadowPolicy.hpp"
 #include "Renderer/Math/Math.hpp"
 
