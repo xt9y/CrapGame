@@ -1,0 +1,2133 @@
+UNREAL ENGINE 5.8.2 RENDERER DEEP ANALYSIS
+==========================================
+
+Audit date: 2026-09-05
+Reference repository: xt9y/UE
+Reference branch: release
+Reference engine version: Unreal Engine 5.8.2
+Target repository: xt9y/CrapGame
+Purpose: architectural and algorithmic reference for reproducing Unreal Engine 5.8 lighting, shadowing, reflectivity, Lumen GI, Lumen reflections, and ray-tracing behavior without copying Unreal source code verbatim.
+
+
+0. MOST IMPORTANT FINDING
+=========================
+
+There is no single thing in Unreal called "the Lumen shadow algorithm" that is responsible for the final shadow visible on a normally lit opaque surface.
+
+Unreal's final frame is a composition of several distinct systems:
+
+1. Direct-light visibility/shadowing.
+   The high-quality normal opaque shadow path is primarily Virtual Shadow Maps (VSM), with ray-traced shadow paths available depending on project/platform/light configuration.
+
+2. Direct BRDF lighting.
+   Deferred/forward material evaluation turns light visibility into diffuse/specular/transmission lighting using physically based BRDFs, area-light approximations, Fresnel, roughness, metallic, energy compensation, etc.
+
+3. Lumen Scene direct lighting.
+   Lumen also evaluates direct lighting and shadows into its Surface Cache. This is not normally the same texture as the final on-screen direct shadow. It exists so off-screen surfaces and later GI/reflection rays know how those surfaces are lit.
+
+4. Lumen indirect diffuse.
+   Screen Probe Gather, Radiance Cache, Surface Cache, radiosity, short-range AO/bent normal, and tracing fallbacks produce indirect diffuse lighting and indirect occlusion.
+
+5. Lumen reflections.
+   Reflections begin with screen-space information and progressively fall back to Lumen scene representations or hardware RT. They are filtered, temporally accumulated and reconstructed according to roughness.
+
+6. Optional hardware ray tracing / hit lighting.
+   Hardware RT can replace some scene-intersection stages, but Unreal normally avoids doing expensive full material hit lighting for every ray. The fast default is generally to trace geometry and retrieve lighting from cached representations where possible.
+
+Therefore an "exact UE shadow replica" cannot be obtained by improving CrapGame's current PCF kernel or by firing more binary BVH shadow rays. The visible UE look comes from the interaction of VSM + SMRT soft-shadow projection + physically based direct lighting + Lumen indirect lighting/contact occlusion + temporal/cached systems.
+
+The current CrapGame direct-shadow architecture is structurally different enough that tuning constants cannot make it match UE. The architecture has to converge first.
+
+
+1. WHY THE CURRENT CRAPGAME SCREENSHOT DOES NOT LOOK LIKE UE
+=============================================================
+
+The supplied screenshot is extremely dark and contains broad hard black regions plus small bright/patchy details. The exact source of every artifact cannot be proven from one screenshot alone, but the current source explains why the result is fundamentally unlike UE.
+
+Current CrapGame direct-shadow paths:
+
+- StaticShadowCacheGpu uses one 2048 x 2048 depth map for the static split light.
+- That single directional map is fit over the bounds of the imported opaque scene.
+- It uses a fixed small PCF-style receiver filter.
+- Caster depth bias is fixed in clip space.
+- Receiver depth bias is fixed.
+- Dynamic/imported geometry visibility is effectively a binary any-hit shadow ray.
+- The direct-light shader evaluates one direction from the receiver toward a local/directional light. It does not integrate the finite angular extent of the emitter for shadow visibility.
+
+Current relevant constants:
+
+Sources/Renderer/Gpu/StaticShadowPolicy.hpp
+- SIZE = 2048
+- PCF_RADIUS = 2
+- PADDING = 0.05
+- CASTER_NDC_BIAS = 0.00045
+- RECEIVER_DEPTH_BIAS = 0.00030
+
+Sources/Renderer/Gpu/StaticShadowShader.hpp
+- one conventional shadow texture
+- fixed neighborhood filtering around a receiver
+- no blocker search
+- no emitter sampling
+- no contact hardening
+- no virtual pages
+- no view-centered directional clipmaps
+- no receiver-driven allocation
+- no SMRT
+
+Sources/Renderer/Shadows/Shadows.cpp
+- CPU reference shadow visibility is binary 0/1 triangle-any-hit visibility
+- SHADOW_BIAS = 0.003
+
+Sources/Renderer/Gpu/DirectLightingShader.hpp and DirectLightingImportedShader.hpp
+- dynamic/imported direct visibility is still basically one shadow test for one light direction
+- the imported path can use the static shadow cache for the static split light, otherwise BVH visibility
+- there is no finite light-source integration for penumbrae
+- there is no UE VSM clipmap/page-cache behavior
+
+A fixed PCF kernel creates a nearly fixed blur in shadow-texel space. Realistic soft shadows do not behave like that. A physically plausible area-source shadow is hard at contact and widens as the receiver moves away from the blocker. Unreal's VSM projection reconstructs this behavior through SMRT; fixed PCF does not.
+
+The single 2048 directional map also has a fundamental resolution problem. As scene bounds grow, each shadow texel covers more world-space area. UE's directional VSM instead spends physical pages where visible receivers request them and chooses clipmap levels according to screen-space demand.
+
+CrapGame's current CPU ScreenProbe implementation adds another difference. It currently:
+
+- chooses one representative pixel per screen-probe tile;
+- traces a scalar hemisphere gather;
+- averages the result into one RGB indirect value per probe;
+- multiplies the gather by a hard-coded 0.35;
+- reconstructs from nearby probes with hand-written entity/normal/distance weights;
+- falls back to albedo * radiance cache * 0.20;
+- performs a short-range visibility pass and multiplies by 0.35 + visibility * 0.65.
+
+UE's Screen Probe Gather stores directional radiance in an octahedral layout, traces a structured direction set, reprojects history, allocates adaptive probes, importance-samples, compacts misses, and integrates directional irradiance later. The current scalar-per-probe approximation can crush lighting and lose directional structure. The hard-coded 0.35/0.20/contact factors are also not an equivalent of UE's energy handling.
+
+The first architectural correction is therefore:
+
+DIRECT SHADOWS != GI OCCLUSION != SCREEN-PROBE AO != SURFACE-CACHE SHADOWING.
+
+Keep those signals distinct until the final lighting composition.
+
+
+2. UNREAL FRAME-LEVEL RENDERING MODEL
+======================================
+
+A useful simplified dependency graph for UE 5.8 is:
+
+    rasterized visible surfaces / GBuffer
+                 |
+                 +-------------------------------+
+                 |                               |
+                 v                               v
+        direct light shading                 Lumen scene
+        + VSM / RT shadows                 representation
+                 |                               |
+                 v                               v
+        visible direct result             Surface Cache cards
+                                                 |
+                         +-----------------------+-----------------------+
+                         |                       |                       |
+                         v                       v                       v
+                  cached direct            radiosity / GI        reflection hit
+                    lighting               scene lighting           radiance
+                         |                       |                       |
+                         +-----------+-----------+                       |
+                                     |                                   |
+                                     v                                   v
+                              final Surface Cache                   reflections
+                                     |                                   |
+                         +-----------+----------+                        |
+                         |                      |                        |
+                         v                      v                        |
+                   Radiance Cache        Screen Probe Gather <----------+
+                         |                      |
+                         +-----------+----------+
+                                     |
+                                     v
+                               diffuse indirect
+                                     |
+                   short-range AO / bent normal detail
+                                     |
+                                     v
+                         final lighting composition
+
+The important performance strategy is not "few rays everywhere." It is:
+
+- cache expensive things;
+- update only dirty/important regions;
+- trace cheap representations first;
+- compact only misses;
+- use indirect dispatches;
+- adapt quality to screen-space need;
+- early-out uniform regions;
+- amortize noisy sampling over time;
+- use lower-resolution persistent representations for indirect lighting;
+- preserve full-resolution detail with separate contact/detail passes;
+- use hardware RT only for the unresolved subset or where quality requires it.
+
+
+3. VIRTUAL SHADOW MAPS: THE CORE OF UE'S HIGH-QUALITY DIRECT SHADOWS
+====================================================================
+
+Primary reference paths:
+
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapArray.cpp
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapCacheManager.cpp
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapClipmap.cpp
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapProjection.cpp
+Engine/Shaders/Shared/VirtualShadowMapDefinitions.h
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapProjection.usf
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapProjectionDirectional.ush
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapSMRTCommon.ush
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapSMRTTemplate.ush
+
+
+3.1 VIRTUAL RESOLUTION AND PHYSICAL PAGES
+-----------------------------------------
+
+UE does not render a conventional monolithic 16K shadow texture for every light.
+
+The virtual address space uses:
+
+- physical page size: 128 x 128 texels
+- level-0 page table: 128 x 128 pages
+- nominal maximum virtual level resolution: 16384 x 16384 texels
+- mip/page-table hierarchy for lower-resolution coverage
+- a finite physical page pool backing only the pages currently needed
+
+The key distinction is virtual resolution versus physical memory. A receiver can address a very high-resolution shadow map without requiring all 16384^2 texels to physically exist.
+
+This is one reason UE can keep contact shadows sharp while still covering a huge scene.
+
+Source-literal physical pool control includes:
+
+- r.Shadow.Virtual.MaxPhysicalPages = 2048
+
+Project/scalability configuration may override C++ literal defaults. In particular, r.Shadow.Virtual.Enable is declared with a literal default of 0 in the source inspected here; effective project settings can enable it. Do not confuse a declaration default with the runtime configuration used by a given UE project.
+
+
+3.2 RECEIVER-DRIVEN PAGE ALLOCATION
+-----------------------------------
+
+A normal fixed shadow map spends resolution on the whole light frustum whether visible or not. VSM page marking instead identifies virtual shadow pages needed by visible receivers and other consumers.
+
+Important mechanisms visible in the implementation include:
+
+- receiver page masks
+- coarse page marking
+- page-table lookup and fallback
+- per-page metadata
+- requested-this-frame state
+- Nanite-aware page rendering/culling
+- local-light page allocation
+- directional clipmap page allocation
+- support for cached static/dynamic pages
+- prefiltered distant pages
+
+Directional receiver masks are enabled in the source path inspected. They allow much more effective culling, especially at lower resolutions.
+
+VSM receiver mask size is 8 x 8.
+
+The high-level rule to copy is:
+
+    resolution should follow visible receiver demand, not total scene bounds.
+
+
+3.3 DIRECTIONAL-LIGHT CLIPMAPS
+------------------------------
+
+Directional lights need effectively infinite coverage. UE solves this using clipmaps centered around the current view rather than one giant orthographic map.
+
+Important source-literal values in VirtualShadowMapClipmap.cpp:
+
+- r.Shadow.Virtual.Clipmap.FirstLevel = 6
+- r.Shadow.Virtual.Clipmap.LastLevel = 22
+- r.Shadow.Virtual.Clipmap.FirstCoarseLevel = 15
+- r.Shadow.Virtual.Clipmap.LastCoarseLevel = 18
+- r.Shadow.Virtual.Clipmap.ZRangeScale = 1000
+- r.Shadow.Virtual.ResolutionLodBiasDirectional = 0
+- r.Shadow.Virtual.ResolutionLodBiasDirectionalMoving = 0
+
+Each additional clipmap level doubles world-space coverage.
+
+The clipmap selection is tied to view/projection scale and viewport width. It therefore maintains useful screen-space texel density instead of fitting the entire world into one shadow texture.
+
+The system also snaps/manages clipmap origins so camera movement can reuse cached pages rather than constantly invalidate all shadow data.
+
+This is a direct architectural replacement for CrapGame's current scene-bounds-fitted 2048 directional map.
+
+
+3.4 VSM CACHING AND SELECTIVE INVALIDATION
+------------------------------------------
+
+VSM's performance comes heavily from persistence.
+
+Important values and behavior from VirtualShadowMapCacheManager.cpp:
+
+- r.Shadow.Virtual.Cache = 1
+- HZB-tested invalidation = enabled
+- fully occluded instances can avoid invalidating pages
+- deformable meshes can force invalidation
+- cached pages may remain alive for up to 1000 frames since last request
+- local lights not currently requested can keep cached pages for a smaller lifetime
+- objects can transition into a static-cache state after many stable frames
+- page pool can be allocated as a reserved/virtual resource to reduce memory fragmentation
+- invalidation outside a local light radius is culled on the CPU
+- page-space translation can keep a cached page when a directional clipmap moves by whole pages
+
+The cache distinguishes and tracks static/dynamic page states. UE keeps detailed counters for requested pages, static cached pages, static invalidations, dynamic cached pages, dynamic invalidations, empty pages, clear/merge work and Nanite cluster cost.
+
+The important implementation principle for CrapGame is:
+
+    moving the camera must not imply redrawing every directional shadow texel.
+
+Cache physical pages. Remap them when the clipmap moves. Invalidate only pages affected by changed casters/light configuration.
+
+
+3.5 DYNAMIC SHADOW RESOLUTION UNDER PRESSURE
+--------------------------------------------
+
+UE can trade resolution for bounded cost rather than catastrophically overflowing the shadow pool.
+
+Relevant controls include:
+
+- maximum dynamic-resolution LOD bias around 2.0 in the inspected source
+- page-pool pressure threshold around 0.85
+- separate compute-resolution bias controls for directional/local lights
+
+As page allocation or compute cost approaches the configured budget, VSM resolution can be biased downward.
+
+That is better than a system where cost rises without bound or where allocation overflow corrupts the frame.
+
+CrapGame should expose the same concept even if its exact policy differs:
+
+- physical-page budget
+- frame page-render budget
+- invalidation budget
+- dynamic resolution bias
+- diagnostic counters
+
+
+4. SMRT: WHY UE VSM SHADOW EDGES LOOK LIKE REAL AREA-LIGHT SHADOWS
+==================================================================
+
+This is the most important direct-shadow quality mechanism to reproduce.
+
+SMRT in this context is shadow-map ray tracing. It is not world-space hardware ray tracing. UE traces rays through samples of the virtual shadow-map depth representation.
+
+A simple PCF shadow asks roughly:
+
+    Is receiver depth behind nearby blocker-depth texels?
+
+and averages neighboring answers.
+
+SMRT instead models the path from a receiver toward different points on a finite light source. It repeatedly samples VSM depth along those rays. This allows it to estimate whether different portions of the emitter are visible.
+
+The result naturally produces:
+
+- hard contact shadows
+- penumbrae that widen with blocker/receiver separation
+- soft shadows based on source radius/angular extent
+- changing softness without a huge fixed spatial filter
+- useful blocker/occluder-distance estimates
+
+
+4.1 DIRECTIONAL SOURCE SAMPLING
+-------------------------------
+
+The directional SMRT shader samples the directional light's finite source disk around the primary light direction. The disk sample is converted into a perturbed light ray direction.
+
+Each pixel uses randomized low-discrepancy/noise-driven directions across frames/pixels rather than the exact same samples everywhere.
+
+This means source radius has a physically meaningful relationship with penumbra shape instead of merely becoming a PCF radius.
+
+
+4.2 DEFAULT RAY/SAMPLE COUNTS
+-----------------------------
+
+Source-literal values in the inspected UE 5.8 tree:
+
+Directional:
+- r.Shadow.Virtual.SMRT.RayCountDirectional = 7
+- r.Shadow.Virtual.SMRT.SamplesPerRayDirectional = 8
+
+Local:
+- r.Shadow.Virtual.SMRT.RayCountLocal = 7
+- r.Shadow.Virtual.SMRT.SamplesPerRayLocal = 8
+
+A naive reading suggests up to 56 depth tests for each soft-shadowed pixel. That sounds expensive. The actual design avoids paying that maximum cost in most pixels through page locality, compute tiling, wave-level adaptive early exits, cache reuse and uniform-region detection.
+
+Do not "optimize" an UE replica by immediately lowering all sample counts. First implement the adaptive behavior that makes these defaults affordable.
+
+
+4.3 ADAPTIVE RAY COUNT
+----------------------
+
+r.Shadow.Virtual.SMRT.AdaptiveRayCount = 1 in the inspected source.
+
+The directional implementation can terminate work across a GPU wave when the region is obviously uniform.
+
+Examples from the logic:
+
+- if the first ray misses for all lanes, the wave is effectively fully lit and can stop;
+- after enough evidence, if all lanes remain occluded, the wave can stop as a uniform umbra;
+- expensive extra rays concentrate around transition/penumbra regions.
+
+This is a crucial UE optimization:
+
+    spend shadow samples on uncertainty, not on obvious light or obvious shadow.
+
+For CrapGame, an SMRT implementation without adaptive early-outs will reproduce quality but not UE's performance behavior.
+
+
+4.4 SAMPLES ALONG EACH RAY
+--------------------------
+
+Each SMRT source ray does not need a full geometry intersection. It advances through virtual shadow depth samples.
+
+The shader tracks a ray state in shadow UV/depth space and tests whether the depth representation indicates occlusion.
+
+The directional path has a configurable ray-length scale:
+
+- r.Shadow.Virtual.SMRT.RayLengthScaleDirectional = 1.5
+
+Ray length scales with distance to camera. The source comments are important conceptually:
+
+- shorter rays restrict maximum screen-space penumbra;
+- longer rays permit wider penumbrae;
+- excessively long rays need more samples and can visually detach the shadow from its contact point.
+
+That tradeoff is why UE does not simply make a gigantic PCF kernel.
+
+
+4.5 DEPTH SLOPE AND OCCLUDER EXTRAPOLATION
+------------------------------------------
+
+SMRT computes receiver/shadow depth slope and uses it to form a more stable ray start and sampling test.
+
+Directional source-literal control:
+
+- r.Shadow.Virtual.SMRT.ExtrapolateMaxSlopeDirectional = 5.0
+
+Local source-literal control:
+
+- r.Shadow.Virtual.SMRT.ExtrapolateMaxSlopeLocal = 0.05
+
+The implementation can extrapolate depth behind the sampled occluder. This allows a sparse set of shadow-map depth samples to approximate a continuous occluder along the source ray and yields smoother penumbra behavior.
+
+Too much extrapolation can leak light behind a second occluder, so it is bounded.
+
+This is a different problem from normal receiver bias. Treat slope extrapolation, receiver normal offset and contact ray offset as separate controls.
+
+
+4.6 SMART BIAS: SCREEN RAY BEFORE VSM/SMRT
+-------------------------------------------
+
+Unreal does not rely on one fixed normal/depth bias alone.
+
+Relevant source-literal values:
+
+- r.Shadow.Virtual.ScreenRayLength = 0.015
+- r.Shadow.Virtual.NormalBias = 0.5
+
+The projection path can first perform a short screen-space trace away from the receiver surface before starting SMRT. Its purpose is to reduce mismatch/self-shadowing at the receiver and find a better start offset.
+
+The normal bias is scaled according to camera/receiver context rather than being a single fixed world-space number for every scene scale.
+
+CrapGame currently uses fixed constants in several shadow paths. That is one reason a bias that works on one surface/scale can create peter-panning, acne or leaks elsewhere.
+
+For parity, implement at least:
+
+- receiver normal offset scaled by texel/world footprint
+- slope-aware depth bias
+- short screen-space/contact trace start adjustment
+- per-light-type controls
+- diagnostics showing which bias path is active
+
+
+4.7 TEXEL DITHER AND TEMPORAL DISTRIBUTION
+------------------------------------------
+
+The directional VSM projection dithers texel/ray positions and changes source sampling with frame index. This hides structured aliasing and lets temporal reconstruction turn a small number of rays into a smoother result over time.
+
+A static 4 x 4 PCF pattern cannot replicate this temporal/spatiotemporal sample distribution.
+
+
+4.8 OCCLUDER DISTANCE
+---------------------
+
+When SMRT rays find a valid blocker, UE derives an occluder distance and aggregates it across successful rays. This is valuable because penumbra behavior depends on blocker/receiver geometry.
+
+The final visibility is based on how many source rays remain visible while occluder distance records geometric context.
+
+This is the right model for contact hardening. A fixed blur radius has no equivalent blocker-distance information.
+
+
+5. VSM COMPUTE PROJECTION AND GPU OCCUPANCY
+===========================================
+
+VirtualShadowMapProjection.cpp uses compute projection.
+
+Important structure:
+
+- work tile size: 8 x 8
+- WaveOps enabled
+- Wave32 used where supported/required by the path
+- shader permutations remove unnecessary branches for directional/local, hair, first-person, distant-prefiltered, one-pass/tile-list and sample-count combinations
+- static sample-count permutations exist for common counts where profitable, with dynamic fallback
+- local lights can use one-pass projection
+- directional lights use dedicated passes
+
+This is another general UE performance pattern:
+
+    move irregular shading work into compute tiles, classify it, and compile useful permutations rather than executing one giant generic branch-heavy shader.
+
+CrapGame already uses 8 x 8 compute in parts of direct lighting, which is a good base. The missing part is the receiver-driven work lists and shadow algorithm, not the existence of compute itself.
+
+
+6. NANITE + VSM PERFORMANCE RELATIONSHIP
+========================================
+
+UE's VSM implementation is designed to cooperate with Nanite.
+
+Relevant ideas visible in the code:
+
+- Nanite cluster culling for shadow views
+- separate HW/SW Nanite cluster stats
+- receiver/page masks
+- HZB interaction
+- virtual page-based raster windows
+- cached page invalidation driven by geometry/LOD changes
+- dynamic/coarse-page policies
+
+The key lesson is independent of whether CrapGame ever implements Nanite:
+
+    shadow caster submission must become page/tile aware.
+
+Do not submit all scene triangles for every shadow update. Build per-page or per-tile caster lists using BVH/frustum/HZB/light-volume culling. The current single full-scene static shadow render is acceptable as a temporary cache but not an UE-equivalent final design.
+
+
+7. LUMEN CORE: PERFORMANCE POLICY
+=================================
+
+Primary path:
+Engine/Source/Runtime/Renderer/Private/Lumen/Lumen.cpp
+
+Relevant source behavior:
+
+- Lumen support enabled by source cvar unless disabled by platform/project
+- async compute allowed
+- wave operations enabled
+- thread-group size 32 path preferred where appropriate
+- compact lighting formats are preferred for performance
+- default final-gather method in the inspected source is Screen Probe Gather
+
+Lighting data can use a compact R11G11B10 representation in the fast/default path, with higher precision alternatives available.
+
+The important point is that UE does not insist on full RGBA32F for every intermediate. Memory bandwidth is a first-class renderer cost.
+
+For CrapGame, audit every persistent/intermediate texture. If three 16-bit channels are enough, do not carry four 32-bit channels because it is convenient.
+
+
+8. LUMEN SURFACE CACHE AND MESH CARDS
+=====================================
+
+Primary paths:
+
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSurfaceCache.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenMeshCards.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneCardCapture.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneData.h
+
+Lumen cannot afford to re-run a full material/deferred-lighting pipeline at every software trace hit. Instead it stores a cached representation of scene surfaces.
+
+Mesh surfaces are represented by cards/pages capturing data from useful orientations.
+
+Important Surface Cache layers in the inspected source:
+
+Depth:
+- uncompressed format: G16
+
+Albedo:
+- uncompressed RGBA8
+- compressed BC7 where supported
+
+Normal:
+- uncompressed RG8
+- compressed BC5 where supported
+
+Emissive:
+- uncompressed Float R11G11B10
+- compressed BC6H where supported
+
+Runtime Surface Cache compression is enabled by source configuration when supported. UE can use UAV aliasing/framebuffer compression/copy approaches depending on RHI capability.
+
+Separate atlases exist for:
+
+- direct lighting
+- indirect/radiosity lighting
+- final combined lighting
+- history/variance data in relevant modes
+- shadow downsample-factor data
+
+This architecture means an off-screen ray can hit a card and obtain material/lighting information without executing the entire original material graph and all lights from scratch.
+
+
+8.1 LOW-RES DIFFUSE VS HIGH-RES SPECULAR CARD DATA
+--------------------------------------------------
+
+Mesh-card GPU data explicitly records both a low-res allocated surface mip and a high-res allocated surface mip.
+
+The low-res representation is sufficient for diffuse GI over broad surfaces.
+The high-res representation is useful for specular/reflection queries.
+
+This is a high-value principle:
+
+    diffuse and specular do not need the same spatial frequency.
+
+A CrapGame Surface Cache should therefore not use one resolution for every consumer.
+
+
+8.2 MESH-CARD CREATION / MERGING POLICY
+----------------------------------------
+
+Source-literal controls include:
+
+- minimum Mesh Card world size around 10
+- merge components enabled
+- merge instances disabled by default in the inspected source
+- merged-card minimum surface area ratio controls
+- merged-card resolution scale around 0.3
+- maximum merged world size around 10000
+- face culling enabled
+
+The exact values are less important than the policy: merge small related surfaces to control card count, but preserve enough object granularity for streaming and feedback.
+
+
+9. LUMEN SCENE DIRECT LIGHTING
+==============================
+
+Primary paths:
+
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneDirectLighting.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneDirectLightingHardwareRayTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneDirectLightingStochastic.inl
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneLighting.cpp
+
+This stage computes direct illumination of Surface Cache pages. It is required so an indirect/reflection ray hitting an off-screen surface can retrieve believable outgoing radiance.
+
+It is not equivalent to the final visible screen-space direct-light shadow mask.
+
+Notable implementation details:
+
+- direct lighting enabled
+- direct lights culled to card/surface tiles
+- maximum lights per tile is bounded; source default inspected is 8
+- tile depth-range culling is enabled
+- dynamic shadows, cloud transmittance and light functions have dedicated handling
+- off-screen shadow tracing can use mesh SDFs, heightfields/global SDF, or hardware RT depending on mode/platform
+- hardware-RT surface-cache shadowing can adapt ray count when a tile was uniform previously
+- shadow work can be batched by light/type/tile
+
+Approximate source-literal shadow biases differ by representation:
+
+- Mesh SDF bias around 2.0
+- heightfield bias around 2.0
+- Global SDF bias around 1.0
+- HWRT bias around 1.0 for this Surface Cache direct-lighting stage
+
+Do not merge those constants into one global `SHADOW_BIAS`. Different representations have different precision/error envelopes.
+
+
+10. SURFACE-CACHE LIGHTING UPDATE BUDGETS
+=========================================
+
+Primary path:
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneLighting.cpp
+
+This is one of Lumen's strongest performance ideas.
+
+Source-literal defaults inspected:
+
+- direct-lighting update factor = 32
+- radiosity update factor = 64
+- Surface Cache feedback enabled
+- card updates near the current frustum are prioritized
+- async compute for Lumen Scene lighting enabled where supported
+
+Conceptually:
+
+    direct texels updated per frame ~= total relevant Surface Cache texels / 32
+    radiosity texels updated per frame ~= total relevant Surface Cache texels / 64
+
+UE does not re-light the whole Surface Cache every frame. It carries persistent lighting and schedules a subset for refresh.
+
+Feedback tells the engine which Surface Cache areas are being used by current traces so those regions can be prioritized.
+
+For CrapGame, a faithful Surface Cache needs:
+
+- persistent pages
+- age/dirty state
+- feedback counters
+- prioritized update queues
+- per-frame update budget
+- separate direct/radiosity budgets
+- invalidation on material/geometry/light changes
+
+Without this, increasing GI quality will scale cost too directly with scene size.
+
+
+11. SCREEN PROBE GATHER: DEFAULT HIGH-QUALITY LUMEN FINAL GATHER
+===============================================================
+
+Primary paths:
+
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeGather.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeFiltering.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeImportanceSampling.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeHardwareRayTracing.cpp
+
+The inspected default final-gather method selects Screen Probe Gather.
+
+Important source-literal shape:
+
+- screen probe placement downsample factor around 16
+- tracing octahedron resolution around 8
+- therefore nominal directional probe layout around 8 x 8 = 64 directions per probe
+- adaptive probes available around geometric/discontinuity regions
+- temporal accumulation enabled
+- spatial filtering enabled
+- importance sampling paths available
+
+The crucial difference from CrapGame is that a screen probe stores directional information, not one averaged RGB value.
+
+That directional distribution lets later integration respect the surface normal and incoming direction. Averaging everything first destroys information that UE intentionally preserves.
+
+
+11.1 PROBE PLACEMENT
+--------------------
+
+A uniform coarse screen grid controls base cost.
+Adaptive probes improve quality around regions where one uniform probe is insufficient.
+
+This keeps the total number of rays far below one full GI ray set per screen pixel while preserving important edges.
+
+CrapGame should move from:
+
+    one RGB result / probe
+
+to:
+
+    directional octahedral radiance / probe
+    + hit distance/depth/validity metadata
+    + adaptive probe list
+
+
+11.2 TEMPORAL HISTORY
+---------------------
+
+Screen Probe Gather is explicitly temporal.
+
+The inspected path contains controls for:
+
+- history distance rejection
+- normal-based rejection
+- faster update on moving content
+- maximum accumulated frames around 10
+- limited ray direction sets across frames
+- foliage-specific history thresholds
+
+Temporal accumulation is not optional polish. It is how sparse per-frame rays become a stable high-quality result.
+
+A faithful implementation needs motion vectors/reprojection and reliable history rejection. Otherwise randomizing samples every frame only creates flicker.
+
+
+11.3 SPATIAL RECONSTRUCTION
+---------------------------
+
+Probe radiance is reconstructed to full resolution with geometry-aware weights and validity handling. The fallback weights are designed to avoid black holes while still reducing cross-surface leaking.
+
+UE does not restrict probe reuse to `same entity` in the simplistic way the current CrapGame CPU implementation does. The meaningful boundary is geometry/depth/normal/plane compatibility, not ECS identity.
+
+Using entity equality as a hard GI interpolation criterion causes discontinuities at mesh splits and can prevent legitimate lighting continuity across separately authored pieces of one wall/floor.
+
+
+12. LUMEN TRACE CASCADE: CHEAP FIRST, COMPACT MISSES
+====================================================
+
+Primary path:
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeTracing.cpp
+
+This is another core performance strategy to reproduce exactly in spirit.
+
+The rough tracing order is:
+
+1. Screen-space trace against visible depth/HZB.
+2. Compact unresolved rays.
+3. Trace a more complete scene representation: Mesh SDF / heightfield when enabled.
+4. Compact remaining unresolved rays.
+5. Global SDF / voxel/world representation or HWRT fallback depending configuration.
+6. Resolve distant/radiance-cache/skylight contribution for rays that still do not get a close hit.
+
+Screen-space tracing is cheap because data is already resident and coherent.
+
+The source path uses hierarchical depth traversal and can run with Wave32 operations. Relevant values include a maximum of roughly 50 hierarchical iterations in the inspected screen-trace paths.
+
+Critically, unresolved traces are written to compacted buffers and subsequent stages use indirect dispatches.
+
+Therefore an expensive fallback does not execute for every probe direction.
+
+The CrapGame rule should be:
+
+    NEVER run the most expensive tracer for all rays if a cheap stage can resolve most of them.
+
+Implement explicit trace states:
+
+- unresolved
+- screen hit
+- mesh representation hit
+- world/SDF hit
+- HWRT hit
+- miss/sky
+
+Then compact only unresolved IDs after each stage.
+
+
+13. RADIANCE CACHE
+==================
+
+Primary paths:
+
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadianceCache.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadianceCache.h
+Screen Probe Gather setup in LumenScreenProbeGather.cpp
+
+The Radiance Cache is a persistent world-space cache used to amortize distant/rough indirect lighting queries.
+
+Source-literal values inspected include:
+
+- enabled = 1
+- number of clipmaps = 4
+- first clipmap world extent = 2500
+- clipmap distribution base = 2.0
+- grid resolution = 48
+- probe trace budget = 100 probes/frame
+- probe directional resolution = 32 x 32
+- atlas resolution = 128 probes along an atlas dimension
+- reprojection radius scale = 1.5
+- keep unused probes around 8 frames
+
+A fully refreshed 32 x 32 probe corresponds to 1024 ray directions, but only a limited number of probes are updated per frame. This is another example of very high local quality made affordable through a persistent sparse update budget.
+
+Additional mechanisms include:
+
+- clipmap scrolling
+- probe indirection
+- world offsets
+- temporal reuse
+- spatial filtering
+- adaptive tracing based on BRDF/importance
+- far-distance downsampling
+- persistent irradiance/radiance/depth/occlusion atlases
+
+The Radiance Cache is especially useful when rough reflection/indirect queries do not need exact nearby hit detail.
+
+
+14. LUMEN RADIOSITY / MULTI-BOUNCE DIFFUSE
+==========================================
+
+Primary path:
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadiosity.cpp
+
+Lumen radiosity gathers indirect lighting from the Surface Cache and feeds multi-bounce diffuse lighting back into the cached scene.
+
+Source-literal defaults inspected:
+
+- radiosity enabled
+- probe spacing = 4 Surface Cache texels
+- hemisphere probe resolution = 4, nominally 16 trace directions
+- spatial filtering enabled
+- filter kernel size = 1
+- plane-distance weighting enabled to reduce leaking
+- probe occlusion off by default in the software trace path because representation imprecision can cause artifacts
+- maximum ray intensity = 40
+- temporal accumulation enabled
+- maximum accumulated frames = 4
+- HWRT radiosity path enabled when HWRT/Lumen mode permits
+- HWRT ray and normal bias around 0.1
+
+At very high Lumen Scene lighting quality, probe spacing can be reduced and hemisphere resolution increases according to quality.
+
+The important architecture is feedback:
+
+    Surface Cache material + direct light
+            -> radiosity traces
+            -> indirect Surface Cache lighting
+            -> final Surface Cache radiance
+            -> future probe/reflection hits
+
+This is how multi-bounce diffuse becomes persistent instead of needing many recursive rays from every screen pixel.
+
+
+15. SHORT-RANGE AO / BENT NORMAL: RESTORING HIGH-FREQUENCY CONTACT DETAIL
+========================================================================
+
+Primary paths:
+
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenShortRangeAO.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenShortRangeAOHardwareRayTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenSpaceBentNormal.cpp
+
+Low-resolution GI reconstruction inevitably loses some local occlusion around contacts, creases and thin geometry. UE treats this as a separate high-frequency problem.
+
+Short-range AO / bent-normal evaluation runs at high/full resolution and adds directional occlusion detail back into the final indirect result.
+
+The HWRT short-range AO path exists, while the source cvar declaration inspected has a literal 0 default; screen-space tracing remains the common cheap path when that option is not enabled. The help text/configuration may differ from the declaration, so effective project settings must always be checked.
+
+The conceptual lesson is:
+
+    do not force the low-resolution GI representation to carry every contact shadow.
+
+Use a cheap full-resolution contact/detail layer, then combine it carefully with indirect diffuse.
+
+This is different from the final direct VSM shadow and must not simply blacken the entire direct-light signal.
+
+
+16. HARDWARE RAY TRACING IN LUMEN
+=================================
+
+Primary path:
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenHardwareRayTracingCommon.cpp
+
+Lumen can use hardware ray tracing, but the engine has several quality/cost modes.
+
+Important source behavior:
+
+- Lumen HWRT enabled when platform/project supports it
+- inline ray tracing used where suitable
+- Shader Execution Reordering used when supported/beneficial
+- a minimal Surface Cache lighting payload is preferred for many rays
+- full hit-lighting is a separate more expensive mode
+- near/far field paths are split
+- self-intersection handling is configurable and hardware-aware
+- geometry visibility/material-hit cost is separated where possible
+
+The fast conceptual mode is:
+
+    hardware ray finds geometry -> Surface Cache supplies lighting
+
+rather than:
+
+    hardware ray finds geometry -> run full material + all relevant direct lights + shadows at every hit
+
+Full hit lighting is available for higher quality, especially reflections, but it is intentionally more expensive.
+
+This matters for CrapGame because a custom BVH tracer can copy the same policy even without DXR/Vulkan RT:
+
+- keep intersection payload minimal;
+- separate geometry trace from material/radiance lookup;
+- bucket/compact rays by type/material when possible;
+- use cached Surface Cache lighting for secondary hits;
+- reserve expensive direct-hit shading for high-value rays.
+
+
+16.1 SELF-INTERSECTION HANDLING
+-------------------------------
+
+UE contains multiple controls for biases and self-intersection avoidance because Nanite/raster geometry, SDFs and RT proxy geometry may not coincide exactly.
+
+Relevant ideas include:
+
+- constant ray bias
+- normal bias
+- pullback bias when handing a ray from screen tracing to HWRT
+- bounded backface/self-intersection handling
+- representation-aware bias values
+
+CrapGame currently spreads fixed `SHADOW_BIAS` constants across unrelated paths. Replace that with a named per-representation bias policy.
+
+
+17. LUMEN REFLECTIONS
+=====================
+
+Primary paths:
+
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReflections.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReflectionTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReflectionHardwareRayTracing.cpp
+
+Lumen reflections are not just `reflect(V,N); trace();`.
+
+The pipeline includes:
+
+- roughness-aware ray generation
+- screen traces first
+- HZB traversal
+- compaction of unresolved rays
+- software/HWRT fallback
+- Surface Cache or hit-lighting radiance
+- optional radiance-cache fallback for rough reflections
+- screen-space reconstruction using neighboring rays
+- temporal filtering
+- firefly/intensity controls
+- bilateral filtering
+- history rejection
+- far-field handling
+
+
+17.1 SCREEN-FIRST REFLECTION TRACES
+----------------------------------
+
+Source behavior inspected:
+
+- screen traces enabled
+- HZB max iterations around 50
+- relative depth thickness around 0.005
+- trace compaction uses WaveOps
+- compaction group size around 16 trace tiles
+- SceneColor can be sampled at valid near-screen hits to reduce handoff holes
+- distant screen traces can extend where near representation misses
+
+Again the pattern is cheap first, compact misses, expensive fallback later.
+
+
+17.2 ROUGHNESS AND TRACE COST
+-----------------------------
+
+Lumen has explicit max-roughness controls and roughness fades.
+
+Very rough reflections contain low-frequency information. It is wasteful to trace them with the same distance/resolution as a near-mirror reflection.
+
+The optional reflection Radiance Cache path demonstrates the intended optimization:
+
+- above a minimum roughness, reflection rays can be shortened;
+- distant lighting comes from Radiance Cache interpolation;
+- trace length transitions with roughness;
+- stochastic probe interpolation can hide structured cache interpolation.
+
+Source-literal values from the inspected reflection Radiance Cache controls include approximately:
+
+- minimum roughness = 0.2
+- maximum transition roughness = 0.35
+- short/long trace distances around 1000 / 5000 depending roughness
+- roughness fade length around 0.05
+- reprojection radius scale around 10
+
+The feature is source-disabled by default in the inspected path, so treat it as an available optimization, not an always-on default.
+
+
+17.3 REFLECTION DENOISING / RECONSTRUCTION
+------------------------------------------
+
+Source-literal behavior inspected:
+
+- temporal filter enabled
+- maximum accumulated frames around 12
+- neighborhood history clamp
+- history distance threshold around 0.03
+- screen-space BRDF reconstruction enabled
+- around 5 reconstruction samples
+- reconstruction kernel radius around 8 pixels
+- bilateral filter enabled
+- around 4 bilateral samples
+- bilateral depth weight scale around 10000
+- stronger filtering for recent disocclusion
+- maximum ray intensity around 40
+- denoiser tonemap range around 10
+
+These filters are material/depth aware. A generic box/gaussian blur will destroy reflection boundaries and mix unrelated surfaces.
+
+
+17.4 HWRT REFLECTION MODES
+--------------------------
+
+The hardware reflection path has distinct passes for:
+
+- default/near field
+- far field
+- hit lighting
+
+Important source behavior:
+
+- HWRT reflections enabled when platform/project allows
+- ray bias and normal bias around 0.1
+- material bucketing enabled for coherent secondary access
+- far-field contribution enabled
+- full hit-lighting extra pass is not the cheapest default
+- Shader Execution Reordering is used where the hit-lighting pass benefits
+- recursive reflection/refraction support is tied to expensive hit-lighting paths
+
+The important lesson is to keep the default reflection path lean and only promote rays needing full hit shading.
+
+
+18. REFLECTIVITY AND THE UE BRDF
+===============================
+
+Primary shader paths:
+
+Engine/Shaders/Private/BRDF.ush
+Engine/Shaders/Private/ShadingModels.ush
+Engine/Shaders/Private/DeferredShadingCommon.ush
+Engine/Shaders/Private/ShadingEnergyConservation.ush
+Engine/Shaders/Private/RectLight.ush
+Engine/Shaders/Private/AreaLightCommon.ush
+
+UE's material realism is not only a better reflection tracer. The local BRDF itself is more complete than the current CrapGame approximation.
+
+
+18.1 MICROFACET MODEL
+---------------------
+
+The physically based specular framework is the standard microfacet decomposition:
+
+    specular = D * G * F / (4 * NoL * NoV)
+
+UE often expresses the geometry denominator as a visibility term:
+
+    Vis = G / (4 * NoL * NoV)
+
+and evaluates:
+
+    D * Vis * F
+
+Core components include:
+
+- GGX / Trowbridge-Reitz normal distribution
+- anisotropic GGX
+- Smith joint visibility/masking-shadowing variants
+- Schlick Fresnel
+- roughness-driven microfacet alpha
+
+In the legacy DefaultLit path, the GGX NDF receives a roughness-derived alpha-squared equivalent to roughness^4.
+
+
+18.2 DIELECTRIC / METAL / SPECULAR COLOR
+----------------------------------------
+
+The GBuffer stores material quantities including:
+
+- BaseColor
+- Metallic
+- Specular
+- Roughness
+- derived DiffuseColor
+- derived SpecularColor
+- normal
+- tangent/anisotropy when present
+- AO-related data
+- shading model/custom channels
+
+Dielectrics use a low F0 and colored metals move reflectance into the conductor/specular term while diffuse goes away.
+
+CrapGame already has IOR->F0, metallic mixing and Schlick Fresnel, which is directionally correct, but matching UE requires matching the energy handling and area-light behavior too.
+
+
+18.3 ENERGY PRESERVATION / MULTIPLE-SCATTERING COMPENSATION
+----------------------------------------------------------
+
+UE DefaultLit does not simply add Lambert diffuse plus single-scatter GGX.
+
+The direct-light path computes energy terms and:
+
+- attenuates diffuse according to energy captured by the specular layer;
+- boosts/compensates the specular response for microfacet multiple scattering.
+
+This prevents rough materials from losing too much energy or diffuse+specular from summing incorrectly.
+
+CrapGame's current direct shader has a simple `(1-F)*(1-metallic)` diffuse weight and a single GGX lobe. That is not equivalent.
+
+For a close replica, implement UE-equivalent energy preservation/compensation or a numerically matching approximation validated against reference renders.
+
+
+18.4 AREA LIGHTS
+----------------
+
+UE modifies the BRDF response according to light source extent rather than pretending every light is a point and blurring the final image.
+
+Relevant mechanisms include:
+
+- finite spherical/directional source-angle handling
+- roughness/half-vector broadening for finite sources
+- energy normalization
+- line/rect source handling
+- LTC approximation for rect-light GGX specular
+
+This is separate from VSM penumbra generation. Realistic area lights need both:
+
+- finite-source visibility/shadowing
+- finite-source specular/diffuse shading
+
+Implementing only soft shadows while leaving point-light BRDF evaluation will still not match UE.
+
+
+18.5 SUBSTRATE
+--------------
+
+UE 5.8 is increasingly centered around Substrate. Several legacy shading-model functions in ShadingModels.ush are marked deprecated since 5.7, but remain useful for understanding compatible/default-lit behavior and some simplified Lumen paths.
+
+A full exact-material replica eventually needs a layer/closure architecture rather than endlessly adding flags to one monolithic `evaluateMaterialPbr()`.
+
+For CrapGame this can be staged:
+
+1. exact DefaultLit parity first;
+2. clear coat and anisotropy parity;
+3. subsurface/transmission/foliage;
+4. layered closures if required.
+
+Do not block shadow/GI work on full Substrate parity.
+
+
+19. ReSTIR GATHER IN UE 5.8
+===========================
+
+Primary path:
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReSTIRGather.cpp
+
+UE 5.8 contains a ReSTIR-based Lumen gather implementation. The inspected source has:
+
+- downsample factor = 2
+- temporal reservoir resampling enabled
+- spatial reservoir resampling enabled
+- two spatial passes
+- four spatial samples per pass
+- normal-angle compatibility threshold around 25 degrees
+- depth compatibility threshold around 0.01
+- screen-space occlusion validation for neighbor reservoir reuse
+- upsampling via a spiral pattern
+- around 16 samples for spiral upsampling
+- temporal filtering
+- bilateral filtering
+- short-range AO enabled to restore contact detail lost by spatial resampling
+
+The normal default Lumen final-gather selector inspected still points to Screen Probe Gather, so do not make ReSTIR a prerequisite for basic UE parity.
+
+Treat it as a later/high-end path after VSM, Surface Cache, Screen Probe Gather and Radiance Cache are correct.
+
+
+20. WHY UE CAN AFFORD THIS
+==========================
+
+The renderer looks expensive when individual algorithms are listed in isolation. The complete architecture explains why it works.
+
+20.1 Persistence
+----------------
+
+Persistent data includes:
+
+- VSM physical pages
+- VSM page tables/cache state
+- Surface Cache pages
+- Surface Cache lighting
+- Radiance Cache probes/atlases
+- Screen Probe history
+- reflection history
+- radiosity history
+
+The engine pays for changes, not full reconstruction every frame.
+
+20.2 Sparse updates
+-------------------
+
+Examples:
+
+- only requested/invalid VSM pages render
+- only a fraction of Surface Cache direct-light texels update
+- only a fraction of radiosity texels update
+- only a limited Radiance Cache probe budget updates
+- adaptive Screen Probes add density only where needed
+
+20.3 Hierarchical cheap-to-expensive tracing
+--------------------------------------------
+
+- screen/HZB first
+- compact misses
+- SDF/world representation second
+- compact misses
+- HWRT/far field for the remainder
+
+20.4 Wave-level early exits
+---------------------------
+
+SMRT and several tracing paths use wave-level coherence to stop work in uniform regions.
+
+20.5 Indirect dispatch
+----------------------
+
+Compaction buffers produce dispatch arguments so expensive kernels launch for actual unresolved work rather than full screen dimensions.
+
+20.6 Lower resolution where frequency allows it
+-----------------------------------------------
+
+- Screen Probes are much lower resolution than the screen
+- radiosity is probe based
+- Radiance Cache is world-space probe based
+- rough reflections can use reduced/shorter representations
+- Surface Cache diffuse can use lower-res pages than specular
+
+20.7 Full-resolution detail restored separately
+------------------------------------------------
+
+- VSM preserves direct shadow edge detail
+- screen traces use current visible geometry
+- short-range AO/bent normal restores local indirect contact detail
+- final material shading remains at screen resolution
+
+20.8 Compact formats
+--------------------
+
+UE deliberately uses formats such as R11G11B10, BC5/6H/7, RG8 and G16 where precision allows.
+
+20.9 Async compute
+------------------
+
+Lumen Scene lighting and several Lumen stages are designed to run on async compute when the RHI/GPU can overlap them efficiently with graphics work.
+
+
+21. CURRENT CRAPGAME VS UE: DIRECT GAP TABLE
+============================================
+
+Feature                         CrapGame now                          UE 5.8 reference
+-------------------------------------------------------------------------------------------------
+Directional shadow storage      One 2048 map                         Virtual 16K address space/pages
+Physical allocation             Whole map                            Demand-mapped 128x128 pages
+Directional coverage            Whole-scene ortho bounds             View-centered clipmaps
+Shadow cache                    One static texture                   Persistent per-page static/dynamic cache
+Invalidation                    coarse revision/cache                per-page selective invalidation
+Visible-page request            no                                   yes
+Receiver mask                   no                                   yes
+Nanite/page caster culling      no                                   yes
+Dynamic resolution pressure     no equivalent                        page/compute pressure LOD bias
+Soft-shadow model               fixed PCF / binary BVH               finite-source SMRT / RT paths
+Contact hardening               no                                   yes
+Blocker distance                no                                   yes
+Source-disk sampling            no                                   yes
+Adaptive shadow samples         no                                   yes, wave-level early out
+Smart screen bias               no equivalent                        short screen ray before SMRT
+Slope-aware shadow trace        no                                   yes
+Temporal shadow dithering       minimal/no equivalent                yes
+Direct BRDF energy compensation no                                   yes
+Rect-light LTC                  no                                   yes
+Surface Cache cards             partial custom implementation        core Lumen representation
+Surface Cache feedback          limited/custom                       yes
+Partial light updates           custom/partial                       explicit direct/radiosity budgets
+Screen Probe data               one RGB average/probe                directional octahedral radiance
+Adaptive Screen Probes          no equivalent                        yes
+Probe temporal reprojection     not UE-equivalent                    yes
+Trace compaction cascade        partial/custom                       core design
+Radiance Cache clipmaps         custom                               persistent 4-clipmap system
+Radiosity                       custom                               Surface Cache multibounce
+Reflection reconstruction       custom                               BRDF reconstruction + temporal/bilateral
+HWRT minimal payload policy     custom BVH                           explicit surface-cache/hit-light modes
+Short-range bent normal/AO      simple visibility multiplier         dedicated high-frequency layer
+
+
+22. EXACT-REPLICA IMPLEMENTATION ORDER FOR CRAPGAME
+====================================================
+
+Do not attempt to change every renderer subsystem simultaneously. The order below preserves the current strong performance baseline while replacing the visually incorrect pieces first.
+
+
+PHASE 0 - SEPARATE SIGNALS
+--------------------------
+
+Required before visual tuning:
+
+- direct visibility/shadow factor is its own buffer/value
+- direct diffuse/specular are separate from GI
+- indirect diffuse is separate
+- reflection/specular indirect is separate
+- short-range AO/bent-normal is separate
+- Surface Cache direct lighting is not confused with screen direct shadowing
+
+Remove arbitrary global darkening used to make one subsystem compensate for another.
+
+Acceptance:
+- turning GI off leaves correct direct VSM shadows
+- turning direct light off leaves only indirect illumination
+- turning short-range AO off changes only local indirect contact detail
+
+
+PHASE 1 - VSM DATA STRUCTURE
+----------------------------
+
+Implement a minimal UE-shaped VSM:
+
+- 128 x 128 physical page size
+- high-resolution virtual page address space
+- page table
+- physical page pool
+- per-page metadata
+- page request bitset/list
+- per-frame page allocator
+- page age/cache state
+- page clear/render lists
+
+Start with directional light only.
+
+Do not initially implement all UE light types.
+
+Acceptance:
+- camera can address higher effective shadow resolution than 2048
+- physical memory remains bounded
+- only visible/requested pages allocate
+
+
+PHASE 2 - DIRECTIONAL CLIPMAPS
+------------------------------
+
+Replace whole-scene orthographic fitting with view-centered clipmap levels.
+
+Required:
+
+- projection-scale-based LOD selection
+- stable snapped origin
+- page-space camera translation reuse
+- near levels high resolution
+- far levels coarse
+- configurable first/last level
+- debug color for clipmap level
+
+Acceptance:
+- near contact shadow texel footprint remains stable when distant scene geometry is added
+- moving camera does not shimmer from arbitrary light-frustum resizing
+
+
+PHASE 3 - VSM PAGE CACHE / INVALIDATION
+---------------------------------------
+
+Implement:
+
+- persistent pages
+- static vs dynamic caster tracking
+- per-page caster overlap
+- page invalidation on transform/material/opacity/light changes
+- page remap for clipmap translation
+- page age/LRU
+- optional HZB/visibility suppression of invalidation later
+
+Acceptance:
+- static camera/static scene renders almost no new shadow pages after warm-up
+- moving one small object invalidates only nearby affected pages
+
+
+PHASE 4 - SMRT SOFT SHADOW PROJECTION
+-------------------------------------
+
+This is the visual turning point.
+
+Implement UE-shaped directional SMRT:
+
+- finite directional source radius
+- deterministic frame/pixel low-discrepancy random samples
+- around 7 source rays as baseline target
+- around 8 VSM depth samples per ray baseline target
+- world->shadow ray-state conversion
+- best mapped clipmap selection at receiver
+- ray length tied to view distance
+- depth-slope handling
+- bounded occluder extrapolation
+- texel dither
+- visibility = unoccluded source-ray fraction
+- blocker/occluder distance output
+
+Acceptance scenes:
+
+A. cube touching floor
+- shadow must be sharp at contact
+- must soften away from contact
+
+B. same cube raised progressively
+- penumbra must widen monotonically
+
+C. light source radius increase
+- wider penumbra without changing blocker geometry
+
+D. source radius -> zero
+- converges toward hard VSM shadow
+
+A fixed PCF result must fail these tests so regression cannot silently revert to it.
+
+
+PHASE 5 - ADAPTIVE SMRT PERFORMANCE
+-----------------------------------
+
+After visual correctness:
+
+- wave ballot/all-true/all-false tests
+- early exit fully lit regions
+- early exit stable umbra regions after minimum evidence
+- static common sample-count shader variants where useful
+- penumbra tile classification
+- optional 8 x 8 tile list projection
+
+Measure:
+
+- average rays/pixel
+- average depth samples/ray
+- percent pixels early-out after first ray
+- percent pixels using maximum count
+- GPU time by penumbra coverage
+
+Goal: preserve near-current performance in normal scenes by paying maximum sampling only near soft edges.
+
+
+PHASE 6 - UE-STYLE SHADOW BIAS
+------------------------------
+
+Replace scattered fixed constants with:
+
+- texel-footprint-aware normal bias
+- receiver depth/slope bias
+- short screen-space smart-bias trace
+- separate SDF/BVH/VSM bias policies
+- debug visualization of effective receiver offset
+
+Acceptance:
+- normal maps do not create shadow acne
+- thin geometry remains attached
+- no large peter-panning at grazing light angles
+
+
+PHASE 7 - DIRECT BRDF PARITY
+----------------------------
+
+Implement/validate:
+
+- GGX NDF parity
+- Smith joint visibility parity
+- Schlick Fresnel
+- UE-equivalent dielectric/metal SpecularColor mapping
+- energy preservation on diffuse
+- multiple-scatter/energy compensation on specular
+- anisotropic GGX
+- clear coat parity
+- finite source area-light treatment
+- LTC rect-light specular
+
+Build a material sphere test matrix over:
+
+- roughness 0.0..1.0
+- metallic 0/1
+- dielectric F0/specular values
+- source radius
+- view angle
+
+Compare numerically/image-wise against UE reference captures.
+
+
+PHASE 8 - SURFACE CACHE PARITY
+------------------------------
+
+CrapGame already has Surface Cache concepts, but move toward UE's page/card model:
+
+- albedo/normal/emissive/depth card layers
+- persistent page table
+- low-res diffuse + high-res specular mips
+- lighting atlases
+- feedback
+- age/dirty priority
+- compressed/compact formats
+- partial updates
+
+Do not make Surface Cache shadowing replace direct screen VSM shadows.
+
+
+PHASE 9 - LUMEN SCENE LIGHTING BUDGETS
+---------------------------------------
+
+Add UE-shaped work scheduling:
+
+- direct update budget around 1/32 as starting reference
+- radiosity update budget around 1/64 as starting reference
+- feedback priority
+- near-frustum priority
+- dirty-light/material boost
+- async compute if lwcgl/OpenGL path can overlap meaningfully; otherwise preserve same dependency structure without pretending async exists
+
+
+PHASE 10 - SCREEN PROBE DIRECTIONAL REPRESENTATION
+--------------------------------------------------
+
+Replace scalar averaged ScreenProbeSample.indirect with an octahedral directional atlas.
+
+Starting reference:
+
+- probe tile spacing around 16 pixels
+- 8 x 8 direction layout
+- directional radiance + hit distance/validity
+- geometry-aware integration at receiver
+- adaptive probes around discontinuities
+
+Remove hard-coded `*0.35` and `*0.20` energy scales once physically based integration is available.
+
+
+PHASE 11 - TEMPORAL SCREEN PROBES
+---------------------------------
+
+Implement:
+
+- previous-frame probe history
+- motion-vector reprojection
+- depth/normal rejection
+- frame-count history confidence
+- moving-object faster update
+- rotating/jittered ray direction sets
+
+Target approximately 10 useful history frames for stable regions, matching the inspected UE scale rather than blindly hard-coding it.
+
+
+PHASE 12 - TRACE COMPACTION CASCADE
+-----------------------------------
+
+Implement GPU work queues:
+
+- screen/HZB trace
+- compact misses
+- BVH/SDF-like near trace
+- compact misses
+- expensive world/far trace
+- radiance cache/sky resolution
+
+Use SSBO append/atomic counters + indirect dispatch.
+
+This is more important for performance than micro-optimizing individual ray-triangle math.
+
+
+PHASE 13 - RADIANCE CACHE PARITY
+--------------------------------
+
+Use the UE defaults as a reference starting shape:
+
+- 4 world clipmaps
+- geometric extent growth around x2
+- grid around 48^3 logical positions where practical
+- directional probe representation
+- limited update budget around 100 probes/frame
+- persistent atlas
+- reprojection and age
+- priority from Screen Probe/reflection demand
+
+Exact dimensions may need adjustment for OpenGL memory limits, but preserve the sparse budgeted architecture.
+
+
+PHASE 14 - RADIOSITY / MULTIBOUNCE
+----------------------------------
+
+Build multi-bounce diffuse from Surface Cache lighting rather than recursive per-screen-pixel paths.
+
+Use:
+
+- sparse probes over card texels
+- low direction count per update
+- spatial/plane-aware filtering
+- temporal accumulation
+- bounded ray intensity
+
+
+PHASE 15 - REFLECTION PIPELINE PARITY
+-------------------------------------
+
+Required order:
+
+- screen trace first
+- compact misses
+- BVH/world trace
+- Surface Cache radiance at hit
+- optional full hit lighting for high-value mirror rays
+- roughness-aware trace distance/resolution
+- BRDF reconstruction
+- temporal history
+- bilateral filter
+- firefly control
+
+Do not use the Radiance Cache for sharp mirrors. Use it only where roughness makes low-frequency distant radiance acceptable.
+
+
+PHASE 16 - SHORT-RANGE AO / BENT NORMAL
+---------------------------------------
+
+Once coarse GI is correct, restore local directional occlusion with a dedicated full-resolution short-range pass.
+
+Do not multiply every indirect pixel by a large arbitrary constant-range AO term. Make the pass directional/depth/normal aware and constrain its spatial range.
+
+
+PHASE 17 - OPTIONAL HIGH-END HWRT / ReSTIR
+------------------------------------------
+
+Only after the baseline architecture works:
+
+- full hit lighting for reflection rays
+- far-field RT
+- material bucketing / ray sorting
+- ReSTIR gather/reservoir reuse
+- short-range validation traces
+
+These are not required to solve the current fake direct shadows.
+
+
+23. PERFORMANCE REQUIREMENTS FOR THE REPLICA
+============================================
+
+The implementation should be rejected if visual parity is achieved by brute force.
+
+Required performance invariants:
+
+1. Shadow page work scales with visible/dirty pages, not total scene area.
+2. Static scenes reach near-zero shadow raster work after cache warm-up.
+3. Soft-shadow ray cost scales with penumbra uncertainty, not all pixels.
+4. Screen traces run before BVH/world fallbacks.
+5. Misses are compacted before expensive trace stages.
+6. Surface Cache lighting is budgeted across frames.
+7. Radiance Cache updates are budgeted across frames.
+8. GI/reflection history is temporally reused.
+9. Rough effects use lower-frequency representations when visually valid.
+10. Full-resolution work is reserved for visible detail/contact/final shading.
+11. Texture/intermediate formats are bandwidth-conscious.
+12. Every cache has visible diagnostics: hit rate, miss rate, invalidation count, update count, overflow.
+
+
+24. DIAGNOSTICS TO ADD BEFORE TUNING
+====================================
+
+Add debug render modes corresponding to UE concepts:
+
+VSM:
+- requested virtual page
+- physical page ID
+- clipmap level
+- cached vs newly rendered page
+- static vs dynamic page
+- page age
+- receiver mask
+- page pool occupancy
+
+SMRT:
+- rays used per pixel
+- samples per ray
+- early-out reason
+- occluder distance
+- source sample direction
+- penumbra width estimate
+- receiver normal/slope bias
+- screen-ray smart-bias distance
+
+Lumen:
+- Surface Cache card/page ID
+- Surface Cache albedo/normal/emissive/depth
+- Surface Cache direct/indirect/final radiance
+- card age / dirty state / priority
+- Screen Probe placement
+- adaptive probes
+- probe directional octahedron
+- screen trace hit
+- fallback trace hit
+- Radiance Cache clipmap/probe
+- radiosity probe
+- short-range AO/bent normal
+
+Reflections:
+- screen hit
+- BVH/HWRT hit
+- Surface Cache vs hit lighting
+- roughness trace budget
+- history weight
+
+Without these modes it is too easy to tune one artifact while hiding another.
+
+
+25. REFERENCE DEFAULTS / SOURCE-LITERAL VALUES
+==============================================
+
+These values were read from xt9y/UE branch release during this audit. They are useful starting references, not guarantees of effective project runtime values because UE config/scalability/platform code can override them.
+
+VSM
+---
+Physical page size                         128 x 128
+Virtual level max dimension               16384 x 16384
+Level-0 page dimension                    128 x 128 pages
+Physical page pool                        2048 pages
+Receiver mask                             8 x 8
+Cache                                     enabled
+Normal bias                               0.5
+Screen smart-bias ray length              0.015
+SMRT adaptive ray count                   enabled
+SMRT directional rays                     7
+SMRT directional samples/ray              8
+SMRT local rays                           7
+SMRT local samples/ray                    8
+SMRT directional extrapolate max slope    5.0
+SMRT local extrapolate max slope          0.05
+SMRT directional ray length scale         1.5
+Directional first clipmap level           6
+Directional last clipmap level            22
+First coarse clipmap level                15
+Last coarse clipmap level                 18
+Directional clipmap Z range scale         1000
+VSM cache page max age                     1000 frames
+Dynamic resolution max LOD bias           ~2.0
+Page-pool pressure threshold              ~0.85
+
+Lumen core / Surface Cache
+--------------------------
+Async compute                             enabled where supported
+Wave operations                           enabled
+Default fast lighting data                R11G11B10-class path
+Surface Cache runtime compression         enabled where supported
+Surface Cache minimum Mesh Card size      ~10 world units
+Merged card resolution scale              ~0.3
+Direct Surface Cache update factor        32
+Radiosity Surface Cache update factor     64
+
+Screen Probe Gather
+-------------------
+Uniform probe downsample factor           ~16
+Tracing octahedron resolution             ~8
+Nominal directions/probe                  64
+Adaptive probes                           enabled/available
+Temporal accumulation                     enabled
+Typical max accumulated frames            ~10
+Spatial filtering                         enabled
+
+Radiance Cache
+--------------
+Enabled                                   yes
+Clipmaps                                  4
+First clipmap world extent                2500
+Clipmap distribution base                 2.0
+Grid resolution                           48
+Probe trace budget                        100/frame
+Probe directional resolution              32 x 32
+Probe atlas dimension                     128 probes
+Reprojection radius scale                 1.5
+Unused probe keep time                    8 frames
+
+Radiosity
+---------
+Enabled                                   yes
+Probe spacing                             4 Surface Cache texels
+Hemisphere resolution                     4
+Nominal directions/probe                  16
+Spatial filtering                         enabled
+Temporal accumulation                     enabled
+Max accumulated frames                    4
+Max ray intensity                         40
+
+Reflections
+-----------
+Allowed                                   yes
+Screen traces                             enabled
+HZB max iterations                        ~50
+TraceMeshSDFs                             enabled
+Screen-space BRDF reconstruction          enabled
+Reconstruction samples                    5
+Reconstruction kernel                     ~8 px
+Temporal filter                           enabled
+Max accumulated frames                    ~12
+Bilateral filter                          enabled
+Bilateral samples                         4
+Bilateral kernel                          ~8 px
+Max ray intensity                         ~40
+HWRT reflections                          enabled where supported
+HWRT material bucketing                   enabled
+HWRT far field                            enabled
+
+ReSTIR Gather (available path)
+------------------------------
+Downsample factor                         2
+Temporal reservoir resampling             enabled
+Spatial reservoir resampling              enabled
+Spatial passes                            2
+Samples/pass                              4
+Upsample spiral samples                   16
+Temporal filter                           enabled
+Bilateral filter                          enabled
+Short-range AO                            enabled
+
+
+26. UE SOURCE MAP FOR FUTURE WORK
+=================================
+
+Direct / VSM shadowing
+----------------------
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapArray.cpp
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapArray.h
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapCacheManager.cpp
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapCacheManager.h
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapClipmap.cpp
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapClipmap.h
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapProjection.cpp
+Engine/Source/Runtime/Renderer/Private/VirtualShadowMaps/VirtualShadowMapProjection.h
+Engine/Shaders/Shared/VirtualShadowMapDefinitions.h
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapProjection.usf
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapProjectionCommon.ush
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapProjectionDirectional.ush
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapProjectionSpot.ush
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapSMRTCommon.ush
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapSMRTTemplate.ush
+Engine/Shaders/Private/VirtualShadowMaps/VirtualShadowMapPageAccessCommon.ush
+
+Lumen core
+----------
+Engine/Source/Runtime/Renderer/Private/Lumen/Lumen.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/Lumen.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenTracingUtils.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenTracingUtils.h
+
+Surface Cache / cards
+---------------------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSurfaceCache.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSurfaceCacheFeedback.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenMeshCards.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenMeshCards.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneCardCapture.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneData.h
+Engine/Shaders/Private/Lumen/SurfaceCache/
+
+Lumen scene lighting
+--------------------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneLighting.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneLighting.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneDirectLighting.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneDirectLightingHardwareRayTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenSceneDirectLightingStochastic.inl
+
+Screen probes / final gather
+----------------------------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeGather.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeGather.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeFiltering.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeImportanceSampling.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenProbeHardwareRayTracing.cpp
+
+Radiance Cache
+--------------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadianceCache.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadianceCache.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadianceCacheHardwareRayTracing.cpp
+
+Radiosity
+---------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadiosity.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenRadiosity.h
+
+Reflections
+-----------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReflections.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReflections.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReflectionTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReflectionHardwareRayTracing.cpp
+
+Hardware RT
+-----------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenHardwareRayTracingCommon.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenHardwareRayTracingCommon.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenHardwareRayTracingMaterials.cpp
+
+Short-range AO / bent normal
+----------------------------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenShortRangeAO.h
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenShortRangeAOHardwareRayTracing.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenScreenSpaceBentNormal.cpp
+
+ReSTIR
+------
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReSTIRGather.cpp
+Engine/Source/Runtime/Renderer/Private/Lumen/LumenReSTIRGather.h
+
+BRDF / materials / reflectivity
+-------------------------------
+Engine/Shaders/Private/BRDF.ush
+Engine/Shaders/Private/ShadingModels.ush
+Engine/Shaders/Private/DeferredShadingCommon.ush
+Engine/Shaders/Private/ShadingEnergyConservation.ush
+Engine/Shaders/Private/RectLight.ush
+Engine/Shaders/Private/AreaLightCommon.ush
+Engine/Shaders/Private/TransmissionCommon.ush
+
+
+27. CURRENT CRAPGAME SOURCE AREAS THAT MUST CHANGE
+==================================================
+
+Direct shadow architecture
+--------------------------
+Sources/Renderer/Gpu/StaticShadowPolicy.hpp
+Sources/Renderer/Gpu/StaticShadowShader.hpp
+Sources/Renderer/Gpu/StaticShadowCacheGpu.cpp
+Sources/Renderer/Gpu/StaticShadowCacheGpu.hpp
+Sources/Renderer/Gpu/DirectLightingShader.hpp
+Sources/Renderer/Gpu/DirectLightingImportedShader.hpp
+Sources/Renderer/Gpu/ShadowTriangleShader.hpp
+Sources/Renderer/Gpu/TraceGeometryGpu.cpp
+Sources/Renderer/Gpu/TraceGeometryGpu.hpp
+Sources/Renderer/Shadows/Shadows.cpp
+
+Lumen / GI
+----------
+Sources/Renderer/Lumen/SurfaceCache.cpp/.hpp
+Sources/Renderer/Lumen/RadianceCache.cpp/.hpp
+Sources/Renderer/Lumen/ScreenProbe.cpp/.hpp
+Sources/Renderer/Lumen/Radiosity.cpp/.hpp
+Sources/Renderer/Lumen/Tracer.cpp/.hpp
+Sources/Renderer/Lumen/ScreenTrace.cpp/.hpp
+Sources/Renderer/Lumen/Reflections.cpp/.hpp
+Sources/Renderer/Lumen/ShortRangeAo.hpp and related paths
+
+Material / reflectivity
+-----------------------
+Sources/Renderer/Gpu/DirectLightingShader.hpp
+Sources/Renderer/Gpu/ViewSpecularGpu.cpp/.hpp
+GBuffer material packing and model-loader material mapping
+
+Do not keep extending `StaticShadowShader.hpp` until it turns into a giant pseudo-VSM. Add a dedicated VSM directory/module and leave the old static cache as a temporary fallback/reference during migration.
+
+Suggested shape:
+
+Sources/Renderer/Shadows/
+    Virtual/
+        VirtualShadowMap.hpp/.cpp
+        VirtualShadowPageTable.hpp/.cpp
+        VirtualShadowPagePool.hpp/.cpp
+        VirtualShadowClipmap.hpp/.cpp
+        VirtualShadowCache.hpp/.cpp
+        VirtualShadowMarkPagesGpu.hpp/.cpp
+        VirtualShadowRasterGpu.hpp/.cpp
+        VirtualShadowProjectGpu.hpp/.cpp
+        VirtualShadowSmrtShader.hpp
+        VirtualShadowPolicy.hpp
+        VirtualShadowStats.hpp
+
+Keep the external call surface minimal. Renderer should ask the subsystem to:
+
+- prepare/update light shadow state
+- render requested/dirty pages
+- project visibility
+- expose visibility/debug textures + stats
+
+The caller should not manage page-table internals.
+
+
+28. TESTS REQUIRED FOR UE PARITY
+================================
+
+Shadow correctness
+------------------
+
+1. Contact-hardening test
+   - blocker touching receiver
+   - blocker at 0.25, 0.5, 1, 2 world-unit separation
+   - measured penumbra must increase with separation
+
+2. Source-radius test
+   - identical scene, increasing source angle/radius
+   - penumbra width must increase
+
+3. Clipmap stability test
+   - move camera slowly through scene
+   - no periodic large resolution jumps/shimmer
+
+4. Cache test
+   - static frame after warm-up requests/renders near-zero new pages
+
+5. Local invalidation test
+   - move one caster
+   - only overlapping pages invalidate
+
+6. Scene-bounds independence
+   - add far-away geometry
+   - near shadow resolution remains materially unchanged
+
+7. Grazing-angle bias test
+   - sloped plane under low-angle light
+   - no acne/peter-panning explosion
+
+8. Alpha-mask test
+   - foliage/fence mask produces correct caster detail
+
+GI correctness
+--------------
+
+9. White room diffuse bounce
+10. Red-wall color bleed
+11. narrow doorway indirect transfer
+12. off-screen lit surface reflected into visible room
+13. thin occluder leak test
+14. moving emissive history rejection
+15. Surface Cache invalidation after material change
+
+Reflection correctness
+----------------------
+
+16. mirror plane
+17. roughness sweep
+18. off-screen reflected object
+19. screen-to-BVH handoff continuity
+20. disocclusion history rejection
+21. firefly/high-intensity test
+
+Material correctness
+--------------------
+
+22. dielectric roughness sweep
+23. metallic roughness sweep
+24. anisotropy rotation
+25. clear coat layered energy
+26. rect light LTC comparison
+27. finite source specular broadening
+
+Performance contracts
+---------------------
+
+28. VSM page count budget
+29. shadow cache hit ratio
+30. average SMRT rays/pixel
+31. average SMRT samples/ray
+32. expensive trace fallback percentage
+33. Surface Cache texels updated/frame
+34. Radiance Cache probes updated/frame
+35. Screen Probe trace count
+36. history acceptance/rejection ratio
+37. GPU time per subsystem
+
+Every visual test should have a performance counter beside it. UE's architecture is defined by both quality and bounded work.
+
+
+29. THE SINGLE MOST IMPORTANT NEXT CHANGE
+=========================================
+
+Do not tune the current 2048 shadow PCF.
+
+Implement directional VSM clipmaps + page caching first, then replace fixed PCF projection with SMRT finite-source visibility.
+
+That directly addresses the visible fake-shadow problem while preserving the user's current performance target through:
+
+- sparse physical pages
+- cached page reuse
+- receiver-driven allocation
+- adaptive rays only near penumbrae
+- wave-level early exits
+- screen-space smart bias
+
+Only after that should the current Screen Probe GI constants be re-tuned/replaced. Otherwise GI tuning will be performed underneath an incorrect direct-shadow model and the renderer will keep compensating one incorrect subsystem with another.
+
+
+30. FINAL ARCHITECTURAL RULES
+=============================
+
+1. A shadow map is a visibility representation, not a blur texture.
+2. Softness comes from source extent + blocker geometry, not a constant PCF radius.
+3. Virtualize resolution so visible receivers get detail independent of total scene bounds.
+4. Cache physical pages and invalidate locally.
+5. Separate direct visible shadows from Lumen Surface Cache shadowing.
+6. Separate direct shadows from short-range indirect AO.
+7. Preserve directional radiance in Screen Probes; do not collapse it to one RGB average too early.
+8. Trace screen/HZB first and compact misses before expensive geometry paths.
+9. Cache scene lighting so secondary rays do not run the entire material/light pipeline.
+10. Budget Surface Cache and Radiance Cache updates over time.
+11. Use full-resolution passes only for information that truly needs full resolution.
+12. Use GGX/Smith/Fresnel with energy preservation/compensation, not additive lobes that lose/gain energy.
+13. Model finite light size in both visibility and BRDF response.
+14. Treat temporal reuse as part of the algorithm, not as a post-process afterthought.
+15. Every quality feature needs a bounded-work strategy and counters.
+16. Do not copy Unreal source code verbatim. Reproduce the architecture, equations, data flow and behavior in CrapGame's own implementation.
+
+If these rules are followed, CrapGame can approach the visual behavior that makes UE5 shadows, GI and reflections look coherent while keeping the performance characteristics that make Lumen/VSM practical rather than turning the renderer into a brute-force path tracer.
