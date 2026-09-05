@@ -4,9 +4,8 @@
 #include "Renderer/Gpu/GBufferReconstruct.hpp"
 #include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Gpu/ResourceLifecycle.hpp"
+#include "Renderer/Gpu/SmrtShadowGpu.hpp"
 #include "Renderer/Gpu/StaticDirectSplitPolicy.hpp"
-#include "Renderer/Gpu/StaticShadowCacheGpu.hpp"
-#include "Renderer/Gpu/StaticShadowShader.hpp"
 
 namespace Renderer
 {
@@ -25,21 +24,18 @@ layout(binding=1) uniform sampler2D sNormalRoughness;
 layout(binding=2) uniform sampler2D sAlbedoMetallic;
 layout(binding=3) uniform sampler2D sEmissive;
 layout(binding=4) uniform sampler2D sAmbientTransmission;
-layout(binding=6) uniform sampler2D sStaticShadow;
+layout(binding=6) uniform sampler2D sSmrtVisibility;
 layout(rgba16f,binding=0) writeonly uniform image2D oStaticDiffuse;
 struct LightData{vec4 positionType;vec4 directionRange;vec4 colorIntensity;vec4 coneShadow;};
 layout(std430,binding=8) readonly buffer LightBuffer{LightData lights[];};
 uniform int uStaticLightIndex;
-uniform int uStaticShadowEnabled;
-uniform mat4 uStaticShadowViewProjection;
 uniform mat4 uGBufferInverseViewProjection;
 const float PI=3.14159265358979323846;
-const float EPSILON=0.00001;
 )GLSL";
     const char *body=R"GLSL(
-void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=imageSize(oStaticDiffuse);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;float depth=texelFetch(sDepth,pixel,0).r;if(!gbufferDepthValid(depth)){imageStore(oStaticDiffuse,pixel,vec4(0.055,0.070,0.105,1.0));return;}vec3 position=gbufferReconstructWorld(pixel,dimensions,depth,uGBufferInverseViewProjection);vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0),eo=texelFetch(sEmissive,pixel,0),ambientTransmission=texelFetch(sAmbientTransmission,pixel,0);vec3 normal=normalize(nr.xyz),albedo=am.xyz;float metallic=clamp(am.w,0.0,1.0);vec3 result=eo.xyz+ambientTransmission.rgb*albedo*0.025;if(uStaticLightIndex>=0){LightData light=lights[uStaticLightIndex];if(int(light.positionType.w+0.5)==0){vec3 ld=normalize(-light.directionRange.xyz);float nl=max(dot(normal,ld),0.0);if(nl>0.0){float visibility=(uStaticShadowEnabled!=0&&light.coneShadow.z>0.5)?staticShadowVisibility(position):1.0;vec3 radiance=light.colorIntensity.xyz*light.colorIntensity.w;vec3 lambert=albedo*(1.0-metallic)/PI;result+=lambert*radiance*nl*visibility;}}}imageStore(oStaticDiffuse,pixel,vec4(result,1.0));}
+void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=imageSize(oStaticDiffuse);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;float depth=texelFetch(sDepth,pixel,0).r;if(!gbufferDepthValid(depth)){imageStore(oStaticDiffuse,pixel,vec4(0.055,0.070,0.105,1.0));return;}vec3 position=gbufferReconstructWorld(pixel,dimensions,depth,uGBufferInverseViewProjection);vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0),eo=texelFetch(sEmissive,pixel,0),ambientTransmission=texelFetch(sAmbientTransmission,pixel,0);vec3 normal=normalize(nr.xyz),albedo=am.xyz;float metallic=clamp(am.w,0.0,1.0);vec3 result=eo.xyz+ambientTransmission.rgb*albedo*0.025;if(uStaticLightIndex>=0){LightData light=lights[uStaticLightIndex];if(int(light.positionType.w+0.5)==0){vec3 ld=normalize(-light.directionRange.xyz);float nl=max(dot(normal,ld),0.0);if(nl>0.0){float visibility=light.coneShadow.z>0.5?texelFetch(sSmrtVisibility,pixel,0).r:1.0;vec3 radiance=light.colorIntensity.xyz*light.colorIntensity.w;vec3 lambert=albedo*(1.0-metallic)/PI;result+=lambert*radiance*nl*visibility;}}}imageStore(oStaticDiffuse,pixel,vec4(result,1.0));}
 )GLSL";
-    return std::string(prefix)+GBUFFER_RECONSTRUCT_GLSL+STATIC_SHADOW_VISIBILITY_GLSL+body;
+    return std::string(prefix)+GBUFFER_RECONSTRUCT_GLSL+body;
 }
 
 void setError(std::string *error,const char *message)
@@ -76,11 +72,8 @@ bool StaticDiffuseLightingGpu::init(std::string *error)
     program_=createComputeProgram(shader.c_str(),error);
     if(program_==0)return false;
     static_light_index_location_=GL20.glGetUniformLocation(program_,"uStaticLightIndex");
-    shadow_enabled_location_=GL20.glGetUniformLocation(program_,"uStaticShadowEnabled");
-    shadow_matrix_location_=GL20.glGetUniformLocation(program_,"uStaticShadowViewProjection");
     inverse_view_projection_location_=GL20.glGetUniformLocation(program_,"uGBufferInverseViewProjection");
-    if(static_light_index_location_<0||shadow_enabled_location_<0||shadow_matrix_location_<0
-            ||inverse_view_projection_location_<0)
+    if(static_light_index_location_<0||inverse_view_projection_location_<0)
     {
         setError(error,"GPU static diffuse uniforms are unavailable");shutdown();return false;
     }
@@ -108,22 +101,21 @@ bool StaticDiffuseLightingGpu::validFor(const RevisionState& revisions) const
 }
 
 bool StaticDiffuseLightingGpu::updateIfNeeded(const GBufferGpu& gbuffer,
-                                               const StaticShadowCacheGpu& shadow,
+                                               const SmrtShadowGpu& shadow,
                                                const RevisionState& revisions,
                                                std::string *error)
 {
     if(validFor(revisions)){if(error)error->clear();return true;}
-    if(!ready()||!gbuffer.ready()||gbuffer.width()!=width_||gbuffer.height()!=height_
+    if(!ready()||!gbuffer.ready()||!shadow.ready()
+            ||gbuffer.width()!=width_||gbuffer.height()!=height_
             ||light_buffer_==0)
     {setError(error,"GPU static diffuse resources are not ready");return false;}
 
     bindTexture(0,gbuffer.depthTexture());bindTexture(1,gbuffer.normalRoughnessTexture());
     bindTexture(2,gbuffer.albedoMetallicTexture());bindTexture(3,gbuffer.emissiveTexture());
-    bindTexture(4,gbuffer.transmissionTexture());bindTexture(6,shadow.enabled()?shadow.depthTexture():0);
+    bindTexture(4,gbuffer.transmissionTexture());bindTexture(6,shadow.texture());
     GL20.glUseProgram(program_);
     GL20.glUniform1i(static_light_index_location_,static_light_index_);
-    GL20.glUniform1i(shadow_enabled_location_,shadow.enabled()&&static_light_index_>=0?1:0);
-    GL20.glUniformMatrix4fv(shadow_matrix_location_,1,GL_FALSE,shadow.lightViewProjection().value);
     GL20.glUniformMatrix4fv(inverse_view_projection_location_,1,GL_FALSE,gbuffer.inverseViewProjection().value);
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,8,light_buffer_);
     GL42.glBindImageTexture(0,texture_,0,GL_FALSE,0,GL_WRITE_ONLY,GL_RGBA16F);
@@ -139,8 +131,7 @@ void StaticDiffuseLightingGpu::invalidate(){valid_=false;}
 void StaticDiffuseLightingGpu::shutdown()
 {
     if(texture_!=0)glDeleteTextures(texture_);texture_=0;destroyProgram(&program_);
-    light_buffer_=0;static_light_index_location_=shadow_enabled_location_=shadow_matrix_location_=-1;
-    inverse_view_projection_location_=-1;
+    light_buffer_=0;static_light_index_location_=-1;inverse_view_projection_location_=-1;
     revisions_={};static_light_index_=-1;width_=0;height_=0;valid_=false;
 }
 
