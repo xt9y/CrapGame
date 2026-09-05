@@ -96,6 +96,10 @@ jobs:
           /tmp/direct_lighting_imported_shader_contract /tmp/direct_lighting_imported.comp
           glslangValidator -S comp /tmp/direct_lighting_imported.comp
 
+          $CXX tests/shadow_stability_contract.cpp \
+            -o /tmp/shadow_stability_contract
+          /tmp/shadow_stability_contract
+
           $CXX tests/material_resolver_contract.cpp \
             Sources/Models/Material.cpp Sources/Models/Tga.cpp Sources/Models/Texture.cpp \
             Sources/Renderer/Material/Material.cpp \
