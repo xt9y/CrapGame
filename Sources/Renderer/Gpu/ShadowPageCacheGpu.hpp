@@ -19,6 +19,14 @@ namespace Gpu
 class ShadowPageCacheGpu
 {
 public:
+    static constexpr int DIRECTIONAL_LEVEL_COUNT =
+        VirtualShadowPolicy::LAST_CLIPMAP_LEVEL -
+        VirtualShadowPolicy::FIRST_CLIPMAP_LEVEL + 1;
+    static constexpr int DIRECTIONAL_TABLE_ENTRIES =
+        DIRECTIONAL_LEVEL_COUNT *
+        VirtualShadowPolicy::LEVEL0_PAGES *
+        VirtualShadowPolicy::LEVEL0_PAGES;
+
     bool init (std::string *error = nullptr);
     void beginFrame (std::uint64_t frame_index);
 
@@ -49,14 +57,8 @@ public:
 private:
     struct ShadowPageGpu
     {
-        std::uint32_t light = 0u,
-                      level_mip = 0u,
-                      x = 0u,
-                      y = 0u,
-                      physical = 0u,
-                      flags = 0u,
-                      revision_low = 0u,
-                      revision_high = 0u;
+        std::int32_t key[4] = {};
+        std::uint32_t state[4] = {};
     };
 
     void uploadMetadata ();

@@ -2,9 +2,12 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Gpu/GBufferGpu.hpp"
+#include "Renderer/Gpu/Gpu.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
+#include "Renderer/Gpu/VirtualShadowMapShader.hpp"
 
 #include <algorithm>
+#include <cstring>
 
 namespace Renderer
 {
@@ -100,13 +103,84 @@ bool VirtualShadowMapGpu::init (std::string *error)
         return false;
     }
 
-    GL15.glGenBuffers(1, &shadow_light_buffer_);
-    if (shadow_light_buffer_ == 0)
+    begin_program_ = createComputeProgram(
+            VIRTUAL_SHADOW_BEGIN_COMPUTE,
+            error
+        );
+    if (begin_program_ == 0)
     {
-        setError(error, "failed to allocate virtual-shadow light buffer");
         shutdown();
         return false;
     }
+
+    const std::string mark_shader = virtualShadowMarkShader();
+    mark_program_ = createComputeProgram(mark_shader.c_str(), error);
+    if (mark_program_ == 0)
+    {
+        shutdown();
+        return false;
+    }
+
+    mark_inverse_view_projection_location_ = GL20.glGetUniformLocation(
+            mark_program_,
+            "uGBufferInverseViewProjection"
+        );
+    mark_camera_location_ = GL20.glGetUniformLocation(
+            mark_program_,
+            "uCameraPosition"
+        );
+    mark_frame_location_ = GL20.glGetUniformLocation(
+            mark_program_,
+            "uFrameIndex"
+        );
+    mark_directional_light_location_ = GL20.glGetUniformLocation(
+            mark_program_,
+            "uDirectionalLightIndex"
+        );
+    mark_clipmap_count_location_ = GL20.glGetUniformLocation(
+            mark_program_,
+            "uShadowClipmapCount"
+        );
+
+    if (mark_inverse_view_projection_location_ < 0
+            || mark_camera_location_ < 0
+            || mark_frame_location_ < 0
+            || mark_directional_light_location_ < 0
+            || mark_clipmap_count_location_ < 0)
+    {
+        setError(error, "virtual shadow marking uniforms are unavailable");
+        shutdown();
+        return false;
+    }
+
+    GL15.glGenBuffers(1, &allocator_buffer_);
+    GL15.glGenBuffers(1, &clipmap_buffer_);
+    GL15.glGenBuffers(1, &shadow_light_buffer_);
+    if (allocator_buffer_ == 0
+            || clipmap_buffer_ == 0
+            || shadow_light_buffer_ == 0)
+    {
+        setError(error, "failed to allocate virtual-shadow buffers");
+        shutdown();
+        return false;
+    }
+
+    const std::uint32_t allocator[8] = {};
+    GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, allocator_buffer_);
+    GL15.glBufferData(
+            GL_SHADER_STORAGE_BUFFER,
+            static_cast<LWCGLsizeiptr>(sizeof(allocator)),
+            allocator,
+            GL_DYNAMIC_DRAW
+        );
+
+    GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, clipmap_buffer_);
+    GL15.glBufferData(
+            GL_SHADER_STORAGE_BUFFER,
+            static_cast<LWCGLsizeiptr>(sizeof(clipmap_gpu_)),
+            clipmap_gpu_.data(),
+            GL_DYNAMIC_DRAW
+        );
 
     GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, shadow_light_buffer_);
     GL15.glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
@@ -198,6 +272,42 @@ bool VirtualShadowMapGpu::updateShadowLights (
     return true;
 }
 
+void VirtualShadowMapGpu::uploadClipmaps ()
+{
+    for (std::size_t index = 0; index < clipmaps_.size(); ++index)
+    {
+        const VirtualShadowClipmap& source = clipmaps_[index];
+        ClipmapGpu& target = clipmap_gpu_[index];
+        std::memcpy(
+                target.view_projection,
+                source.view_projection.value,
+                sizeof(target.view_projection)
+            );
+        target.origin_extent[0] = source.origin.x;
+        target.origin_extent[1] = source.origin.y;
+        target.origin_extent[2] = source.origin.z;
+        target.origin_extent[3] = source.extent;
+        target.page_offset_level[0] = source.page_offset_x;
+        target.page_offset_level[1] = source.page_offset_y;
+        target.page_offset_level[2] = source.level;
+        target.page_offset_level[3] = 0;
+        target.parameters[0] = source.texel_world_size;
+        target.parameters[1] = source.texel_world_size *
+            static_cast<float>(VirtualShadowPolicy::PAGE_SIZE);
+        target.parameters[2] = 0.0f;
+        target.parameters[3] = 0.0f;
+    }
+
+    GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, clipmap_buffer_);
+    GL15.glBufferSubData(
+            GL_SHADER_STORAGE_BUFFER,
+            0,
+            static_cast<LWCGLsizeiptr>(sizeof(clipmap_gpu_)),
+            clipmap_gpu_.data()
+        );
+    GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
 bool VirtualShadowMapGpu::update (
             const Ecs::World& world,
             const GBufferGpu& gbuffer,
@@ -224,23 +334,26 @@ bool VirtualShadowMapGpu::update (
     }
 
     Math::Vec3 direction = {0.0f, -1.0f, 0.0f};
-    bool directional = false;
+    int directional_light_index = -1,
+        active_light_index = 0;
 
     for (const Ecs::Entity entity : world.entities())
     {
         const Ecs::TransformComponent *transform = world.getTransform(entity);
         const Ecs::LightComponent *light = world.getLight(entity);
-        if (!transform || !light
-                || light->type != Ecs::LightType::Directional
-                || light->intensity <= 0.0f
-                || !light->casts_shadows)
+        if (!transform || !light || light->intensity <= 0.0f)
         {
             continue;
         }
 
-        direction = lightForward(*transform);
-        directional = true;
-        break;
+        if (directional_light_index < 0
+                && light->type == Ecs::LightType::Directional
+                && light->casts_shadows)
+        {
+            direction = lightForward(*transform);
+            directional_light_index = active_light_index;
+        }
+        ++active_light_index;
     }
 
     for (int index = 0; index < CLIPMAP_COUNT; ++index)
@@ -248,19 +361,71 @@ bool VirtualShadowMapGpu::update (
         const int level = VirtualShadowPolicy::FIRST_CLIPMAP_LEVEL + index;
         clipmaps_[static_cast<std::size_t>(index)] =
             directionalShadowClipmap(level, camera_position, direction);
-
-        if (directional)
-        {
-            clipmaps_[static_cast<std::size_t>(index)].view_projection =
-                clipmapViewProjection(
-                        clipmaps_[static_cast<std::size_t>(index)],
-                        direction
-                    );
-        }
+        clipmaps_[static_cast<std::size_t>(index)].view_projection =
+            clipmapViewProjection(
+                    clipmaps_[static_cast<std::size_t>(index)],
+                    direction
+                );
     }
+    uploadClipmaps();
 
     page_cache_.beginFrame(frame_index);
-    page_cache_.endFrame();
+    GL30.glBindBufferBase(
+            GL_SHADER_STORAGE_BUFFER,
+            9,
+            page_cache_.metadataBuffer()
+        );
+    GL30.glBindBufferBase(
+            GL_SHADER_STORAGE_BUFFER,
+            10,
+            page_cache_.pageTableBuffer()
+        );
+    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, allocator_buffer_);
+    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 13, clipmap_buffer_);
+
+    GL20.glUseProgram(begin_program_);
+    GL43.glDispatchCompute(1, 1, 1);
+    GL42.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    if (directional_light_index >= 0)
+    {
+        GLModern.glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, gbuffer.depthTexture());
+        GL20.glUseProgram(mark_program_);
+        GL20.glUniformMatrix4fv(
+                mark_inverse_view_projection_location_,
+                1,
+                GL_FALSE,
+                gbuffer.inverseViewProjection().value
+            );
+        GL20.glUniform3f(
+                mark_camera_location_,
+                camera_position.x,
+                camera_position.y,
+                camera_position.z
+            );
+        GL20.glUniform1i(
+                mark_frame_location_,
+                static_cast<GLint>(frame_index & 0x7fffffffu)
+            );
+        GL20.glUniform1i(
+                mark_directional_light_location_,
+                directional_light_index
+            );
+        GL20.glUniform1i(mark_clipmap_count_location_, CLIPMAP_COUNT);
+        GL43.glDispatchCompute(
+                static_cast<GLuint>((width_ + 7) / 8),
+                static_cast<GLuint>((height_ + 7) / 8),
+                1
+            );
+        GL42.glMemoryBarrier(
+                GL_SHADER_STORAGE_BARRIER_BIT |
+                GL_TEXTURE_FETCH_BARRIER_BIT
+            );
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    GL20.glUseProgram(0);
     if (error) error->clear();
     return true;
 }
@@ -286,11 +451,9 @@ bool VirtualShadowMapGpu::bind (
             10,
             page_cache_.pageTableBuffer()
         );
-    GL30.glBindBufferBase(
-            GL_SHADER_STORAGE_BUFFER,
-            11,
-            shadow_light_buffer_
-        );
+    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, shadow_light_buffer_);
+    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, allocator_buffer_);
+    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 13, clipmap_buffer_);
 
     if (error) error->clear();
     return true;
@@ -299,16 +462,25 @@ bool VirtualShadowMapGpu::bind (
 void VirtualShadowMapGpu::shutdown ()
 {
     page_cache_.shutdown();
-    if (shadow_light_buffer_ != 0)
-    {
-        GL15.glDeleteBuffers(1, &shadow_light_buffer_);
-    }
+    if (allocator_buffer_ != 0) GL15.glDeleteBuffers(1, &allocator_buffer_);
+    if (clipmap_buffer_ != 0) GL15.glDeleteBuffers(1, &clipmap_buffer_);
+    if (shadow_light_buffer_ != 0) GL15.glDeleteBuffers(1, &shadow_light_buffer_);
+    destroyProgram(&begin_program_);
+    destroyProgram(&mark_program_);
 
+    allocator_buffer_ = 0;
+    clipmap_buffer_ = 0;
     shadow_light_buffer_ = 0;
     shadow_light_capacity_ = 0u;
     shadow_light_revision_ = 0u;
     shadow_lights_.clear();
     clipmaps_ = {};
+    clipmap_gpu_ = {};
+    mark_inverse_view_projection_location_ = -1;
+    mark_camera_location_ = -1;
+    mark_frame_location_ = -1;
+    mark_directional_light_location_ = -1;
+    mark_clipmap_count_location_ = -1;
     width_ = 0;
     height_ = 0;
 }

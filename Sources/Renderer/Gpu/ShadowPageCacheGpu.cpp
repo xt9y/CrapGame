@@ -33,7 +33,7 @@ bool ShadowPageCacheGpu::init (std::string *error)
     pages_.resize(VirtualShadowPolicy::MAX_PHYSICAL_PAGES);
     metadata_scratch_.resize(VirtualShadowPolicy::MAX_PHYSICAL_PAGES);
     page_table_scratch_.resize(
-            VirtualShadowPolicy::MAX_PHYSICAL_PAGES,
+            DIRECTIONAL_TABLE_ENTRIES,
             std::numeric_limits<std::uint32_t>::max()
         );
 
@@ -212,30 +212,33 @@ void ShadowPageCacheGpu::uploadMetadata ()
 {
     const std::uint32_t invalid = std::numeric_limits<std::uint32_t>::max();
 
+    std::fill(
+            page_table_scratch_.begin(),
+            page_table_scratch_.end(),
+            invalid
+        );
+
     for (std::size_t index = 0; index < pages_.size(); ++index)
     {
         const ShadowPageState& page = pages_[index];
         ShadowPageGpu& gpu = metadata_scratch_[index];
         gpu = {};
-        page_table_scratch_[index] = invalid;
 
         if (!page.allocated)
         {
             continue;
         }
 
-        gpu.light = page.key.light;
-        gpu.level_mip = static_cast<std::uint32_t>(page.key.level)
-            | (static_cast<std::uint32_t>(page.key.mip) << 16u);
-        gpu.x = static_cast<std::uint32_t>(page.key.x);
-        gpu.y = static_cast<std::uint32_t>(page.key.y);
-        gpu.physical = page.physical;
-        gpu.flags = 1u
+        gpu.key[0] = static_cast<std::int32_t>(page.key.light);
+        gpu.key[1] = static_cast<std::int32_t>(page.key.level);
+        gpu.key[2] = page.key.x;
+        gpu.key[3] = page.key.y;
+        gpu.state[0] = invalid;
+        gpu.state[1] = static_cast<std::uint32_t>(page.last_requested);
+        gpu.state[2] = 1u
             | (page.dirty ? 2u : 0u)
             | (page.dynamic ? 4u : 0u);
-        gpu.revision_low = static_cast<std::uint32_t>(page.revision);
-        gpu.revision_high = static_cast<std::uint32_t>(page.revision >> 32u);
-        page_table_scratch_[index] = page.physical;
+        gpu.state[3] = static_cast<std::uint32_t>(page.key.mip);
     }
 
     GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, metadata_buffer_);

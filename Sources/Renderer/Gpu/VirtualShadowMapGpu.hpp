@@ -155,7 +155,11 @@ public:
 
     bool ready () const
     {
-        return page_cache_.metadataBuffer() != 0
+        return begin_program_ != 0
+            && mark_program_ != 0
+            && allocator_buffer_ != 0
+            && clipmap_buffer_ != 0
+            && page_cache_.metadataBuffer() != 0
             && page_cache_.pageTableBuffer() != 0
             && shadow_light_buffer_ != 0;
     }
@@ -167,6 +171,8 @@ public:
         return clipmaps_;
     }
     GLuint shadowLightBuffer () const { return shadow_light_buffer_; }
+    GLuint allocatorBuffer () const { return allocator_buffer_; }
+    GLuint clipmapBuffer () const { return clipmap_buffer_; }
     std::size_t shadowLightCount () const { return shadow_lights_.size(); }
 
 private:
@@ -175,16 +181,38 @@ private:
         float source_shape[4] = {};
     };
 
+    struct ClipmapGpu
+    {
+        float view_projection[16] = {};
+        float origin_extent[4] = {};
+        std::int32_t page_offset_level[4] = {};
+        float parameters[4] = {};
+    };
+
     bool updateShadowLights (
                 const Ecs::World& world,
                 std::uint64_t scene_revision,
                 std::string *error
         );
+    void uploadClipmaps ();
 
     ShadowPageCacheGpu page_cache_;
     std::array<VirtualShadowClipmap, CLIPMAP_COUNT> clipmaps_ = {};
+    std::array<ClipmapGpu, CLIPMAP_COUNT> clipmap_gpu_ = {};
     std::vector<ShadowLightGpu> shadow_lights_;
-    GLuint shadow_light_buffer_ = 0;
+
+    GLuint begin_program_ = 0,
+           mark_program_ = 0,
+           allocator_buffer_ = 0,
+           clipmap_buffer_ = 0,
+           shadow_light_buffer_ = 0;
+
+    GLint mark_inverse_view_projection_location_ = -1,
+          mark_camera_location_ = -1,
+          mark_frame_location_ = -1,
+          mark_directional_light_location_ = -1,
+          mark_clipmap_count_location_ = -1;
+
     std::size_t shadow_light_capacity_ = 0u;
     std::uint64_t shadow_light_revision_ = 0u;
     int width_ = 0,
