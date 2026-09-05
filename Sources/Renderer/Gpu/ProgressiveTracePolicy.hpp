@@ -31,6 +31,20 @@ struct ProgressiveTracePolicy
     }
 };
 
+constexpr TraceSlice traceSliceForFrame (
+        std::uint64_t frame_index,
+        bool camera_moving,
+        bool invalidated
+    )
+{
+    const std::uint32_t count =
+        ProgressiveTracePolicy::sliceCount(camera_moving, invalidated);
+    const std::uint32_t index = count > 1u
+        ? static_cast<std::uint32_t>(frame_index % count)
+        : 0u;
+    return {index, count, index + 1u >= count};
+}
+
 constexpr std::uint32_t traceSliceDispatchGroups (
         std::uint32_t group_rows,
         std::uint32_t slice_count
