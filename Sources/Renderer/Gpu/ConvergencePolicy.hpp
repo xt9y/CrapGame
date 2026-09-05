@@ -13,8 +13,8 @@ namespace Gpu
 struct ConvergencePolicy
 {
     static constexpr std::uint32_t MIN_SAMPLES = 4u;
-    static constexpr std::uint32_t DEFAULT_SAMPLES = 8u;
-    static constexpr std::uint32_t MAX_SAMPLES = 16u;
+    static constexpr std::uint32_t DEFAULT_SAMPLES = 48u;
+    static constexpr std::uint32_t MAX_SAMPLES = 64u;
 
     static std::uint32_t configuredSamples ()
     {

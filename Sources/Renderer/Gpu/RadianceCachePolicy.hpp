@@ -25,7 +25,7 @@ struct RadianceCachePolicy
 {
     static constexpr float CELL_SIZE=0.5f;
     static constexpr std::uint32_t INITIAL_CAPACITY=65536u;
-    static constexpr std::uint32_t HIGH_CONFIDENCE_SAMPLES=16u;
+    static constexpr std::uint32_t HIGH_CONFIDENCE_SAMPLES=48u;
     static constexpr std::uint32_t ACCEPT_CONFIDENCE=16u;
     static constexpr std::uint32_t MAX_LINEAR_PROBES=8u;
     static constexpr std::uint32_t BUFFER_BINDING=9u;

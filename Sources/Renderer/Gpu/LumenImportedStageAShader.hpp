@@ -58,12 +58,29 @@ inline std::string lumenImportedStageATraceShader()
         "    float up=clamp(normalize(normal).y*0.5+0.5,0.0,1.0);\n"
         "    vec3 lower=mix(lumenGroundRadiance(),vec3(0.085,0.088,0.092),up);\n"
         "    vec3 upper=mix(vec3(0.085,0.088,0.092),vec3(0.120,0.145,0.185),up);\n"
-        "    return mix(lower,upper,up)*0.28;\n"
+        "    return mix(lower,upper,up)*0.42;\n"
         "}");
 
     replaceStageARequired(&source,
         "vec3 n=normalize(normal),outgoing=max(emissive,vec3(0.0));",
         "vec3 n=normalize(normal),outgoing=max(emissive,vec3(0.0));outgoing+=base*(1.0-metallic)*lumenEnvironmentIrradiance(n);");
+
+    /* A readable cache value is useful as a stable estimate, but it must not
+     * stop stochastic refinement. Continue tracing/updating until the cache's
+     * high-confidence cap while shading from the already-converged estimate. */
+    replaceStageARequired(&source,
+        "giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,giSource);if(!giCached){",
+        "cachedGiSource=vec3(0.0),giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,cachedGiSource);{");
+    replaceStageARequired(&source,
+        "radianceCacheUpdate(position,normal,cacheSource);}indirect=giSource*albedo*(1.0-metallic);",
+        "radianceCacheUpdate(position,normal,cacheSource);if(giCached)giSource=cachedGiSource;}indirect=giSource*albedo*(1.0-metallic);");
+
+    /* Static scenes receive dozens of refinement samples. Preserve more of the
+     * validated history so Monte-Carlo variance decays instead of freezing as
+     * visible low-frequency blotches. */
+    replaceStageARequired(&source,
+        "indirect=mix(indirect,texelFetch(sPreviousIndirect,bestHistoryPixel,0).xyz,0.86);",
+        "indirect=mix(indirect,texelFetch(sPreviousIndirect,bestHistoryPixel,0).xyz,0.94);");
 
     return source;
 }

@@ -18,7 +18,7 @@ uniform int uRadianceGeneration;
 const float RADIANCE_CELL_SIZE=0.5;
 const uint RADIANCE_CAPACITY=65536u;
 const uint RADIANCE_ACCEPT_CONFIDENCE=16u;
-const uint RADIANCE_HIGH_CONFIDENCE=16u;
+const uint RADIANCE_HIGH_CONFIDENCE=48u;
 const uint RADIANCE_MAX_PROBES=8u;
 uint radianceHash(ivec3 cell){uvec3 v=uvec3(cell);uint h=v.x*0x8da6b343u+v.y*0xd8163841u+v.z*0xcb1ab31fu;h^=h>>13;h*=0x85ebca6bu;h^=h>>16;return h;}
 bool radianceReadCell(ivec3 cell,out vec3 value,out vec3 storedNormal,out uint confidence){uint start=radianceHash(cell)&(RADIANCE_CAPACITY-1u);for(uint probe=0u;probe<RADIANCE_MAX_PROBES;++probe){uint index=(start+probe)&(RADIANCE_CAPACITY-1u);if(radianceRecords[index].meta.x!=2u)continue;memoryBarrierBuffer();ivec4 key=radianceRecords[index].keyGeneration;if(key.w!=uRadianceGeneration||any(notEqual(key.xyz,cell)))continue;uint samples=radianceRecords[index].meta.y;vec3 radiance=radianceRecords[index].radiance.xyz;vec3 n=radianceRecords[index].normal.xyz;memoryBarrierBuffer();if(radianceRecords[index].meta.x!=2u)continue;if(samples<RADIANCE_ACCEPT_CONFIDENCE)return false;value=radiance;storedNormal=n;confidence=samples;return true;}return false;}

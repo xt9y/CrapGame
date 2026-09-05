@@ -1,4 +1,4 @@
-#include "Renderer/Gpu/LumenImportedShader.hpp"
+#include "Renderer/Gpu/LumenImportedStageAShader.hpp"
 #include "Renderer/Gpu/RadianceCachePolicy.hpp"
 #include "Renderer/Gpu/RadianceCacheShader.hpp"
 
@@ -40,8 +40,11 @@ int main()
     require((RadianceCachePolicy::INITIAL_CAPACITY
              &(RadianceCachePolicy::INITIAL_CAPACITY-1u))==0u,
             "radiance capacity must be power of two");
-    require(RadianceCachePolicy::HIGH_CONFIDENCE_SAMPLES==16u,"confidence cap");
-    require(RadianceCachePolicy::ACCEPT_CONFIDENCE==4u,"accept confidence");
+    require(RadianceCachePolicy::HIGH_CONFIDENCE_SAMPLES==48u,"confidence cap");
+    require(RadianceCachePolicy::ACCEPT_CONFIDENCE==16u,"accept confidence");
+    require(RadianceCachePolicy::ACCEPT_CONFIDENCE
+                < RadianceCachePolicy::HIGH_CONFIDENCE_SAMPLES,
+            "readable cache must continue refining");
     require(RadianceCachePolicy::MAX_LINEAR_PROBES==8u,"probe cap");
     require(sizeof(RadianceCacheRecordGpu)==64u,"record must stay 64 bytes");
 
@@ -73,8 +76,8 @@ int main()
     const std::string cache=compact(RADIANCE_CACHE_GLSL);
     require(cache.find("binding=9")!=std::string::npos,"radiance SSBO binding");
     require(cache.find("RADIANCE_MAX_PROBES=8u")!=std::string::npos,"bounded probes");
-    require(cache.find("RADIANCE_ACCEPT_CONFIDENCE=4u")!=std::string::npos,"lookup confidence");
-    require(cache.find("RADIANCE_HIGH_CONFIDENCE=16u")!=std::string::npos,"update confidence cap");
+    require(cache.find("RADIANCE_ACCEPT_CONFIDENCE=16u")!=std::string::npos,"lookup confidence");
+    require(cache.find("RADIANCE_HIGH_CONFIDENCE=48u")!=std::string::npos,"update confidence cap");
     require(cache.find("for(intz=0;z<2;++z)for(inty=0;y<2;++y)for(intx=0;x<2;++x)")!=std::string::npos,
             "lookup must sample eight neighboring cells");
     require(cache.find("if(state==1u)return")!=std::string::npos,
@@ -85,14 +88,14 @@ int main()
     require(cache.find("memoryBarrierBuffer")!=std::string::npos,
             "cache publication must include a buffer memory barrier");
 
-    const std::string generated=compact(lumenImportedTraceShader());
-    require(generated.find("radianceCacheLookup(position,normal,giSource)")!=std::string::npos,
+    const std::string generated=compact(lumenImportedStageATraceShader());
+    require(generated.find("radianceCacheLookup(position,normal,cachedGiSource)")!=std::string::npos,
             "Lumen GI must query world radiance before tracing");
     require(generated.find("radianceCacheUpdate(position,normal,cacheSource)")!=std::string::npos,
-            "Lumen GI miss must update the nearest cache cell");
-    require(generated.find("cacheSource=primitiveFallbackRadiance(giHit)")!=std::string::npos,
-            "world cache updates must not store camera-dependent screen radiance");
-    require(generated.find("indirect=giSource*albedo*(1.0-metallic)*0.32")!=std::string::npos,
+            "Lumen GI samples must continue refining the cache");
+    require(generated.find("if(giCached)giSource=cachedGiSource")!=std::string::npos,
+            "readable cache must provide the stable shading estimate");
+    require(generated.find("indirect=giSource*albedo*(1.0-metallic)")!=std::string::npos,
             "cache value must remain source radiance rather than material-baked indirect");
 
     const std::string gpu=compact(readFile("Sources/Renderer/Gpu/RadianceCacheGpu.cpp"));
