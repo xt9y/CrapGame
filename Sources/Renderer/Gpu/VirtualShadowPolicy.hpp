@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace Renderer
 {
@@ -16,6 +17,11 @@ struct VirtualShadowPolicy
     static constexpr int VIRTUAL_RESOLUTION = PAGE_SIZE * LEVEL0_PAGES;
     static constexpr int MAX_MIP_LEVELS = 8;
     static constexpr int MAX_PHYSICAL_PAGES = 2048;
+    static constexpr int ATLAS_PAGES_X = 64;
+    static constexpr int ATLAS_PAGES_Y = 32;
+    static constexpr int ATLAS_WIDTH = PAGE_SIZE * ATLAS_PAGES_X;
+    static constexpr int ATLAS_HEIGHT = PAGE_SIZE * ATLAS_PAGES_Y;
+    static constexpr int MAX_RASTER_TRIANGLES = 1048576;
     static constexpr int RECEIVER_MASK_SIZE = 8;
     static constexpr int FIRST_CLIPMAP_LEVEL = 6;
     static constexpr int LAST_CLIPMAP_LEVEL = 22;
@@ -29,15 +35,23 @@ struct VirtualShadowPolicy
     static constexpr float SCREEN_RAY_LENGTH = 0.015f;
 };
 
+inline int virtualShadowAtlasPageX (std::uint32_t physical_page)
+{
+    return static_cast<int>(physical_page %
+        static_cast<std::uint32_t>(VirtualShadowPolicy::ATLAS_PAGES_X));
+}
+
+inline int virtualShadowAtlasPageY (std::uint32_t physical_page)
+{
+    return static_cast<int>(physical_page /
+        static_cast<std::uint32_t>(VirtualShadowPolicy::ATLAS_PAGES_X));
+}
+
 inline int virtualShadowMipLevel (float footprint)
 {
     const float value = std::max(1.0f, footprint);
     const int level = static_cast<int>(std::floor(std::log2(value)));
-
-    return std::max(
-            0,
-            std::min(VirtualShadowPolicy::MAX_MIP_LEVELS - 1, level)
-        );
+    return std::max(0, std::min(VirtualShadowPolicy::MAX_MIP_LEVELS - 1, level));
 }
 
 inline float virtualShadowClipmapExtent (int level)
@@ -48,8 +62,8 @@ inline float virtualShadowClipmapExtent (int level)
 inline float virtualShadowDynamicLodBias (int requested_pages)
 {
     const float threshold =
-        static_cast<float>(VirtualShadowPolicy::MAX_PHYSICAL_PAGES) *
-        VirtualShadowPolicy::PAGE_PRESSURE_THRESHOLD;
+        static_cast<float>(VirtualShadowPolicy::MAX_PHYSICAL_PAGES)
+        * VirtualShadowPolicy::PAGE_PRESSURE_THRESHOLD;
 
     if (static_cast<float>(requested_pages) <= threshold)
     {
@@ -60,15 +74,12 @@ inline float virtualShadowDynamicLodBias (int requested_pages)
         static_cast<float>(VirtualShadowPolicy::MAX_PHYSICAL_PAGES);
 
     const float pressure =
-        (static_cast<float>(requested_pages) - threshold) /
-        std::max(1.0f, maximum - threshold);
+        (static_cast<float>(requested_pages) - threshold)
+        / std::max(1.0f, maximum - threshold);
 
     return std::min(
             VirtualShadowPolicy::MAX_DYNAMIC_LOD_BIAS,
-            std::max(
-                    0.0f,
-                    pressure * VirtualShadowPolicy::MAX_DYNAMIC_LOD_BIAS
-                )
+            std::max(0.0f, pressure * VirtualShadowPolicy::MAX_DYNAMIC_LOD_BIAS)
         );
 }
 
