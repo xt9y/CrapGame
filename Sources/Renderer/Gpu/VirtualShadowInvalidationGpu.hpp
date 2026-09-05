@@ -27,6 +27,7 @@ public:
     bool update (
                 const Ecs::World& world,
                 VirtualShadowMapGpu& virtual_shadow_map,
+                std::uint64_t scene_revision,
                 std::string *error = nullptr
         );
 
@@ -90,7 +91,7 @@ private:
     LightSnapshot light_ = {};
 
     std::size_t region_capacity_ = 0u;
-    std::uint64_t world_revision_ = 0u,
+    std::uint64_t scene_revision_ = 0u,
                   mesh_revision_ = 0u,
                   material_revision_ = 0u;
     bool initialized_ = false;
