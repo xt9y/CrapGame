@@ -43,8 +43,8 @@ bool DirectLightingGpu::updateScene(const Ecs::World& world,std::string *error)
     }
     const std::size_t scene_count=primitives_.size();const BvhBenchConfig& cfg=benchConfig();appendStressPrimitives(cfg.stress_primitives);use_bvh_=shouldUseBvh(cfg.mode,primitives_.size(),BVH_THRESHOLD);
     if(!bench_reported_&&(cfg.stress_primitives>0u||cfg.mode!=BvhMode::Auto)){std::fprintf(stderr,"GPU BVH benchmark: scene %zu + stress %zu = %zu primitives, mode %s, traversal %s\n",scene_count,cfg.stress_primitives,primitives_.size(),bvhModeName(cfg.mode),use_bvh_?"bvh":"linear");bench_reported_=true;}
-    if(!uploadChangedRecords(light_buffer_,&light_capacity_,lights_,&uploaded_lights_,error)||!uploadChangedRecords(primitive_buffer_,&primitive_capacity_,primitives_,&uploaded_primitives_,error))return false;
-    if(use_bvh_){if(!ensureBvhBuffer(error))return false;const bool match=!bvh_nodes_.empty()&&bvh_primitive_count_==primitives_.size();bool refit=match&&refitBvh(&bvh_nodes_,primitive_bounds_);if(!refit){BvhBuild build=buildBvh(primitive_bounds_,BVH_LEAF_SIZE);bvh_nodes_=std::move(build.nodes);bvh_primitive_count_=primitives_.size();}if(!uploadChangedRecords(bvh_node_buffer_,&bvh_node_capacity_,bvh_nodes_,&uploaded_bvh_nodes_,error))return false;}else{bvh_nodes_.clear();bvh_primitive_count_=0;}
+    if(!uploadChangedRecords(light_buffer_,&light_capacity_,lights_,uploaded_lights_,error)||!uploadChangedRecords(primitive_buffer_,&primitive_capacity_,primitives_,uploaded_primitives_,error))return false;
+    if(use_bvh_){if(!ensureBvhBuffer(error))return false;const bool match=!bvh_nodes_.empty()&&bvh_primitive_count_==primitives_.size();bool refit=match&&refitBvh(&bvh_nodes_,primitive_bounds_);if(!refit){BvhBuild build=buildBvh(primitive_bounds_,BVH_LEAF_SIZE);bvh_nodes_=std::move(build.nodes);bvh_primitive_count_=primitives_.size();}if(!uploadChangedRecords(bvh_node_buffer_,&bvh_node_capacity_,bvh_nodes_,uploaded_bvh_nodes_,error))return false;}else{bvh_nodes_.clear();bvh_primitive_count_=0;}
     if(error) error->clear();
     return true;
 }
@@ -54,7 +54,7 @@ bool DirectLightingGpu::dispatch(const GBufferGpu& g,const Math::Vec3& camera,st
     if(!ready()||!g.ready()||g.width()!=width_||g.height()!=height_){sceneError(error,"GPU direct lighting resources are not ready for this GBuffer");return false;}
     if(!scene_world_){sceneError(error,"GPU direct lighting has no scene world");return false;}
 
-    if(!virtual_shadow_invalidation_.update(*scene_world_,virtual_shadow_map_,error))return false;
+    if(!virtual_shadow_invalidation_.update(*scene_world_,virtual_shadow_map_,scene_revision_,error))return false;
     if(!virtual_shadow_map_.update(*scene_world_,g,triangle_scene_,camera,frame_index,scene_revision_,error))return false;
     if(!smrt_shadow_.render(*scene_world_,g,virtual_shadow_map_,camera,frame_index,error))return false;
     if(!bindImportedScene(triangle_scene_,error))return false;
