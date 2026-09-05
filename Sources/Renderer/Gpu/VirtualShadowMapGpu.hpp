@@ -157,11 +157,22 @@ public:
     {
         return begin_program_ != 0
             && mark_program_ != 0
+            && raster_begin_program_ != 0
+            && page_cull_program_ != 0
+            && clear_program_ != 0
+            && raster_program_ != 0
+            && finish_program_ != 0
             && allocator_buffer_ != 0
             && clipmap_buffer_ != 0
+            && shadow_light_buffer_ != 0
+            && dirty_page_buffer_ != 0
+            && raster_triangle_buffer_ != 0
+            && raster_command_buffer_ != 0
+            && depth_atlas_ != 0
+            && framebuffer_ != 0
+            && raster_vao_ != 0
             && page_cache_.metadataBuffer() != 0
-            && page_cache_.pageTableBuffer() != 0
-            && shadow_light_buffer_ != 0;
+            && page_cache_.pageTableBuffer() != 0;
     }
 
     const ShadowPageCacheGpu& pageCache () const { return page_cache_; }
@@ -170,9 +181,11 @@ public:
     {
         return clipmaps_;
     }
+    GLuint depthAtlas () const { return depth_atlas_; }
     GLuint shadowLightBuffer () const { return shadow_light_buffer_; }
     GLuint allocatorBuffer () const { return allocator_buffer_; }
     GLuint clipmapBuffer () const { return clipmap_buffer_; }
+    GLuint dirtyPageBuffer () const { return dirty_page_buffer_; }
     std::size_t shadowLightCount () const { return shadow_lights_.size(); }
 
 private:
@@ -194,6 +207,8 @@ private:
                 std::uint64_t scene_revision,
                 std::string *error
         );
+    bool createRasterResources (std::string *error);
+    bool renderDirtyPages (const TriangleScene& triangles, std::string *error);
     void uploadClipmaps ();
 
     ShadowPageCacheGpu page_cache_;
@@ -203,15 +218,30 @@ private:
 
     GLuint begin_program_ = 0,
            mark_program_ = 0,
+           raster_begin_program_ = 0,
+           page_cull_program_ = 0,
+           clear_program_ = 0,
+           raster_program_ = 0,
+           finish_program_ = 0,
            allocator_buffer_ = 0,
            clipmap_buffer_ = 0,
-           shadow_light_buffer_ = 0;
+           shadow_light_buffer_ = 0,
+           dirty_page_buffer_ = 0,
+           raster_triangle_buffer_ = 0,
+           raster_command_buffer_ = 0,
+           depth_atlas_ = 0,
+           framebuffer_ = 0,
+           raster_vao_ = 0;
 
     GLint mark_inverse_view_projection_location_ = -1,
           mark_camera_location_ = -1,
           mark_frame_location_ = -1,
           mark_directional_light_location_ = -1,
-          mark_clipmap_count_location_ = -1;
+          mark_clipmap_count_location_ = -1,
+          page_cull_instance_count_location_ = -1,
+          page_cull_tlas_count_location_ = -1,
+          page_cull_clipmap_count_location_ = -1,
+          raster_material_count_location_ = -1;
 
     std::size_t shadow_light_capacity_ = 0u;
     std::uint64_t shadow_light_revision_ = 0u;
