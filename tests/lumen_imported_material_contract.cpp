@@ -1,5 +1,6 @@
 #include "Renderer/Gpu/LumenImportedStageAShader.hpp"
 #include "Renderer/Gpu/LumenStageAComposite.hpp"
+#include "Renderer/Gpu/RadianceCachePolicy.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -63,11 +64,25 @@ int main(int argc,char **argv)
     require(shader.find("indirect=giSource*albedo*(1.0-metallic);")!=std::string::npos,
             "cosine-weighted diffuse estimator still loses a pi factor");
 
+    require(Renderer::Gpu::RadianceCachePolicy::ACCEPT_CONFIDENCE
+                == Renderer::Gpu::RadianceCachePolicy::HIGH_CONFIDENCE_SAMPLES,
+            "radiance cache becomes reusable before it has converged");
+    require(shader.find("lumenEnvironmentIrradiance")!=std::string::npos,
+            "secondary-hit skylight irradiance missing");
+    require(shader.find("lumenGroundRadiance")!=std::string::npos,
+            "neutral ground skylight source missing");
+
     const std::string composite=Renderer::Gpu::LUMEN_STAGE_A_COMPOSITE_COMPUTE;
     require(composite.find("acesToneMap")!=std::string::npos,
             "ACES output mapping missing");
     require(composite.find("OUTPUT_EXPOSURE")!=std::string::npos,
             "explicit output exposure missing");
+    require(composite.find("bilateralIndirect")!=std::string::npos,
+            "depth/normal-aware indirect denoising missing");
+    require(composite.find("normalWeight")!=std::string::npos,
+            "indirect filter is not normal aware");
+    require(composite.find("positionWeight")!=std::string::npos,
+            "indirect filter is not depth/position aware");
 
     if(argc>1)
     {
