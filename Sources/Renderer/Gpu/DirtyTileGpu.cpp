@@ -37,6 +37,16 @@ bool DirtyTileGpu::init(std::string *error)
     shutdown();
     program_=createComputeProgram(DIRTY_TILE_COMPACT_COMPUTE,error);
     if(program_==0)return false;
+
+    slice_index_location_=GL20.glGetUniformLocation(program_,"uSliceIndex");
+    slice_count_location_=GL20.glGetUniformLocation(program_,"uSliceCount");
+    if(slice_index_location_<0||slice_count_location_<0)
+    {
+        setError(error,"GPU dirty tile slice uniforms are unavailable");
+        shutdown();
+        return false;
+    }
+
     GL15.glGenBuffers(1,&tile_buffer_);
     GL15.glGenBuffers(1,&indirect_buffer_);
     if(tile_buffer_==0||indirect_buffer_==0)
@@ -79,7 +89,10 @@ bool DirtyTileGpu::resize(int width,int height,std::string *error)
     return true;
 }
 
-bool DirtyTileGpu::compact(GLuint valid_mask,std::string *error)
+bool DirtyTileGpu::compact(GLuint valid_mask,
+                           std::uint32_t slice_index,
+                           std::uint32_t slice_count,
+                           std::string *error)
 {
     if(!ready()||valid_mask==0)
     {
@@ -87,6 +100,8 @@ bool DirtyTileGpu::compact(GLuint valid_mask,std::string *error)
         return false;
     }
 
+    const std::uint32_t count=slice_count==0u?1u:slice_count;
+    const std::uint32_t index=slice_index%count;
     const std::uint32_t args[3]={0u,1u,1u};
     GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER,indirect_buffer_);
     GL15.glBufferSubData(GL_SHADER_STORAGE_BUFFER,0,sizeof(args),args);
@@ -95,6 +110,8 @@ bool DirtyTileGpu::compact(GLuint valid_mask,std::string *error)
     GLModern.glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D,valid_mask);
     GL20.glUseProgram(program_);
+    GL20.glUniform1i(slice_index_location_,static_cast<GLint>(index));
+    GL20.glUniform1i(slice_count_location_,static_cast<GLint>(count));
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0,tile_buffer_);
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1,indirect_buffer_);
     GL43.glDispatchCompute(static_cast<GLuint>(tiles_x_),static_cast<GLuint>(tiles_y_),1);
@@ -122,7 +139,8 @@ void DirtyTileGpu::dispatchIndirect() const
 
 bool DirtyTileGpu::ready() const
 {
-    return program_!=0&&tile_buffer_!=0&&indirect_buffer_!=0&&total_tiles_!=0u;
+    return program_!=0&&tile_buffer_!=0&&indirect_buffer_!=0&&total_tiles_!=0u
+        &&slice_index_location_>=0&&slice_count_location_>=0;
 }
 
 void DirtyTileGpu::shutdown()
@@ -131,6 +149,7 @@ void DirtyTileGpu::shutdown()
     if(tile_buffer_!=0)GL15.glDeleteBuffers(1,&tile_buffer_);
     indirect_buffer_=0;tile_buffer_=0;
     destroyProgram(&program_);
+    slice_index_location_=-1;slice_count_location_=-1;
     width_=0;height_=0;tiles_x_=0;tiles_y_=0;total_tiles_=0u;
 }
 
