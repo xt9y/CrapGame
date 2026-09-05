@@ -3,13 +3,85 @@
 
 #include <cstdint>
 
-namespace Renderer { namespace Gpu {
+namespace Renderer
+{
+namespace Gpu
+{
 
-struct TraceSlice{std::uint32_t index=0u,count=1u;bool completes_sweep=true;};
-struct ProgressiveTracePolicy{static constexpr std::uint32_t MOVING_SLICE_COUNT=64u,STATIONARY_SLICE_COUNT=32u;static constexpr std::uint32_t sliceCount(bool moving,bool invalidated){return invalidated?1u:(moving?MOVING_SLICE_COUNT:STATIONARY_SLICE_COUNT);}};
-constexpr std::uint32_t traceSliceDispatchGroups(std::uint32_t rows,std::uint32_t slices){const std::uint32_t count=slices==0u?1u:slices;return (rows+count-1u)/count;}
-constexpr std::uint32_t traceSliceItemBudget(std::uint32_t items,std::uint32_t slices){return traceSliceDispatchGroups(items,slices);}
-class ProgressiveTraceState{public:void reset(){phase_=0u;active_slice_count_=0u;}TraceSlice next(bool moving,bool invalidated){const std::uint32_t count=ProgressiveTracePolicy::sliceCount(moving,invalidated);if(invalidated||active_slice_count_!=count){phase_=0u;active_slice_count_=count;}TraceSlice out{phase_,count,phase_+1u>=count};phase_=out.completes_sweep?0u:phase_+1u;return out;}private:std::uint32_t phase_=0u,active_slice_count_=0u;};
+struct TraceSlice
+{
+    std::uint32_t index = 0u;
+    std::uint32_t count = 1u;
+    bool completes_sweep = true;
+};
 
-} }
+struct ProgressiveTracePolicy
+{
+    static constexpr std::uint32_t MOVING_SLICE_COUNT = 64u;
+    static constexpr std::uint32_t STATIONARY_SLICE_COUNT = 32u;
+
+    static constexpr std::uint32_t sliceCount (
+            bool camera_moving,
+            bool invalidated
+        )
+    {
+        return invalidated
+            ? 1u
+            : (camera_moving ? MOVING_SLICE_COUNT : STATIONARY_SLICE_COUNT);
+    }
+};
+
+constexpr std::uint32_t traceSliceDispatchGroups (
+        std::uint32_t group_rows,
+        std::uint32_t slice_count
+    )
+{
+    const std::uint32_t count = slice_count == 0u ? 1u : slice_count;
+    return (group_rows + count - 1u) / count;
+}
+
+constexpr std::uint32_t traceSliceItemBudget (
+        std::uint32_t item_count,
+        std::uint32_t slice_count
+    )
+{
+    return traceSliceDispatchGroups(item_count, slice_count);
+}
+
+class ProgressiveTraceState
+{
+public:
+    void reset ()
+    {
+        phase_ = 0u;
+        active_slice_count_ = 0u;
+    }
+
+    TraceSlice next (bool camera_moving, bool invalidated)
+    {
+        const std::uint32_t count =
+            ProgressiveTracePolicy::sliceCount(camera_moving, invalidated);
+
+        if (invalidated || active_slice_count_ != count)
+        {
+            phase_ = 0u;
+            active_slice_count_ = count;
+        }
+
+        TraceSlice slice;
+        slice.index = phase_;
+        slice.count = count;
+        slice.completes_sweep = phase_ + 1u >= count;
+        phase_ = slice.completes_sweep ? 0u : phase_ + 1u;
+        return slice;
+    }
+
+private:
+    std::uint32_t phase_ = 0u;
+    std::uint32_t active_slice_count_ = 0u;
+};
+
+} // namespace Gpu
+} // namespace Renderer
+
 #endif
