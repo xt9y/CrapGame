@@ -40,6 +40,7 @@ public:
         return program_ != 0 && visibility_ != 0;
     }
 
+    bool enabled () const { return light_index_ >= 0; }
     GLuint texture () const { return visibility_; }
     int lightIndex () const { return light_index_; }
 
