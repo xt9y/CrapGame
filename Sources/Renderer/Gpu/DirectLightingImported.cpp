@@ -1,54 +1,9 @@
 #include "Renderer/Gpu/DirectLightingGpu.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
 
-#include "Renderer/Material/Material.hpp"
 #include "Renderer/Mesh/Mesh.hpp"
 
 namespace Renderer { namespace Gpu {
-
-namespace
-{
-RevisionState staticShadowRevisions(std::uint64_t scene_revision)
-{
-    RevisionState revisions = {};
-    revisions.geometry = scene_revision;
-    revisions.material = scene_revision;
-    revisions.lighting = scene_revision;
-    revisions.mesh_registry = Mesh::loadedMeshRevision();
-    revisions.material_registry = Material::revision();
-    return revisions;
-}
-} // namespace
-
-int DirectLightingGpu::staticShadowLightIndex() const
-{
-    if (!scene_world_ || !static_shadow_cache_.enabled() || !primitives_.empty()) return -1;
-    int index = 0;
-    for (const Ecs::Entity entity : scene_world_->entities())
-    {
-        const Ecs::TransformComponent *transform = scene_world_->getTransform(entity);
-        const Ecs::LightComponent *light = scene_world_->getLight(entity);
-        if (!transform || !light || light->intensity <= 0.0f) continue;
-        if (entity == static_shadow_cache_.lightEntity()) return index;
-        ++index;
-    }
-    return -1;
-}
-
-bool DirectLightingGpu::ensureStaticShadowCache(std::string *error)
-{
-    if (!scene_world_)
-    {
-        if (error) *error = "static shadow cache has no scene world";
-        return false;
-    }
-    return static_shadow_cache_.ensure(
-        *scene_world_,
-        triangle_scene_,
-        staticShadowRevisions(scene_revision_),
-        error
-    );
-}
 
 bool DirectLightingGpu::bindImportedScene(const TriangleScene& triangles,
                                           std::string *error)
@@ -74,9 +29,6 @@ bool DirectLightingGpu::bindImportedScene(const TriangleScene& triangles,
     GLModern.glActiveTexture(GL_TEXTURE0+5);
     glBindTexture(GL_TEXTURE_2D_ARRAY,triangles.dataAtlas());
     GLModern.glActiveTexture(GL_TEXTURE0);
-
-    if (!ensureStaticShadowCache(error)) return false;
-    if (!static_shadow_cache_.bind(program_, staticShadowLightIndex(), error)) return false;
 
     GL20.glUseProgram(program_);
     const GLint instance_location = GL20.glGetUniformLocation(program_,"uImportedInstanceCount");
