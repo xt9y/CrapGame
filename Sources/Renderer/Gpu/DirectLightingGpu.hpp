@@ -47,7 +47,7 @@ public:
     bool dispatch(const GBufferGpu& gbuffer,const Math::Vec3& camera_position,
                   std::string *error=nullptr)
     {
-        return dispatch(gbuffer,camera_position,0u,error);
+        return dispatch(gbuffer,camera_position,shadow_frame_index_++,error);
     }
     bool render(const Ecs::World& world,const GBufferGpu& gbuffer,
                 const Math::Vec3& camera_position,std::uint64_t frame_index,
@@ -55,7 +55,7 @@ public:
     bool render(const Ecs::World& world,const GBufferGpu& gbuffer,
                 const Math::Vec3& camera_position,std::string *error=nullptr)
     {
-        return render(world,gbuffer,camera_position,0u,error);
+        return render(world,gbuffer,camera_position,shadow_frame_index_++,error);
     }
     void shutdown();
     void releaseAcceleration();
@@ -81,6 +81,7 @@ public:
     TransparentGpu *transparentPass() const { return transparent_.get(); }
     const VirtualShadowMapGpu& virtualShadowMap() const { return virtual_shadow_map_; }
     const SmrtShadowGpu& smrtShadow() const { return smrt_shadow_; }
+    const SmrtShadowGpu& staticShadowCache() const { return smrt_shadow_; }
     const StaticDiffuseLightingGpu& staticDiffuse() const { return static_diffuse_; }
     const ViewSpecularGpu& viewSpecular() const { return view_specular_; }
     const TraceGeometryGpu& traceGeometry() const { return trace_geometry_; }
@@ -120,7 +121,8 @@ private:
     ViewSpecularGpu view_specular_;
     mutable std::unique_ptr<TransparentGpu> transparent_;
     const Ecs::World *scene_world_=nullptr;
-    std::uint64_t scene_revision_=0u;
+    std::uint64_t scene_revision_=0u,
+                  shadow_frame_index_=0u;
     BvhBenchConfig bench_config_={};
     bool bench_config_initialized_=false, bench_reported_=false, use_bvh_=false;
     int width_=0,height_=0;
