@@ -54,6 +54,7 @@ bool DirectLightingGpu::dispatch(const GBufferGpu& g,const Math::Vec3& camera,st
     if(!ready()||!g.ready()||g.width()!=width_||g.height()!=height_){sceneError(error,"GPU direct lighting resources are not ready for this GBuffer");return false;}
     if(!scene_world_){sceneError(error,"GPU direct lighting has no scene world");return false;}
 
+    if(!virtual_shadow_invalidation_.update(*scene_world_,virtual_shadow_map_,error))return false;
     if(!virtual_shadow_map_.update(*scene_world_,g,triangle_scene_,camera,frame_index,scene_revision_,error))return false;
     if(!smrt_shadow_.render(*scene_world_,g,virtual_shadow_map_,camera,frame_index,error))return false;
     if(!bindImportedScene(triangle_scene_,error))return false;
