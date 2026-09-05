@@ -102,6 +102,9 @@ struct LightComponent
           indirect_intensity;
 
     bool casts_shadows;
+
+    float source_radius = 0.0f,
+          source_angle = 0.0f;
 };
 
 class World 
