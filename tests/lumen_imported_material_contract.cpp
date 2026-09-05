@@ -2,6 +2,7 @@
 #include "Renderer/Gpu/LumenImportedStageAShader.hpp"
 #include "Renderer/Gpu/LumenStageAComposite.hpp"
 #include "Renderer/Gpu/RadianceCachePolicy.hpp"
+#include "Renderer/Gpu/ReflectionCacheShader.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -90,6 +91,18 @@ int main(int argc,char **argv)
     require(shader.find("return mix(lower,upper,up)*0.42")!=std::string::npos,
             "secondary-hit skylight remains too weak for Sponza interiors");
 
+    const std::string reflectionCache=Renderer::Gpu::REFLECTION_CACHE_GLSL;
+    const std::size_t roughCache=reflectionCache.find(
+        "if(roughness>=0.35&&radianceCacheLookup(position,normal,source))return true;");
+    const std::size_t sharpScreen=reflectionCache.find(
+        "if(roughness<0.35&&reflectionScreenHit(origin,direction,source))return true;");
+    require(roughCache!=std::string::npos,
+            "rough reflections do not prefer the stable radiance cache");
+    require(sharpScreen!=std::string::npos,
+            "sharp screen-space reflections are still enabled on rough surfaces");
+    require(roughCache<sharpScreen,
+            "rough reflection cache must be evaluated before sharp SSR");
+
     const std::string composite=Renderer::Gpu::LUMEN_STAGE_A_COMPOSITE_COMPUTE;
     require(composite.find("acesToneMap")!=std::string::npos,
             "ACES output mapping missing");
@@ -103,6 +116,12 @@ int main(int argc,char **argv)
             "indirect filter is not normal aware");
     require(composite.find("positionWeight")!=std::string::npos,
             "indirect filter is not depth/position aware");
+    require(composite.find("bilateralReflection")!=std::string::npos,
+            "half-resolution reflections are still nearest-upsampled");
+    require(composite.find("roughnessWeight")!=std::string::npos,
+            "reflection filter is not roughness aware");
+    require(composite.find("reflectionFireflyClamp")!=std::string::npos,
+            "isolated reflection fireflies are not bounded before composition");
     require(composite.find("occlusion*0.12")!=std::string::npos,
             "short-range AO is strong enough to create false shadow blotches");
 
