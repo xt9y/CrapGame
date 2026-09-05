@@ -81,7 +81,15 @@ jobs:
 
           $CXX tests/progressive_trace_budget_contract.cpp \
             -o /tmp/progressive_trace_budget_contract
-          /tmp/progressive_trace_budget_contract
+          /tmp/progressive_trace_budget_contract \
+            /tmp/dirty_tiles.comp /tmp/progressive_lumen.comp
+          glslangValidator -S comp /tmp/dirty_tiles.comp
+          glslangValidator -S comp /tmp/progressive_lumen.comp
+
+          $CXX tests/converged_frame_cache_contract.cpp \
+            Sources/Renderer/Gpu/ConvergedFrameCache.cpp \
+            -o /tmp/converged_frame_cache_contract
+          /tmp/converged_frame_cache_contract
 
           $CXX tests/direct_lighting_imported_shader_contract.cpp \
             -o /tmp/direct_lighting_imported_shader_contract
