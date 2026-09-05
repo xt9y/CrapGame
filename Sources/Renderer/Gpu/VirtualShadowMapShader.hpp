@@ -13,7 +13,7 @@ namespace Gpu
 constexpr const char *VIRTUAL_SHADOW_BEGIN_COMPUTE=R"GLSL(
 #version 430 core
 layout(local_size_x=1,local_size_y=1,local_size_z=1) in;
-layout(std430,binding=12) buffer ShadowAllocator
+layout(std430,binding=2) buffer ShadowAllocator
 {
     uint nextPhysical;
     uint requested;
@@ -24,6 +24,15 @@ layout(std430,binding=12) buffer ShadowAllocator
     uint overflow;
     uint padding;
 };
+struct ShadowDirtyPage{uvec4 data;};
+layout(std430,binding=4) buffer ShadowDirtyPages
+{
+    uint dirtyPageCount;
+    uint dirtyPadding0;
+    uint dirtyPadding1;
+    uint dirtyPadding2;
+    ShadowDirtyPage dirtyPages[];
+};
 void main()
 {
     previousRequested=requested;
@@ -32,6 +41,7 @@ void main()
     cached=0u;
     evicted=0u;
     overflow=0u;
+    dirtyPageCount=0u;
 }
 )GLSL";
 
@@ -68,15 +78,15 @@ struct ShadowClipmapData
     ivec4 pageOffsetLevel;
     vec4 parameters;
 };
-layout(std430,binding=9) buffer ShadowPageMetadata
+layout(std430,binding=0) buffer ShadowPageMetadata
 {
     ShadowPhysicalPage shadowPages[];
 };
-layout(std430,binding=10) buffer ShadowPageTable
+layout(std430,binding=1) buffer ShadowPageTable
 {
     uint shadowPageTable[];
 };
-layout(std430,binding=12) buffer ShadowAllocator
+layout(std430,binding=2) buffer ShadowAllocator
 {
     uint nextPhysical;
     uint requested;
@@ -87,9 +97,18 @@ layout(std430,binding=12) buffer ShadowAllocator
     uint overflow;
     uint allocatorPadding;
 };
-layout(std430,binding=13) readonly buffer ShadowClipmapBuffer
+layout(std430,binding=3) readonly buffer ShadowClipmapBuffer
 {
     ShadowClipmapData shadowClipmaps[];
+};
+struct ShadowDirtyPage{uvec4 data;};
+layout(std430,binding=4) buffer ShadowDirtyPages
+{
+    uint dirtyPageCount;
+    uint dirtyPadding0;
+    uint dirtyPadding1;
+    uint dirtyPadding2;
+    ShadowDirtyPage dirtyPages[];
 };
 vec3 gbufferReconstructWorld(ivec2 pixel,ivec2 dimensions,float depthValue,mat4 inverseViewProjection);
 int wrapShadowPage(int value)
@@ -149,15 +168,17 @@ bool requestDirectionalPage(vec3 worldPosition,int clipmapIndex,uint mip)
         uint locked=atomicCompSwap(shadowPageTable[tableSlot],mapped,LOCKED_PAGE);
         if(locked!=mapped)continue;
 
+        uint requestIndex=atomicAdd(requested,1u);
+        if(requestIndex>=MAX_PHYSICAL_PAGES)
+        {
+            atomicAdd(overflow,1u);
+            atomicExchange(shadowPageTable[tableSlot],mapped);
+            return false;
+        }
+
         uint physical=mapped;
         if(mapped==INVALID_PAGE||mapped>=MAX_PHYSICAL_PAGES)
         {
-            if(requested>=MAX_PHYSICAL_PAGES)
-            {
-                atomicAdd(overflow,1u);
-                atomicExchange(shadowPageTable[tableSlot],INVALID_PAGE);
-                return false;
-            }
             physical=chooseShadowPhysicalPage();
             if(physical==INVALID_PAGE)
             {
@@ -179,9 +200,10 @@ bool requestDirectionalPage(vec3 worldPosition,int clipmapIndex,uint mip)
 
         shadowPages[physical].key=key;
         shadowPages[physical].state=uvec4(tableSlot,frameIndex,PAGE_VALID|2u,mip);
+        dirtyPages[requestIndex].data=uvec4(physical,uint(clipmapIndex),uvec2(localPage));
+        atomicMax(dirtyPageCount,requestIndex+1u);
         memoryBarrierBuffer();
         atomicExchange(shadowPageTable[tableSlot],physical);
-        atomicAdd(requested,1u);
         return true;
     }
 
