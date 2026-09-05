@@ -10,6 +10,9 @@
 #include <lwcgl/context.h>
 #include <lwcgl/glmodern.h>
 
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -31,6 +34,37 @@ static inline void ERROR (const char *operation)
             operation, message 
             ? message : "unknown lwcgl error"
         );
+}
+
+struct FramebufferExtent
+{
+    int width;
+    int height;
+};
+
+static FramebufferExtent queryFramebufferExtent ()
+{
+    int width = Display.getWidth();
+    int height = Display.getHeight();
+    GLFWwindow *window = static_cast<GLFWwindow *>(Display.getNativeWindow());
+
+    if (window)
+    {
+        int framebuffer_width = 0;
+        int framebuffer_height = 0;
+        glfwGetFramebufferSize(window, &framebuffer_width, &framebuffer_height);
+
+        if (framebuffer_width > 0 && framebuffer_height > 0)
+        {
+            width = framebuffer_width;
+            height = framebuffer_height;
+        }
+    }
+
+    return {
+        width > 0 ? width : 1,
+        height > 0 ? height : 1
+    };
 }
 
 static bool environmentFlag (const char *name)
@@ -271,12 +305,15 @@ int main ()
         return 2;
     }
 
-    int renderer_width = runtime_plan.fixed_reference_size
-            ? TEST_WIDTH
-            : Display.getWidth(),
-        renderer_height = runtime_plan.fixed_reference_size
-            ? TEST_HEIGHT
-            : Display.getHeight();
+    int renderer_width = TEST_WIDTH;
+    int renderer_height = TEST_HEIGHT;
+
+    if (!runtime_plan.fixed_reference_size)
+    {
+        const FramebufferExtent framebuffer = queryFramebufferExtent();
+        renderer_width = framebuffer.width;
+        renderer_height = framebuffer.height;
+    }
 
     if (runtime_plan.fixed_reference_size)
     {
@@ -370,14 +407,13 @@ int main ()
                     renderercheck_mode,
                     performance_mode))
             {
-                const int display_width = Display.getWidth(),
-                          display_height = Display.getHeight();
+                const FramebufferExtent framebuffer = queryFramebufferExtent();
 
-                if (display_width != renderer_width
-                        || display_height != renderer_height)
+                if (framebuffer.width != renderer_width
+                        || framebuffer.height != renderer_height)
                 {
-                    renderer_width = display_width;
-                    renderer_height = display_height;
+                    renderer_width = framebuffer.width;
+                    renderer_height = framebuffer.height;
                     renderer.resize(renderer_width, renderer_height);
                 }
             }

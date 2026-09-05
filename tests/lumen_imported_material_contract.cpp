@@ -1,6 +1,8 @@
 #include "Renderer/Gpu/LumenImportedShader.hpp"
+#include "Renderer/Gpu/LumenStageAComposite.hpp"
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -14,7 +16,7 @@ void require(bool condition,const char *message)
 }
 }
 
-int main()
+int main(int argc,char **argv)
 {
     const std::string shader=Renderer::Gpu::lumenImportedTraceShader();
     require(shader.find("traceImportedNearest")!=std::string::npos,
@@ -47,6 +49,30 @@ int main()
             "material-weighted reflection missing");
     require(shader.find("clearcoatRoughness")!=std::string::npos,
             "clearcoat reflection response missing");
+
+    require(shader.find("layout(std430,binding=10) readonly buffer LumenLightBuffer")!=std::string::npos,
+            "world-space GI light buffer missing");
+    require(shader.find("uniform int uLightCount")!=std::string::npos,
+            "world-space GI light count missing");
+    require(shader.find("lumenWorldHitRadiance")!=std::string::npos,
+            "secondary hits do not evaluate world-space radiance");
+    require(shader.find("coneShadow.w")!=std::string::npos,
+            "light indirect intensity is not applied to GI");
+    require(shader.find("lumenEnvironmentRadiance")!=std::string::npos,
+            "environment radiance source missing");
+
+    const std::string composite=Renderer::Gpu::LUMEN_STAGE_A_COMPOSITE_COMPUTE;
+    require(composite.find("acesToneMap")!=std::string::npos,
+            "ACES output mapping missing");
+    require(composite.find("OUTPUT_EXPOSURE")!=std::string::npos,
+            "explicit output exposure missing");
+
+    if(argc>1)
+    {
+        std::ofstream out(argv[1]);
+        out<<shader;
+    }
+
     std::cout<<"lumen_imported_material_contract=PASS\n";
     return 0;
 }

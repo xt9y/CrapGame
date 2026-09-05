@@ -1,7 +1,10 @@
 #include "Renderer/Gpu/FrameWorkPolicy.hpp"
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
 
 using namespace Renderer::Gpu;
 
@@ -39,6 +42,13 @@ int main()
     require(movingSecondaryRefreshDue(66666668ull,1ull,0u,false),"secondary refresh missed 15 Hz interval");
     require(movingSecondaryRefreshDue(2ull,1ull,0u,true),"revision invalidation must force secondary refresh");
     require(movingSecondaryIntervalNanoseconds(30u)==33333333ull,"configured Lumen Hz must override moving interval");
+
+    std::ifstream main_source("Sources/main.cpp");
+    std::string source((std::istreambuf_iterator<char>(main_source)),{});
+    require(source.find("glfwGetFramebufferSize")!=std::string::npos,
+            "interactive renderer is not sized from the physical framebuffer");
+    require(source.find("queryFramebufferExtent")!=std::string::npos,
+            "framebuffer extent helper missing from interactive path");
 
     std::cout<<"static_sponza_frame_policy_contract=PASS\n";
     return 0;
