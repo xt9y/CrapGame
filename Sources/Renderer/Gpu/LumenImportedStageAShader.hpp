@@ -65,9 +65,6 @@ inline std::string lumenImportedStageATraceShader()
         "vec3 n=normalize(normal),outgoing=max(emissive,vec3(0.0));",
         "vec3 n=normalize(normal),outgoing=max(emissive,vec3(0.0));outgoing+=base*(1.0-metallic)*lumenEnvironmentIrradiance(n);");
 
-    /* A readable cache value is useful as a stable estimate, but it must not
-     * stop stochastic refinement. Continue tracing/updating until the cache's
-     * high-confidence cap while shading from the already-converged estimate. */
     replaceStageARequired(&source,
         "giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,giSource);if(!giCached){",
         "cachedGiSource=vec3(0.0),giSource=vec3(0.0),indirect=vec3(0.0);bool giCached=radianceCacheLookup(position,normal,cachedGiSource);{");
@@ -75,19 +72,13 @@ inline std::string lumenImportedStageATraceShader()
         "radianceCacheUpdate(position,normal,cacheSource);}indirect=giSource*albedo*(1.0-metallic);",
         "radianceCacheUpdate(position,normal,cacheSource);if(giCached)giSource=cachedGiSource;}indirect=giSource*albedo*(1.0-metallic);");
 
-    /* Static scenes receive dozens of refinement samples. Preserve more of the
-     * validated history so Monte-Carlo variance decays instead of freezing as
-     * visible low-frequency blotches. */
     replaceStageARequired(&source,
         "indirect=mix(indirect,texelFetch(sPreviousIndirect,bestHistoryPixel,0).xyz,0.86);",
         "indirect=mix(indirect,texelFetch(sPreviousIndirect,bestHistoryPixel,0).xyz,0.94);");
 
     replaceStageARequired(&source,
-        "uniform int uDirtyTileDispatch;",
-        "uniform int uDirtyTileDispatch;\nuniform int uTraceSliceIndex;\nuniform int uTraceSliceCount;");
-    replaceStageARequired(&source,
         "void main(){ivec2 td=imageSize(oIndirect);ivec2 tp=uDirtyTileDispatch!=0?ivec2(dirtyTiles[gl_WorkGroupID.x]*8u+gl_LocalInvocationID.xy):ivec2(gl_GlobalInvocationID.xy);",
-        "void main(){ivec2 td=imageSize(oIndirect);uint traceSliceCount=uint(max(uTraceSliceCount,1));uint logicalGroupY=gl_WorkGroupID.y*traceSliceCount+uint(max(uTraceSliceIndex,0));ivec2 slicedTp=ivec2(int(gl_WorkGroupID.x*8u+gl_LocalInvocationID.x),int(logicalGroupY*8u+gl_LocalInvocationID.y));ivec2 tp=uDirtyTileDispatch!=0?ivec2(dirtyTiles[gl_WorkGroupID.x]*8u+gl_LocalInvocationID.xy):(uTraceSliceCount>1?slicedTp:ivec2(gl_GlobalInvocationID.xy));");
+        "void main(){ivec2 td=imageSize(oIndirect);int traceDispatchMode=uDirtyTileDispatch;uint traceSliceCount=traceDispatchMode<0?uint(-traceDispatchMode):1u;uint traceSliceIndex=traceSliceCount>1u?uint(uFrameIndex)%traceSliceCount:0u;uint logicalGroupY=gl_WorkGroupID.y*traceSliceCount+traceSliceIndex;ivec2 slicedTp=ivec2(int(gl_WorkGroupID.x*8u+gl_LocalInvocationID.x),int(logicalGroupY*8u+gl_LocalInvocationID.y));ivec2 tp=traceDispatchMode>0?ivec2(dirtyTiles[gl_WorkGroupID.x]*8u+gl_LocalInvocationID.xy):(traceSliceCount>1u?slicedTp:ivec2(gl_GlobalInvocationID.xy));");
 
     return source;
 }
