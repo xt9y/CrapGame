@@ -23,12 +23,20 @@ int main()
     using namespace Renderer::Gpu;
 
     require(StaticShadowPolicy::PCF_RADIUS==2,"soft shadow radius changed unexpectedly");
-    require(StaticShadowPolicy::RASTER_SLOPE_BIAS>0.0f,"caster slope bias missing");
-    require(StaticShadowPolicy::RASTER_CONSTANT_BIAS>0.0f,"caster constant bias missing");
+    require(StaticShadowPolicy::CASTER_NDC_BIAS==0.00045f,"caster depth bias policy changed");
+    require(StaticShadowPolicy::RECEIVER_DEPTH_BIAS==0.00030f,"receiver depth bias policy changed");
+
+    const std::string vertex=STATIC_SHADOW_VERTEX_SHADER;
+    require(vertex.find("clip.z += 0.00045 * clip.w;")!=std::string::npos,
+            "shadow caster depth is not offset away from the receiver");
 
     const std::string canonical=STATIC_SHADOW_VISIBILITY_GLSL;
     require(canonical.find("staticShadowVisibility(vec3 position)")!=std::string::npos,
             "visibility must not derive receiver bias from the normal-mapped shading normal");
+    require(canonical.find("normalize(normal)")==std::string::npos,
+            "normal-map detail still modulates static shadow bias");
+    require(canonical.find("receiverBias = 0.00030")!=std::string::npos,
+            "canonical receiver bias does not match policy");
     require(canonical.find("texture(sStaticShadow")==std::string::npos,
             "shadow comparison must not interpolate depth values before comparing");
     require(canonical.find("texelFetch(sStaticShadow")!=std::string::npos,
@@ -50,17 +58,13 @@ int main()
                 "split sun pass still contains a divergent shadow implementation");
         require(source->find("texture(sStaticShadow")==std::string::npos,
                 "split sun pass still interpolates raw shadow depth");
+        require(source->find("staticShadowVisibility(position)")!=std::string::npos,
+                "split sun pass still passes the normal-mapped normal into shadow bias");
     }
 
-    const std::string cache=readFile("Sources/Renderer/Gpu/StaticShadowCacheGpu.cpp");
-    require(cache.find("GL_TEXTURE_MIN_FILTER, GL_NEAREST")!=std::string::npos,
-            "manual PCF shadow map must use nearest depth sampling");
-    require(cache.find("glEnable(GL_POLYGON_OFFSET_FILL)")!=std::string::npos,
-            "shadow caster raster offset is not enabled");
-    require(cache.find("glPolygonOffset(")!=std::string::npos,
-            "shadow caster raster offset values are not applied");
-    require(cache.find("glDisable(GL_POLYGON_OFFSET_FILL)")!=std::string::npos,
-            "shadow caster raster offset state is not restored");
+    const std::string direct=readFile("Sources/Renderer/Gpu/DirectLightingImportedShader.hpp");
+    require(direct.find("?staticShadowVisibility(position)")!=std::string::npos,
+            "dynamic imported path still uses normal-dependent static shadow bias");
 
     std::cout<<"shadow_stability_contract=PASS\n";
     return 0;
