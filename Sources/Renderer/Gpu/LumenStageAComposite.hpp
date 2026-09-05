@@ -60,6 +60,52 @@ vec3 bilateralIndirect(ivec2 pixel,vec3 position,vec3 normal){
     if(totalWeight<=0.0001)return texelFetch(sIndirect,centerHalf,0).xyz;
     return sum/totalWeight;
 }
+float reflectionLuminance(vec3 value){return dot(max(value,vec3(0.0)),vec3(0.2126,0.7152,0.0722));}
+vec3 reflectionFireflyClamp(vec3 value,vec3 neighborhood,float roughness){
+    float roughStrength=smoothstep(0.18,0.55,clamp(roughness,0.0,1.0));
+    float reference=max(reflectionLuminance(neighborhood),0.02);
+    float limit=mix(reference*8.0+0.08,reference*2.25+0.04,roughStrength);
+    float current=reflectionLuminance(value);
+    return current>limit?value*(limit/max(current,0.00001)):value;
+}
+vec3 bilateralReflection(ivec2 pixel,vec3 position,vec3 normal){
+    ivec2 fullDimensions=textureSize(sPositionDepth,0);
+    ivec2 halfDimensions=textureSize(sReflection,0);
+    ivec2 centerHalf=clamp(pixel/2,ivec2(0),halfDimensions-ivec2(1));
+    vec4 centerNr=texelFetch(sNormalRoughness,pixel,0);
+    float centerRoughness=clamp(centerNr.w,0.04,1.0);
+    vec3 center=texelFetch(sReflection,centerHalf,0).xyz;
+    const ivec2 offsets[9]=ivec2[9](
+        ivec2(0,0),
+        ivec2(1,0),ivec2(-1,0),ivec2(0,1),ivec2(0,-1),
+        ivec2(1,1),ivec2(-1,1),ivec2(1,-1),ivec2(-1,-1)
+    );
+    vec3 sum=vec3(0.0);
+    float totalWeight=0.0;
+    for(int index=0;index<9;++index){
+        ivec2 sampleHalf=clamp(centerHalf+offsets[index],ivec2(0),halfDimensions-ivec2(1));
+        ivec2 samplePixel=clamp(sampleHalf*2+ivec2(1),ivec2(0),fullDimensions-ivec2(1));
+        float sampleDepth=texelFetch(sPositionDepth,samplePixel,0).r;
+        if(!gbufferDepthValid(sampleDepth))continue;
+        vec3 samplePosition=gbufferReconstructWorld(samplePixel,fullDimensions,sampleDepth);
+        vec4 sampleNr=texelFetch(sNormalRoughness,samplePixel,0);
+        vec3 sampleNormal=normalize(sampleNr.xyz);
+        float sampleRoughness=clamp(sampleNr.w,0.04,1.0);
+        float normalWeight=pow(max(dot(normal,sampleNormal),0.0),20.0);
+        float positionWeight=exp(-distance(position,samplePosition)*7.0);
+        float roughnessWeight=exp(-abs(sampleRoughness-centerRoughness)*12.0);
+        vec2 offsetVector=vec2(offsets[index]);
+        float spatialWeight=exp(-0.65*dot(offsetVector,offsetVector));
+        float weight=spatialWeight*normalWeight*positionWeight*roughnessWeight;
+        if(weight<=0.0001)continue;
+        sum+=texelFetch(sReflection,sampleHalf,0).xyz*weight;
+        totalWeight+=weight;
+    }
+    vec3 filtered=totalWeight>0.0001?sum/totalWeight:center;
+    float filterStrength=smoothstep(0.18,0.55,centerRoughness);
+    vec3 stable=mix(center,filtered,filterStrength);
+    return reflectionFireflyClamp(stable,filtered,centerRoughness);
+}
 float shortRangeAo(ivec2 pixel,vec3 position,vec3 normal){
     ivec2 dimensions=textureSize(sPositionDepth,0);
     const ivec2 offsets[8]=ivec2[8](ivec2(2,0),ivec2(-2,0),ivec2(0,2),ivec2(0,-2),ivec2(2,2),ivec2(-2,2),ivec2(2,-2),ivec2(-2,-2));
@@ -84,10 +130,8 @@ void main(){
     if(!gbufferDepthValid(depth)){imageStore(oFinal,pixel,vec4(toneMap(direct),1.0));return;}
     vec3 position=gbufferReconstructWorld(pixel,dimensions,depth);
     vec3 normal=normalize(texelFetch(sNormalRoughness,pixel,0).xyz);
-    ivec2 halfDimensions=textureSize(sIndirect,0);
-    ivec2 halfPixel=clamp(pixel/2,ivec2(0),halfDimensions-ivec2(1));
     vec3 indirect=bilateralIndirect(pixel,position,normal);
-    vec3 reflection=texelFetch(sReflection,halfPixel,0).xyz;
+    vec3 reflection=bilateralReflection(pixel,position,normal);
     float ao=shortRangeAo(pixel,position,normal);
     imageStore(oFinal,pixel,vec4(toneMap(direct+indirect*ao+reflection),1.0));
 }
