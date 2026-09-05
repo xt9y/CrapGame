@@ -16,9 +16,16 @@ layout(std430,binding=1) buffer DispatchBuffer {
     uint groupCountY;
     uint groupCountZ;
 };
+uniform int uSliceIndex;
+uniform int uSliceCount;
 shared uint tileDirty;
 void main()
 {
+    uint sliceCount=uint(max(uSliceCount,1));
+    uint sliceIndex=uint(max(uSliceIndex,0))%sliceCount;
+    uint linearTile=gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x;
+    if(sliceCount>1u&&linearTile%sliceCount!=sliceIndex)return;
+
     uint localIndex=gl_LocalInvocationIndex;
     if(localIndex==0u) tileDirty=0u;
     barrier();
