@@ -43,6 +43,28 @@ inline std::string lumenImportedStageATraceShader()
         "vec4 surface=texelFetch(sPositionDepth,samplePixel,0);\n        if(surface.w<=0.0)continue;\n        float tolerance=max(0.08,0.04*distanceValue);\n        if(distance(surface.xyz,samplePosition)<=tolerance){",
         "float surfaceDepth=texelFetch(sPositionDepth,samplePixel,0).r;\n        if(!gbufferDepthValid(surfaceDepth))continue;\n        vec3 surface=gbufferReconstructWorld(samplePixel,dimensions,surfaceDepth,inverse(uViewProjection));\n        float tolerance=max(0.08,0.04*distanceValue);\n        if(distance(surface,samplePosition)<=tolerance){");
 
+    replaceStageARequired(&source,
+        "vec3 lumenEnvironmentRadiance(vec3 direction){\n    float up=clamp(direction.y*0.5+0.5,0.0,1.0);\n    float horizon=pow(clamp(1.0-abs(direction.y),0.0,1.0),2.0);\n    vec3 sky=mix(vec3(0.025,0.030,0.040),vec3(0.16,0.21,0.30),up);\n    return sky+vec3(0.030,0.024,0.016)*horizon;\n}",
+        "vec3 lumenGroundRadiance(){return vec3(0.045,0.042,0.038);}\n"
+        "vec3 lumenEnvironmentRadiance(vec3 direction){\n"
+        "    vec3 d=normalize(direction);\n"
+        "    float y=clamp(d.y,-1.0,1.0);\n"
+        "    vec3 horizon=vec3(0.18,0.19,0.21);\n"
+        "    vec3 zenith=vec3(0.24,0.30,0.40);\n"
+        "    if(y>=0.0)return mix(horizon,zenith,pow(y,0.55));\n"
+        "    return mix(horizon,lumenGroundRadiance(),pow(-y,0.65));\n"
+        "}\n"
+        "vec3 lumenEnvironmentIrradiance(vec3 normal){\n"
+        "    float up=clamp(normalize(normal).y*0.5+0.5,0.0,1.0);\n"
+        "    vec3 lower=mix(lumenGroundRadiance(),vec3(0.085,0.088,0.092),up);\n"
+        "    vec3 upper=mix(vec3(0.085,0.088,0.092),vec3(0.120,0.145,0.185),up);\n"
+        "    return mix(lower,upper,up)*0.28;\n"
+        "}");
+
+    replaceStageARequired(&source,
+        "vec3 n=normalize(normal),outgoing=max(emissive,vec3(0.0));",
+        "vec3 n=normalize(normal),outgoing=max(emissive,vec3(0.0));outgoing+=base*(1.0-metallic)*lumenEnvironmentIrradiance(n);");
+
     return source;
 }
 

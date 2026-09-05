@@ -17,7 +17,7 @@ layout(std430,binding=9) coherent buffer RadianceCacheBuffer{RadianceCacheRecord
 uniform int uRadianceGeneration;
 const float RADIANCE_CELL_SIZE=0.5;
 const uint RADIANCE_CAPACITY=65536u;
-const uint RADIANCE_ACCEPT_CONFIDENCE=4u;
+const uint RADIANCE_ACCEPT_CONFIDENCE=16u;
 const uint RADIANCE_HIGH_CONFIDENCE=16u;
 const uint RADIANCE_MAX_PROBES=8u;
 uint radianceHash(ivec3 cell){uvec3 v=uvec3(cell);uint h=v.x*0x8da6b343u+v.y*0xd8163841u+v.z*0xcb1ab31fu;h^=h>>13;h*=0x85ebca6bu;h^=h>>16;return h;}

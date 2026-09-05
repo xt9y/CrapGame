@@ -15,7 +15,7 @@ int main()
 {
     using namespace Renderer::Gpu;
     require(StaticShadowPolicy::SIZE==2048,"static shadow atlas must be 2048x2048");
-    require(StaticShadowPolicy::PCF_RADIUS==1,"radius one is fixed 3x3 PCF");
+    require(StaticShadowPolicy::PCF_RADIUS==2,"static shadow filter must use radius-two soft PCF");
     require(StaticShadowPolicy::PADDING==0.05f,"light fit must retain five-percent padding");
 
     RevisionState cached{};
@@ -33,10 +33,12 @@ int main()
     require(!staticShadowValid(cached,lighting),"light changes invalidate static shadow cache");
 
     const std::string direct=STATIC_SHADOW_DIRECT_GLSL;
-    require(direct.find("for (int y = -1; y <= 1")!=std::string::npos,
-            "direct lookup must use a fixed 3x3 PCF kernel");
-    require(direct.find("visible / 9.0")!=std::string::npos,
-            "PCF must average all nine taps");
+    require(direct.find("for (int y = -2; y <= 2")!=std::string::npos,
+            "direct lookup must use a radius-two PCF kernel");
+    require(direct.find("float weight = float(3 - abs(x)) * float(3 - abs(y));")!=std::string::npos,
+            "PCF must use deterministic tent weights");
+    require(direct.find("texelFetch(sStaticShadow")!=std::string::npos,
+            "manual depth comparisons must bypass texture filtering");
     require(direct.find("layout(binding=6)")!=std::string::npos,
             "static shadow cache must use the reserved direct-light texture unit");
 

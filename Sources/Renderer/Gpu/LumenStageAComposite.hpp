@@ -30,6 +30,33 @@ vec3 acesToneMap(vec3 colorValue){
     return clamp((x*(a*x+b))/(x*(c*x+d)+e),vec3(0.0),vec3(1.0));
 }
 vec3 toneMap(vec3 colorValue){return pow(acesToneMap(colorValue),vec3(1.0/2.2));}
+vec3 bilateralIndirect(ivec2 pixel,vec3 position,vec3 normal){
+    ivec2 fullDimensions=textureSize(sPositionDepth,0);
+    ivec2 halfDimensions=textureSize(sIndirect,0);
+    ivec2 centerHalf=clamp(pixel/2,ivec2(0),halfDimensions-ivec2(1));
+    const ivec2 offsets[5]=ivec2[5](
+        ivec2(0,0),ivec2(1,0),ivec2(-1,0),ivec2(0,1),ivec2(0,-1)
+    );
+    vec3 sum=vec3(0.0);
+    float totalWeight=0.0;
+    for(int index=0;index<5;++index){
+        ivec2 sampleHalf=clamp(centerHalf+offsets[index],ivec2(0),halfDimensions-ivec2(1));
+        ivec2 samplePixel=clamp(sampleHalf*2+ivec2(1),ivec2(0),fullDimensions-ivec2(1));
+        float sampleDepth=texelFetch(sPositionDepth,samplePixel,0).r;
+        if(!gbufferDepthValid(sampleDepth))continue;
+        vec3 samplePosition=gbufferReconstructWorld(samplePixel,fullDimensions,sampleDepth);
+        vec3 sampleNormal=normalize(texelFetch(sNormalRoughness,samplePixel,0).xyz);
+        float normalWeight=pow(max(dot(normal,sampleNormal),0.0),16.0);
+        float positionWeight=exp(-distance(position,samplePosition)*8.0);
+        float spatialWeight=index==0?1.0:0.65;
+        float weight=spatialWeight*normalWeight*positionWeight;
+        if(weight<=0.0001)continue;
+        sum+=texelFetch(sIndirect,sampleHalf,0).xyz*weight;
+        totalWeight+=weight;
+    }
+    if(totalWeight<=0.0001)return texelFetch(sIndirect,centerHalf,0).xyz;
+    return sum/totalWeight;
+}
 float shortRangeAo(ivec2 pixel,vec3 position,vec3 normal){
     ivec2 dimensions=textureSize(sPositionDepth,0);
     const ivec2 offsets[8]=ivec2[8](ivec2(2,0),ivec2(-2,0),ivec2(0,2),ivec2(0,-2),ivec2(2,2),ivec2(-2,2),ivec2(2,-2),ivec2(-2,-2));
@@ -56,7 +83,7 @@ void main(){
     vec3 normal=normalize(texelFetch(sNormalRoughness,pixel,0).xyz);
     ivec2 halfDimensions=textureSize(sIndirect,0);
     ivec2 halfPixel=clamp(pixel/2,ivec2(0),halfDimensions-ivec2(1));
-    vec3 indirect=texelFetch(sIndirect,halfPixel,0).xyz;
+    vec3 indirect=bilateralIndirect(pixel,position,normal);
     vec3 reflection=texelFetch(sReflection,halfPixel,0).xyz;
     float ao=shortRangeAo(pixel,position,normal);
     imageStore(oFinal,pixel,vec4(toneMap(direct+indirect*ao+reflection),1.0));

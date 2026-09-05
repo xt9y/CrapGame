@@ -70,19 +70,32 @@ float staticShadowVisibility(vec3 position, vec3 normal, vec3 lightDirection)
             || receiverDepth <= 0.0 || receiverDepth >= 1.0)
         return 1.0;
 
-    vec2 texel = 1.0 / vec2(textureSize(sStaticShadow, 0));
+    ivec2 dimensions = textureSize(sStaticShadow, 0);
+    ivec2 center = clamp(
+        ivec2(uv * vec2(dimensions)),
+        ivec2(0),
+        dimensions - ivec2(1)
+    );
     float slope = 1.0 - max(dot(normalize(normal), normalize(lightDirection)), 0.0);
     float bias = 0.00035 + slope * 0.00125;
     float visible = 0.0;
-    for (int y = -1; y <= 1; ++y)
+    float totalWeight = 0.0;
+    for (int y = -2; y <= 2; ++y)
     {
-        for (int x = -1; x <= 1; ++x)
+        for (int x = -2; x <= 2; ++x)
         {
-            float blocker = texture(sStaticShadow, uv + vec2(x, y) * texel).r;
-            visible += receiverDepth - bias <= blocker ? 1.0 : 0.0;
+            ivec2 samplePixel = clamp(
+                center + ivec2(x, y),
+                ivec2(0),
+                dimensions - ivec2(1)
+            );
+            float blocker = texelFetch(sStaticShadow, samplePixel, 0).r;
+            float weight = float(3 - abs(x)) * float(3 - abs(y));
+            visible += receiverDepth - bias <= blocker ? weight : 0.0;
+            totalWeight += weight;
         }
     }
-    return visible / 9.0;
+    return visible / max(totalWeight, 1.0);
 }
 )GLSL";
 
