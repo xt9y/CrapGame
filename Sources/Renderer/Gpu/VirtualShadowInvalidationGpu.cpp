@@ -29,18 +29,6 @@ bool sameVector (const Math::Vec3& a, const Math::Vec3& b)
         && std::fabs(a.z - b.z) <= EPSILON;
 }
 
-bool sameCaster (
-        const VirtualShadowInvalidationGpu::CasterSnapshot& a,
-        const VirtualShadowInvalidationGpu::CasterSnapshot& b)
-{
-    return a.valid == b.valid
-        && (!a.valid || (
-            a.mesh == b.mesh
-            && a.material == b.material
-            && sameVector(a.minimum, b.minimum)
-            && sameVector(a.maximum, b.maximum)));
-}
-
 Math::Vec3 lightForward (const Ecs::TransformComponent& transform)
 {
     const Math::Vec3 rotation = {
@@ -212,6 +200,18 @@ VirtualShadowInvalidationGpu::lightSnapshot (const Ecs::World& world) const
     return result;
 }
 
+bool VirtualShadowInvalidationGpu::sameCaster (
+        const CasterSnapshot& a,
+        const CasterSnapshot& b) const
+{
+    return a.valid == b.valid
+        && (!a.valid || (
+            a.mesh == b.mesh
+            && a.material == b.material
+            && sameVector(a.minimum, b.minimum)
+            && sameVector(a.maximum, b.maximum)));
+}
+
 void VirtualShadowInvalidationGpu::appendRegion (
         const CasterSnapshot& snapshot,
         bool *overflow)
@@ -286,13 +286,14 @@ bool VirtualShadowInvalidationGpu::update (
     for (const Ecs::Entity entity : world.entities())
         entity_capacity = std::max(entity_capacity, static_cast<std::size_t>(entity) + 1u);
 
-    std::vector<CasterSnapshot> current(entity_capacity);
+    current_snapshots_.clear();
+    current_snapshots_.resize(entity_capacity);
     for (const Ecs::Entity entity : world.entities())
-        current[entity] = casterSnapshot(world, entity);
+        current_snapshots_[entity] = casterSnapshot(world, entity);
 
     if (!initialized_)
     {
-        snapshots_.swap(current);
+        snapshots_.swap(current_snapshots_);
         light_ = current_light;
         world_revision_ = world_revision;
         mesh_revision_ = mesh_revision;
@@ -313,16 +314,16 @@ bool VirtualShadowInvalidationGpu::update (
 
     regions_.clear();
     bool overflow = false;
-    const std::size_t count = std::max(snapshots_.size(), current.size());
+    const std::size_t count = std::max(snapshots_.size(), current_snapshots_.size());
     snapshots_.resize(count);
-    current.resize(count);
+    current_snapshots_.resize(count);
 
     if (world_revision != world_revision_ || registry_changed)
     {
         for (std::size_t index = 0; index < count; ++index)
         {
             const CasterSnapshot& previous = snapshots_[index];
-            const CasterSnapshot& next = current[index];
+            const CasterSnapshot& next = current_snapshots_[index];
             if (registry_changed || !sameCaster(previous, next))
             {
                 appendRegion(previous, &overflow);
@@ -372,7 +373,7 @@ bool VirtualShadowInvalidationGpu::update (
         GL20.glUseProgram(0);
     }
 
-    snapshots_.swap(current);
+    snapshots_.swap(current_snapshots_);
     light_ = current_light;
     world_revision_ = world_revision;
     mesh_revision_ = mesh_revision;
@@ -392,6 +393,7 @@ void VirtualShadowInvalidationGpu::shutdown ()
     right_location_ = -1;
     up_location_ = -1;
     snapshots_.clear();
+    current_snapshots_.clear();
     regions_.clear();
     light_ = {};
     region_capacity_ = 0u;
