@@ -6,6 +6,7 @@
 #include "Renderer/Gpu/ResourceLifecycle.hpp"
 #include "Renderer/Gpu/StaticDirectSplitPolicy.hpp"
 #include "Renderer/Gpu/StaticShadowCacheGpu.hpp"
+#include "Renderer/Gpu/StaticShadowShader.hpp"
 
 namespace Renderer
 {
@@ -36,10 +37,9 @@ const float PI=3.14159265358979323846;
 const float EPSILON=0.00001;
 )GLSL";
     const char *body=R"GLSL(
-float staticShadowVisibility(vec3 position,vec3 normal,vec3 lightDirection){vec4 clip=uStaticShadowViewProjection*vec4(position,1.0);if(abs(clip.w)<=EPSILON)return 1.0;vec3 ndc=clip.xyz/clip.w;vec2 uv=ndc.xy*0.5+0.5;float receiverDepth=ndc.z*0.5+0.5;if(uv.x<=0.0||uv.x>=1.0||uv.y<=0.0||uv.y>=1.0||receiverDepth<=0.0||receiverDepth>=1.0)return 1.0;vec2 texel=1.0/vec2(textureSize(sStaticShadow,0));float slope=1.0-max(dot(normalize(normal),normalize(lightDirection)),0.0);float bias=0.00035+slope*0.00125;float visible=0.0;for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x){float blocker=texture(sStaticShadow,uv+vec2(x,y)*texel).r;visible+=receiverDepth-bias<=blocker?1.0:0.0;}return visible/9.0;}
-void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=imageSize(oStaticDiffuse);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;float depth=texelFetch(sDepth,pixel,0).r;if(!gbufferDepthValid(depth)){imageStore(oStaticDiffuse,pixel,vec4(0.055,0.070,0.105,1.0));return;}vec3 position=gbufferReconstructWorld(pixel,dimensions,depth,uGBufferInverseViewProjection);vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0),eo=texelFetch(sEmissive,pixel,0),ambientTransmission=texelFetch(sAmbientTransmission,pixel,0);vec3 normal=normalize(nr.xyz),albedo=am.xyz;float metallic=clamp(am.w,0.0,1.0);vec3 result=eo.xyz+ambientTransmission.rgb*albedo*0.025;if(uStaticLightIndex>=0){LightData light=lights[uStaticLightIndex];if(int(light.positionType.w+0.5)==0){vec3 ld=normalize(-light.directionRange.xyz);float nl=max(dot(normal,ld),0.0);if(nl>0.0){float visibility=(uStaticShadowEnabled!=0&&light.coneShadow.z>0.5)?staticShadowVisibility(position,normal,ld):1.0;vec3 radiance=light.colorIntensity.xyz*light.colorIntensity.w;vec3 lambert=albedo*(1.0-metallic)/PI;result+=lambert*radiance*nl*visibility;}}}imageStore(oStaticDiffuse,pixel,vec4(result,1.0));}
+void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=imageSize(oStaticDiffuse);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;float depth=texelFetch(sDepth,pixel,0).r;if(!gbufferDepthValid(depth)){imageStore(oStaticDiffuse,pixel,vec4(0.055,0.070,0.105,1.0));return;}vec3 position=gbufferReconstructWorld(pixel,dimensions,depth,uGBufferInverseViewProjection);vec4 nr=texelFetch(sNormalRoughness,pixel,0),am=texelFetch(sAlbedoMetallic,pixel,0),eo=texelFetch(sEmissive,pixel,0),ambientTransmission=texelFetch(sAmbientTransmission,pixel,0);vec3 normal=normalize(nr.xyz),albedo=am.xyz;float metallic=clamp(am.w,0.0,1.0);vec3 result=eo.xyz+ambientTransmission.rgb*albedo*0.025;if(uStaticLightIndex>=0){LightData light=lights[uStaticLightIndex];if(int(light.positionType.w+0.5)==0){vec3 ld=normalize(-light.directionRange.xyz);float nl=max(dot(normal,ld),0.0);if(nl>0.0){float visibility=(uStaticShadowEnabled!=0&&light.coneShadow.z>0.5)?staticShadowVisibility(position):1.0;vec3 radiance=light.colorIntensity.xyz*light.colorIntensity.w;vec3 lambert=albedo*(1.0-metallic)/PI;result+=lambert*radiance*nl*visibility;}}}imageStore(oStaticDiffuse,pixel,vec4(result,1.0));}
 )GLSL";
-    return std::string(prefix)+GBUFFER_RECONSTRUCT_GLSL+body;
+    return std::string(prefix)+GBUFFER_RECONSTRUCT_GLSL+STATIC_SHADOW_VISIBILITY_GLSL+body;
 }
 
 void setError(std::string *error,const char *message)
