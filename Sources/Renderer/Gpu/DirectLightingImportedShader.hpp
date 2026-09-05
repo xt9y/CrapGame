@@ -5,7 +5,6 @@
 #include "Renderer/Gpu/GBufferReconstruct.hpp"
 #include "Renderer/Gpu/ImportedBvhTraversalPatch.hpp"
 #include "Renderer/Gpu/ShadowTriangleShader.hpp"
-#include "Renderer/Gpu/StaticShadowShader.hpp"
 #include "Renderer/Gpu/TriangleTraceShader.hpp"
 
 #include <stdexcept>
@@ -31,8 +30,7 @@ inline std::string directLightingImportedShader()
     if (at == std::string::npos)
         throw std::runtime_error("direct-light shader insertion point missing");
     source.insert(at, std::string(IMPORTED_TRIANGLE_TRACE_GLSL)
-                    + IMPORTED_SHADOW_TRIANGLE_GLSL
-                    + STATIC_SHADOW_DIRECT_GLSL);
+                    + IMPORTED_SHADOW_TRIANGLE_GLSL);
 
     const std::string opaque_start=
         "int material=int(importedInstances[ii].materialHandle);";
@@ -56,9 +54,7 @@ inline std::string directLightingImportedShader()
         "if(dot(normal,ld)<=0.0)continue;"
         "if(light.coneShadow.z>0.5){"
         "if(shadowed(position,normal,ld,maxD))continue;"
-        "float importedVisibility=(uStaticShadowEnabled!=0&&i==uStaticShadowLightIndex)"
-        "?staticShadowVisibility(position)"
-        ":importedShadowVisibility(position+normal*SHADOW_BIAS*2.0,ld,maxD);"
+        "float importedVisibility=importedShadowVisibility(position+normal*SHADOW_BIAS*2.0,ld,maxD);"
         "if(importedVisibility<=0.0)continue;"
         "radiance*=importedVisibility;}";
     const std::size_t shadow_at = source.find(old_shadow);
@@ -94,9 +90,6 @@ inline std::string directLightingImportedShader()
         "void main(){ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),dimensions=textureSize(sGBufferDepth,0);if(pixel.x>=dimensions.x||pixel.y>=dimensions.y)return;float depth=texelFetch(sGBufferDepth,pixel,0).r;if(!gbufferDepthValid(depth)){imageStore(oDirect,pixel,vec4(0.0));return;}vec4 pd=vec4(gbufferReconstructWorld(pixel,dimensions,depth,uGBufferInverseViewProjection),1.0);");
     patchImportedBvhTraversal(&source);
 
-    // The compact shadow traversal is appended after the imported traversal source,
-    // but traceImportedOpaqueAny calls it. GLSL therefore needs a global prototype
-    // before the caller even though the implementation appears later in the shader.
     const std::string shadow_prototype=
         "bool traceImportedShadowInstanceAny(int instanceIndex,vec3 worldOrigin,"
         "vec3 worldDirection,float maximumDistance);\n";
