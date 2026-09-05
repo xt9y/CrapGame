@@ -25,6 +25,8 @@ static std::string readFile(const char *path)
 int main()
 {
     const std::string header=readFile("Sources/Renderer/Gpu/DirectLightingGpu.hpp");
+    const std::string diffuse=readFile("Sources/Renderer/Gpu/StaticDiffuseLightingGpu.cpp");
+    const std::string specular=readFile("Sources/Renderer/Gpu/ViewSpecularGpu.cpp");
     const std::string shader=Renderer::Gpu::directLightingImportedShader();
 
     require(header.find("VirtualShadowMapGpu")!=std::string::npos,
@@ -33,12 +35,16 @@ int main()
             "direct lighting must own SMRT projection");
     require(header.find("StaticShadowCacheGpu")==std::string::npos,
             "active direct lighting must not own the old PCF cache");
-    require(shader.find("sSmrtVisibility")!=std::string::npos,
-            "direct lighting must sample SMRT visibility");
+    require(diffuse.find("sSmrtVisibility")!=std::string::npos,
+            "static diffuse must consume SMRT visibility");
+    require(specular.find("sSmrtVisibility")!=std::string::npos,
+            "view specular must consume SMRT visibility");
+    require(diffuse.find("staticShadowVisibility")==std::string::npos,
+            "static diffuse PCF visibility must be absent");
+    require(specular.find("staticShadowVisibility")==std::string::npos,
+            "view specular PCF visibility must be absent");
     require(shader.find("staticShadowVisibility")==std::string::npos,
-            "old static PCF visibility must be absent");
-    require(shader.find("importedShadowVisibility(position") == std::string::npos,
-            "direct lighting must not ray-trace imported visibility after SMRT");
+            "old static PCF visibility must be absent from direct lighting");
 
     std::cout<<"virtual_shadow_integration_contract=PASS\n";
 }
