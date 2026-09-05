@@ -1,3 +1,4 @@
+#include "Renderer/Gpu/ConvergencePolicy.hpp"
 #include "Renderer/Gpu/LumenImportedStageAShader.hpp"
 #include "Renderer/Gpu/LumenStageAComposite.hpp"
 #include "Renderer/Gpu/RadianceCachePolicy.hpp"
@@ -64,13 +65,30 @@ int main(int argc,char **argv)
     require(shader.find("indirect=giSource*albedo*(1.0-metallic);")!=std::string::npos,
             "cosine-weighted diffuse estimator still loses a pi factor");
 
+    require(Renderer::Gpu::ConvergencePolicy::DEFAULT_SAMPLES>=48u,
+            "static GI freezes before enough temporal samples accumulate");
+    require(Renderer::Gpu::ConvergencePolicy::MAX_SAMPLES
+                >=Renderer::Gpu::ConvergencePolicy::DEFAULT_SAMPLES,
+            "configured convergence cap is below the default");
+    require(Renderer::Gpu::RadianceCachePolicy::ACCEPT_CONFIDENCE>=16u,
+            "radiance cache becomes readable while still too noisy");
+    require(Renderer::Gpu::RadianceCachePolicy::HIGH_CONFIDENCE_SAMPLES>=48u,
+            "radiance cache cannot refine through the static convergence window");
     require(Renderer::Gpu::RadianceCachePolicy::ACCEPT_CONFIDENCE
-                == Renderer::Gpu::RadianceCachePolicy::HIGH_CONFIDENCE_SAMPLES,
-            "radiance cache becomes reusable before it has converged");
+                < Renderer::Gpu::RadianceCachePolicy::HIGH_CONFIDENCE_SAMPLES,
+            "radiance cache must keep refining after it becomes readable");
+    require(shader.find("cachedGiSource")!=std::string::npos,
+            "readable radiance cache stops stochastic refinement");
+    require(shader.find("if(giCached)giSource=cachedGiSource")!=std::string::npos,
+            "refined cache is not used as the stable GI result");
+    require(shader.find("bestHistoryPixel,0).xyz,0.94")!=std::string::npos,
+            "temporal GI history is too short to suppress visible variance");
     require(shader.find("lumenEnvironmentIrradiance")!=std::string::npos,
             "secondary-hit skylight irradiance missing");
     require(shader.find("lumenGroundRadiance")!=std::string::npos,
             "neutral ground skylight source missing");
+    require(shader.find("return mix(lower,upper,up)*0.42")!=std::string::npos,
+            "secondary-hit skylight remains too weak for Sponza interiors");
 
     const std::string composite=Renderer::Gpu::LUMEN_STAGE_A_COMPOSITE_COMPUTE;
     require(composite.find("acesToneMap")!=std::string::npos,
@@ -79,10 +97,14 @@ int main(int argc,char **argv)
             "explicit output exposure missing");
     require(composite.find("bilateralIndirect")!=std::string::npos,
             "depth/normal-aware indirect denoising missing");
+    require(composite.find("offsets[9]")!=std::string::npos,
+            "indirect denoiser does not cover a full 3x3 neighborhood");
     require(composite.find("normalWeight")!=std::string::npos,
             "indirect filter is not normal aware");
     require(composite.find("positionWeight")!=std::string::npos,
             "indirect filter is not depth/position aware");
+    require(composite.find("occlusion*0.12")!=std::string::npos,
+            "short-range AO is strong enough to create false shadow blotches");
 
     if(argc>1)
     {
