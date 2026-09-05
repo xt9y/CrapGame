@@ -10,6 +10,7 @@
 #include "Renderer/Gpu/TraceGeometryGpu.hpp"
 #include "Renderer/Gpu/TriangleScene.hpp"
 #include "Renderer/Gpu/ViewSpecularGpu.hpp"
+#include "Renderer/Gpu/VirtualShadowInvalidationGpu.hpp"
 #include "Renderer/Gpu/VirtualShadowMapGpu.hpp"
 #include "Renderer/Math/Math.hpp"
 
@@ -63,6 +64,7 @@ public:
     bool ready() const
     {
         return program_!=0&&combine_program_!=0&&direct_color_!=0&&dynamic_color_!=0
+            &&virtual_shadow_invalidation_.ready()
             &&virtual_shadow_map_.ready()&&smrt_shadow_.ready();
     }
     GLuint directTexture() const { return direct_color_; }
@@ -115,6 +117,7 @@ private:
     std::vector<BvhNodeGpu> bvh_nodes_, uploaded_bvh_nodes_;
     TriangleScene triangle_scene_;
     TraceGeometryGpu trace_geometry_;
+    VirtualShadowInvalidationGpu virtual_shadow_invalidation_;
     VirtualShadowMapGpu virtual_shadow_map_;
     SmrtShadowGpu smrt_shadow_;
     StaticDiffuseLightingGpu static_diffuse_;
