@@ -82,6 +82,13 @@ inline std::string lumenImportedStageATraceShader()
         "indirect=mix(indirect,texelFetch(sPreviousIndirect,bestHistoryPixel,0).xyz,0.86);",
         "indirect=mix(indirect,texelFetch(sPreviousIndirect,bestHistoryPixel,0).xyz,0.94);");
 
+    replaceStageARequired(&source,
+        "uniform int uDirtyTileDispatch;",
+        "uniform int uDirtyTileDispatch;\nuniform int uTraceSliceIndex;\nuniform int uTraceSliceCount;");
+    replaceStageARequired(&source,
+        "void main(){ivec2 td=imageSize(oIndirect);ivec2 tp=uDirtyTileDispatch!=0?ivec2(dirtyTiles[gl_WorkGroupID.x]*8u+gl_LocalInvocationID.xy):ivec2(gl_GlobalInvocationID.xy);",
+        "void main(){ivec2 td=imageSize(oIndirect);uint traceSliceCount=uint(max(uTraceSliceCount,1));uint logicalGroupY=gl_WorkGroupID.y*traceSliceCount+uint(max(uTraceSliceIndex,0));ivec2 slicedTp=ivec2(int(gl_WorkGroupID.x*8u+gl_LocalInvocationID.x),int(logicalGroupY*8u+gl_LocalInvocationID.y));ivec2 tp=uDirtyTileDispatch!=0?ivec2(dirtyTiles[gl_WorkGroupID.x]*8u+gl_LocalInvocationID.xy):(uTraceSliceCount>1?slicedTp:ivec2(gl_GlobalInvocationID.xy));");
+
     return source;
 }
 
