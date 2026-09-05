@@ -60,7 +60,8 @@ bool DirectLightingGpu::init(std::string *error)
     }
     GL15.glGenBuffers(1,&light_buffer_);GL15.glGenBuffers(1,&primitive_buffer_);
     if(light_buffer_==0||primitive_buffer_==0){setError(error,"failed to allocate GPU lighting scene buffers");shutdown();return false;}
-    if(!static_shadow_cache_.init(error)
+    if(!virtual_shadow_map_.init(error)
+            ||!smrt_shadow_.init(error)
             ||!static_diffuse_.init(error)
             ||!view_specular_.init(error))
     {
@@ -85,7 +86,9 @@ bool DirectLightingGpu::resize(int width,int height,std::string *error)
             setError(error,"failed to allocate GPU direct lighting textures");return false;
         }
     }
-    if(!static_diffuse_.resize(target_width,target_height,error)
+    if(!virtual_shadow_map_.resize(target_width,target_height,error)
+            ||!smrt_shadow_.resize(target_width,target_height,error)
+            ||!static_diffuse_.resize(target_width,target_height,error)
             ||!view_specular_.resize(target_width,target_height,error))
         return false;
     if(transparent_&&!transparent_->resize(target_width,target_height,error))return false;
@@ -101,9 +104,9 @@ bool DirectLightingGpu::uploadBuffer(GLuint buffer,std::size_t *capacity,const v
     GL15.glBufferSubData(GL_SHADER_STORAGE_BUFFER,0,static_cast<LWCGLsizeiptr>(size),data);return true;
 }
 
-bool DirectLightingGpu::render(const Ecs::World& world,const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::string *error){return updateScene(world,error)&&dispatch(gbuffer,camera_position,error);}
+bool DirectLightingGpu::render(const Ecs::World& world,const GBufferGpu& gbuffer,const Math::Vec3& camera_position,std::uint64_t frame_index,std::string *error){return updateScene(world,error)&&dispatch(gbuffer,camera_position,frame_index,error);}
 void DirectLightingGpu::destroyTextures(){deleteTexture(&direct_color_);deleteTexture(&dynamic_color_);}
 void DirectLightingGpu::releaseAcceleration(){if(bvh_node_buffer_!=0)GL15.glDeleteBuffers(1,&bvh_node_buffer_);bvh_node_buffer_=0;bvh_node_capacity_=0;bvh_primitive_count_=0;bvh_nodes_.clear();uploaded_bvh_nodes_.clear();use_bvh_=false;}
-void DirectLightingGpu::shutdown(){if(transparent_){transparent_->shutdown();transparent_.reset();}view_specular_.shutdown();static_diffuse_.shutdown();static_shadow_cache_.shutdown();trace_geometry_.shutdown();triangle_scene_.shutdown();scene_world_=nullptr;scene_revision_=0u;releaseAcceleration();destroyTextures();if(light_buffer_!=0){GL15.glDeleteBuffers(1,&light_buffer_);light_buffer_=0;}if(primitive_buffer_!=0){GL15.glDeleteBuffers(1,&primitive_buffer_);primitive_buffer_=0;}destroyProgram(&program_);destroyProgram(&combine_program_);light_capacity_=0;primitive_capacity_=0;lights_.clear();primitives_.clear();uploaded_lights_.clear();uploaded_primitives_.clear();primitive_bounds_.clear();camera_location_=-1;light_count_location_=-1;primitive_count_location_=-1;static_split_light_index_location_=-1;inverse_view_projection_location_=-1;bench_config_={};bench_config_initialized_=false;bench_reported_=false;use_bvh_=false;width_=0;height_=0;}
+void DirectLightingGpu::shutdown(){if(transparent_){transparent_->shutdown();transparent_.reset();}view_specular_.shutdown();static_diffuse_.shutdown();smrt_shadow_.shutdown();virtual_shadow_map_.shutdown();trace_geometry_.shutdown();triangle_scene_.shutdown();scene_world_=nullptr;scene_revision_=0u;releaseAcceleration();destroyTextures();if(light_buffer_!=0){GL15.glDeleteBuffers(1,&light_buffer_);light_buffer_=0;}if(primitive_buffer_!=0){GL15.glDeleteBuffers(1,&primitive_buffer_);primitive_buffer_=0;}destroyProgram(&program_);destroyProgram(&combine_program_);light_capacity_=0;primitive_capacity_=0;lights_.clear();primitives_.clear();uploaded_lights_.clear();uploaded_primitives_.clear();primitive_bounds_.clear();camera_location_=-1;light_count_location_=-1;primitive_count_location_=-1;static_split_light_index_location_=-1;inverse_view_projection_location_=-1;bench_config_={};bench_config_initialized_=false;bench_reported_=false;use_bvh_=false;width_=0;height_=0;}
 
 } }
