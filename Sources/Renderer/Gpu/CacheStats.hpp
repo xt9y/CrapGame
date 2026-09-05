@@ -12,6 +12,12 @@ struct CacheStats
 {
     std::uint64_t static_shadow_generated=0u;
     std::uint64_t static_shadow_cached=0u;
+    std::uint64_t shadow_pages_requested=0u;
+    std::uint64_t shadow_pages_rendered=0u;
+    std::uint64_t shadow_pages_cached=0u;
+    std::uint64_t shadow_pages_evicted=0u;
+    std::uint64_t shadow_static_invalidated=0u;
+    std::uint64_t shadow_dynamic_invalidated=0u;
     std::uint64_t reprojection_pixels=0u;
     std::uint64_t dirty_tiles=0u;
     std::uint64_t reused_pixels=0u;
@@ -32,6 +38,12 @@ inline CacheStats cacheStatsDelta(const CacheStats& current,const CacheStats& pr
     CacheStats result;
     result.static_shadow_generated=delta(current.static_shadow_generated,previous.static_shadow_generated);
     result.static_shadow_cached=delta(current.static_shadow_cached,previous.static_shadow_cached);
+    result.shadow_pages_requested=delta(current.shadow_pages_requested,previous.shadow_pages_requested);
+    result.shadow_pages_rendered=delta(current.shadow_pages_rendered,previous.shadow_pages_rendered);
+    result.shadow_pages_cached=delta(current.shadow_pages_cached,previous.shadow_pages_cached);
+    result.shadow_pages_evicted=delta(current.shadow_pages_evicted,previous.shadow_pages_evicted);
+    result.shadow_static_invalidated=delta(current.shadow_static_invalidated,previous.shadow_static_invalidated);
+    result.shadow_dynamic_invalidated=delta(current.shadow_dynamic_invalidated,previous.shadow_dynamic_invalidated);
     result.reprojection_pixels=delta(current.reprojection_pixels,previous.reprojection_pixels);
     result.dirty_tiles=delta(current.dirty_tiles,previous.dirty_tiles);
     result.reused_pixels=delta(current.reused_pixels,previous.reused_pixels);
