@@ -59,8 +59,8 @@ bool reflectionFallbackSource(vec3 position,vec3 normal,float roughness,uint mat
                               vec3 origin,vec3 direction,
                               out vec3 source,out bool historyValue){
     historyValue=false;
-    if(reflectionScreenHit(origin,direction,source))return true;
     if(roughness>=0.35&&radianceCacheLookup(position,normal,source))return true;
+    if(roughness<0.35&&reflectionScreenHit(origin,direction,source))return true;
     if(roughness<0.35&&reflectionHistorySample(position,normal,roughness,materialId,source)){
         historyValue=true;
         return true;
