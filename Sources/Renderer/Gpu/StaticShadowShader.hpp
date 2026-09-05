@@ -1,6 +1,8 @@
 #ifndef CRAPGAME_RENDERER_GPU_STATICSHADOWSHADER_HPP
 #define CRAPGAME_RENDERER_GPU_STATICSHADOWSHADER_HPP
 
+#include <string>
+
 namespace Renderer
 {
 namespace Gpu
@@ -53,13 +55,13 @@ void main()
 }
 )GLSL";
 
-constexpr const char *STATIC_SHADOW_DIRECT_GLSL = R"GLSL(
-layout(binding=6) uniform sampler2D sStaticShadow;
-uniform int uStaticShadowEnabled;
-uniform int uStaticShadowLightIndex;
-uniform mat4 uStaticShadowViewProjection;
-
-float staticShadowVisibility(vec3 position, vec3 normal, vec3 lightDirection)
+/* Canonical receiver-side static-shadow comparison.  The shadow-map caster
+ * pass applies slope-scale polygon offset, so this path intentionally avoids
+ * deriving bias from the normal-mapped shading normal.  Doing that made brick
+ * and stone normal-map detail modulate the shadow test itself and produced the
+ * speckled/acne pattern visible on Sponza. */
+constexpr const char *STATIC_SHADOW_VISIBILITY_GLSL = R"GLSL(
+float staticShadowVisibility(vec3 position)
 {
     vec4 clip = uStaticShadowViewProjection * vec4(position, 1.0);
     if (abs(clip.w) <= EPSILON) return 1.0;
@@ -71,33 +73,45 @@ float staticShadowVisibility(vec3 position, vec3 normal, vec3 lightDirection)
         return 1.0;
 
     ivec2 dimensions = textureSize(sStaticShadow, 0);
-    ivec2 center = clamp(
-        ivec2(uv * vec2(dimensions)),
-        ivec2(0),
-        dimensions - ivec2(1)
-    );
-    float slope = 1.0 - max(dot(normalize(normal), normalize(lightDirection)), 0.0);
-    float bias = 0.00035 + slope * 0.00125;
+    vec2 texelPosition = uv * vec2(dimensions) - vec2(0.5);
+    ivec2 basePixel = ivec2(floor(texelPosition));
+    vec2 phase = fract(texelPosition);
+    const float receiverBias = 0.00030;
+
     float visible = 0.0;
     float totalWeight = 0.0;
-    for (int y = -2; y <= 2; ++y)
+    for (int y = -1; y <= 2; ++y)
     {
-        for (int x = -2; x <= 2; ++x)
+        float wy = max(0.0, 2.0 - abs(float(y) - phase.y));
+        for (int x = -1; x <= 2; ++x)
         {
+            float wx = max(0.0, 2.0 - abs(float(x) - phase.x));
+            float weight = wx * wy;
+            if (weight <= 0.0) continue;
             ivec2 samplePixel = clamp(
-                center + ivec2(x, y),
+                basePixel + ivec2(x, y),
                 ivec2(0),
                 dimensions - ivec2(1)
             );
             float blocker = texelFetch(sStaticShadow, samplePixel, 0).r;
-            float weight = float(3 - abs(x)) * float(3 - abs(y));
-            visible += receiverDepth - bias <= blocker ? weight : 0.0;
+            visible += receiverDepth - receiverBias <= blocker ? weight : 0.0;
             totalWeight += weight;
         }
     }
     return visible / max(totalWeight, 1.0);
 }
 )GLSL";
+
+constexpr const char *STATIC_SHADOW_DIRECT_DECLARATIONS_GLSL = R"GLSL(
+layout(binding=6) uniform sampler2D sStaticShadow;
+uniform int uStaticShadowEnabled;
+uniform int uStaticShadowLightIndex;
+uniform mat4 uStaticShadowViewProjection;
+)GLSL";
+
+inline const std::string STATIC_SHADOW_DIRECT_GLSL =
+    std::string(STATIC_SHADOW_DIRECT_DECLARATIONS_GLSL)
+    + STATIC_SHADOW_VISIBILITY_GLSL;
 
 } // namespace Gpu
 } // namespace Renderer
