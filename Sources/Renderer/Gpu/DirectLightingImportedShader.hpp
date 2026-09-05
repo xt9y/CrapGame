@@ -57,7 +57,7 @@ inline std::string directLightingImportedShader()
         "if(light.coneShadow.z>0.5){"
         "if(shadowed(position,normal,ld,maxD))continue;"
         "float importedVisibility=(uStaticShadowEnabled!=0&&i==uStaticShadowLightIndex)"
-        "?staticShadowVisibility(position,normal,ld)"
+        "?staticShadowVisibility(position)"
         ":importedShadowVisibility(position+normal*SHADOW_BIAS*2.0,ld,maxD);"
         "if(importedVisibility<=0.0)continue;"
         "radiance*=importedVisibility;}";
